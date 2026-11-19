@@ -65,6 +65,10 @@
     --saab-grey-400: #bcbbb9;
     --saab-grey-500: #8f918f;
     --saab-grey-700: #5f625f;   /* muted text, disabled */
+    /* dark section shades used on saab.com */
+    --saab-charcoal-900: #262523;
+    --saab-charcoal-600: #53504c; /* borders on dark */
+    --saab-charcoal-500: #5a5751; /* input borders on dark */
 }
 
 /* shadcn theme tokens mapped onto the Saab palette (light only). */
@@ -103,6 +107,26 @@
     --sidebar-accent-foreground: var(--saab-charcoal);
     --sidebar-border: var(--saab-grey-300);
     --sidebar-ring: var(--saab-blue);
+}
+
+/* Dark chrome (top bar, side panels). Re-points the shadcn tokens so any
+   component placed inside a .theme-dark element picks up the dark look. */
+.theme-dark {
+    --background: var(--saab-charcoal);
+    --foreground: var(--saab-white);
+    --card: var(--saab-charcoal-900);
+    --card-foreground: var(--saab-white);
+    --popover: var(--saab-charcoal-900);
+    --popover-foreground: var(--saab-white);
+    --secondary: var(--saab-charcoal-600);
+    --secondary-foreground: var(--saab-white);
+    --muted: var(--saab-charcoal-900);
+    --muted-foreground: var(--saab-grey-400);
+    --border: var(--saab-charcoal-600);
+    --input: var(--saab-charcoal-500);
+    --ring: var(--saab-yellow);
+    background-color: var(--background);
+    color: var(--foreground);
 }
 
 @layer base {

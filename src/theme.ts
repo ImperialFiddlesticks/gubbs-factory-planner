@@ -15,10 +15,14 @@ export const COLORS = {
   grey400: '#bcbbb9',
   grey500: '#8f918f',
   grey700: '#5f625f',
+  charcoal900: '#262523',
+  charcoal600: '#53504c',
+  charcoal500: '#5a5751',
 } as const
 
 // Semantic roles used by the floorplan canvas.
 export const CANVAS = {
+  background: COLORS.grey300,
   floor: COLORS.white,
   floorStroke: COLORS.charcoal,
   grid: COLORS.grey300,
