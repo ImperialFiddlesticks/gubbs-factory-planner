@@ -18,6 +18,10 @@ export const COLORS = {
   charcoal900: '#262523',
   charcoal600: '#53504c',
   charcoal500: '#5a5751',
+  // Not part of Saab's web palette; needed for feedback and utility types.
+  green: '#2f9e57', // valid placement, exits
+  cyan: '#1a9fd9', // water
+  violet: '#7b5cd6', // sprinklers
 } as const
 
 // Semantic roles used by the floorplan canvas.
@@ -30,6 +34,9 @@ export const CANVAS = {
   machineStroke: COLORS.blueDark,
   machineLabel: COLORS.white,
   selected: COLORS.yellow,
+  frontMarker: COLORS.white,
   warning: COLORS.yellowDark,
   error: COLORS.red,
+  valid: COLORS.green,
+  invalid: COLORS.red,
 } as const

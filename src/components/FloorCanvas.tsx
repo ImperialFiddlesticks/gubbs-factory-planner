@@ -1,22 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
-import { Layer, Line, Rect, Stage } from 'react-konva'
+import type Konva from 'konva'
+import type { KonvaEventObject } from 'konva/lib/Node'
+import { Group, Layer, Rect, Shape, Stage } from 'react-konva'
+import { ClearanceZone, Machine, MachineBody, type Outline } from '@/components/canvas/MachineNode'
+import { GHOST_ID, type DragState } from '@/components/canvas/shared'
+import { CoverageCircle, UtilityGlyph, UtilityNode } from '@/components/canvas/UtilityNode'
 import { SCALE } from '@/constants'
+import { getMachineType } from '@/data/catalog'
+import { UTILITY_KINDS } from '@/data/utilities'
+import { snapToWall } from '@/lib/geometry'
+import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validation'
+import { usePlanner, type Placing } from '@/store'
 import { CANVAS } from '@/theme'
-import type { Floorplan } from '@/types'
+import type { Floorplan, MachineInstance, Utility } from '@/types'
 
 interface FloorCanvasProps {
-  floorplan: Floorplan
+  floorplan: Floorplan | null
 }
 
 export function FloorCanvas({ floorplan }: FloorCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const size = useElementSize(containerRef)
-
-  const floorW = floorplan.width * SCALE
-  const floorH = floorplan.depth * SCALE
-  // Centre the floorplan in the work area.
-  const originX = Math.round((size.width - floorW) / 2)
-  const originY = Math.round((size.height - floorH) / 2)
 
   return (
     <main
@@ -24,39 +28,312 @@ export function FloorCanvas({ floorplan }: FloorCanvasProps) {
       className="relative overflow-hidden"
       style={{ backgroundColor: CANVAS.background }}
     >
-      {size.width > 0 && (
-        <Stage width={size.width} height={size.height}>
-          <Layer x={originX} y={originY}>
-            <Rect width={floorW} height={floorH} fill={CANVAS.floor} />
-            <Grid floorplan={floorplan} />
-            <Rect
-              width={floorW}
-              height={floorH}
-              stroke={CANVAS.floorStroke}
-              strokeWidth={2}
-              listening={false}
-            />
-          </Layer>
-        </Stage>
-      )}
+      {floorplan && size.width > 0 && <FloorStage floorplan={floorplan} size={size} />}
+      <PlacingHint />
     </main>
   )
 }
 
-function Grid({ floorplan }: { floorplan: Floorplan }) {
+function placingName(p: Placing) {
+  return p.kind === 'machine' ? getMachineType(p.typeId)?.name : UTILITY_KINDS[p.utilityKind].name
+}
+
+/** Instruction strip shown at the top of the work area while placing. */
+function PlacingHint() {
+  const placing = usePlanner((s) => s.placing)
+  if (!placing) return null
+  return (
+    <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+      Placing <span className="font-semibold">{placingName(placing)}</span> · Click to place
+      {placing.kind === 'machine' && ' · R to rotate'}
+      {placing.kind === 'utility' && placing.utilityKind === 'exit' && ' on a wall'} · Esc or
+      right-click to cancel
+    </div>
+  )
+}
+
+/** What is being moved right now (ghost or drag), at its live position. */
+type Active = { kind: 'machine'; item: MachineInstance } | { kind: 'utility'; item: Utility }
+
+function FloorStage({
+  floorplan,
+  size,
+}: {
+  floorplan: Floorplan
+  size: { width: number; height: number }
+}) {
+  const floorW = floorplan.width * SCALE
+  const floorH = floorplan.depth * SCALE
+  // Floors larger than the work area are shrunk to fit; smaller ones stay at SCALE.
+  const fit = Math.min(
+    1,
+    (size.width - 2 * VIEW_PADDING) / floorW,
+    (size.height - 2 * VIEW_PADDING) / floorH,
+  )
+  // Centre the floorplan in the work area.
+  const originX = Math.round((size.width - floorW * fit) / 2)
+  const originY = Math.round((size.height - floorH * fit) / 2)
+
+  const machines = usePlanner((s) => s.machines)
+  const utilities = usePlanner((s) => s.utilities)
+  const selectedId = usePlanner((s) => s.selectedId)
+  const placing = usePlanner((s) => s.placing)
+  const showCoverage = usePlanner((s) => s.showCoverage)
+  const select = usePlanner((s) => s.select)
+  const addMachine = usePlanner((s) => s.addMachine)
+  const addUtility = usePlanner((s) => s.addUtility)
+  const cancelPlacing = usePlanner((s) => s.cancelPlacing)
+
+  const layerRef = useRef<Konva.Layer>(null)
+  /** Cursor position on the floor in mm, while it is over the canvas. */
+  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
+  const [drag, setDrag] = useState<DragState | null>(null)
+
+  usePlacingKeys()
+
+  const active = activeItem(placing, pointer, drag, machines, utilities, floorplan)
+
+  // The layout as it would be if the active item were dropped where it is now.
+  // Recomputed every render; cheap for the number of items on a floor.
+  const liveMachines = active?.kind === 'machine' ? withItem(machines, active.item) : machines
+  const liveUtilities = active?.kind === 'utility' ? withItem(utilities, active.item) : utilities
+
+  const issues = findLayoutIssues(liveMachines, liveUtilities, floorplan)
+  const spaceBad = idsWithIssues(issues, 'space')
+  const utilityBad = idsWithIssues(issues, 'utility')
+  const needs = needsByMachine(issues)
+
+  // Clearance zones: the active/selected machine plus anything it physically clashes with.
+  const focusId = active?.item.id ?? selectedId
+  const zoneIds = new Set<string>()
+  if (focusId) {
+    zoneIds.add(focusId)
+    for (const issue of issues) {
+      if (issue.category === 'space' && issue.ids.includes(focusId)) {
+        issue.ids.forEach((id) => zoneIds.add(id))
+      }
+    }
+  }
+
+  function pointerMm() {
+    const p = layerRef.current?.getRelativePointerPosition()
+    return p ? { x: p.x / SCALE, y: p.y / SCALE } : null
+  }
+
+  function handlePointerDown(e: KonvaEventObject<MouseEvent | TouchEvent>) {
+    if (placing) {
+      // Left click (or touch) drops the ghost where it is; right click is handled below.
+      if ('button' in e.evt && e.evt.button !== 0) return
+      const at = pointerMm()
+      if (at && placing.kind === 'machine') {
+        addMachine(placing.typeId, { ...at, rotation: placing.rotation })
+      } else if (at && placing.kind === 'utility') {
+        addUtility(placing.utilityKind, at.x, at.y)
+      }
+      cancelPlacing()
+      return
+    }
+    // Clicking empty floor clears the selection.
+    const t = e.target
+    if (!t.findAncestor('.machine', true) && !t.findAncestor('.utility', true)) select(null)
+  }
+
+  function outlineFor(id: string): Outline {
+    if (id === active?.item.id) return spaceBad.has(id) ? 'invalid' : 'valid'
+    if (id === selectedId) return 'selected'
+    return spaceBad.has(id) ? 'invalid' : 'none'
+  }
+
+  return (
+    <Stage
+      width={size.width}
+      height={size.height}
+      style={{ cursor: placing ? 'crosshair' : undefined }}
+      onMouseDown={handlePointerDown}
+      onTouchStart={handlePointerDown}
+      onMouseMove={() => setPointer(pointerMm())}
+      onMouseLeave={() => setPointer(null)}
+      onContextMenu={(e) => {
+        e.evt.preventDefault()
+        cancelPlacing()
+      }}
+    >
+      <Layer ref={layerRef} x={originX} y={originY} scaleX={fit} scaleY={fit}>
+        <Rect width={floorW} height={floorH} fill={CANVAS.floor} />
+        <Grid floorplan={floorplan} fit={fit} />
+        <Rect
+          width={floorW}
+          height={floorH}
+          stroke={CANVAS.floorStroke}
+          strokeWidth={2}
+          strokeScaleEnabled={false}
+          listening={false}
+        />
+
+        {/* Coverage layer: all utilities when toggled on, otherwise just the active/selected one. */}
+        {/* Clipped to the floor: reach stops at the building walls. */}
+        <Group clipX={0} clipY={0} clipWidth={floorW} clipHeight={floorH} listening={false}>
+          {liveUtilities
+            .filter((u) => showCoverage || u.id === focusId)
+            .map((u) => (
+              <CoverageCircle key={`cover-${u.id}`} utility={u} strong={u.id === focusId} />
+            ))}
+        </Group>
+
+        {liveMachines
+          .filter((m) => zoneIds.has(m.id))
+          .map((m) => (
+            <ClearanceZone key={`zone-${m.id}`} machine={m} valid={!spaceBad.has(m.id)} />
+          ))}
+
+        {machines.map((m) => (
+          <Machine
+            key={m.id}
+            machine={m}
+            outline={outlineFor(m.id)}
+            needs={needs.get(m.id) ?? []}
+            fit={fit}
+            interactive={!placing}
+            onDrag={setDrag}
+          />
+        ))}
+
+        {utilities.map((u) => (
+          <UtilityNode
+            key={u.id}
+            utility={u}
+            floorplan={floorplan}
+            fit={fit}
+            selected={u.id === selectedId}
+            invalid={utilityBad.has(u.id)}
+            interactive={!placing}
+            onDrag={setDrag}
+          />
+        ))}
+
+        {active?.item.id === GHOST_ID && (
+          <Group
+            x={active.item.x * SCALE}
+            y={active.item.y * SCALE}
+            opacity={0.75}
+            listening={false}
+          >
+            {active.kind === 'machine' ? (
+              <MachineBody
+                typeId={active.item.typeId}
+                rotation={active.item.rotation}
+                outline={outlineFor(GHOST_ID)}
+                needs={needs.get(GHOST_ID) ?? []}
+                fit={fit}
+                dashed
+              />
+            ) : (
+              <UtilityGlyph utility={active.item} floorplan={floorplan} fit={fit} selected />
+            )}
+          </Group>
+        )}
+      </Layer>
+    </Stage>
+  )
+}
+
+/** The ghost under the cursor, or the item being dragged, at its live position. */
+function activeItem(
+  placing: Placing | null,
+  pointer: { x: number; y: number } | null,
+  drag: DragState | null,
+  machines: MachineInstance[],
+  utilities: Utility[],
+  floorplan: Floorplan,
+): Active | null {
+  if (placing && pointer) {
+    if (placing.kind === 'machine') {
+      return {
+        kind: 'machine',
+        item: { id: GHOST_ID, typeId: placing.typeId, rotation: placing.rotation, ...pointer },
+      }
+    }
+    const info = UTILITY_KINDS[placing.utilityKind]
+    const at = placing.utilityKind === 'exit' ? snapToWall(pointer.x, pointer.y, floorplan) : pointer
+    return {
+      kind: 'utility',
+      item: {
+        id: GHOST_ID,
+        kind: placing.utilityKind,
+        ...at,
+        radius: info.defaultRadius,
+        capacityKw: info.defaultCapacityKw,
+      },
+    }
+  }
+  if (!drag) return null
+  const m = machines.find((m) => m.id === drag.id)
+  if (m) return { kind: 'machine', item: { ...m, x: drag.x, y: drag.y } }
+  const u = utilities.find((u) => u.id === drag.id)
+  if (u) return { kind: 'utility', item: { ...u, x: drag.x, y: drag.y } }
+  return null
+}
+
+/** Replace the item with the same id, or append it (for the ghost). */
+function withItem<T extends { id: string }>(list: T[], item: T): T[] {
+  return list.some((x) => x.id === item.id)
+    ? list.map((x) => (x.id === item.id ? item : x))
+    : [...list, item]
+}
+
+/** R rotates and Esc cancels whatever is being placed (ignored while typing in a field). */
+function usePlacingKeys() {
+  const placing = usePlanner((s) => s.placing !== null)
+  const rotatePlacing = usePlanner((s) => s.rotatePlacing)
+  const cancelPlacing = usePlanner((s) => s.cancelPlacing)
+
+  useEffect(() => {
+    if (!placing) return
+    function onKeyDown(e: KeyboardEvent) {
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
+      if (e.key === 'Escape') cancelPlacing()
+      else if (e.key === 'r' || e.key === 'R') rotatePlacing()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [placing, rotatePlacing, cancelPlacing])
+}
+
+/** Space kept between the floor and the edge of the work area, px. */
+const VIEW_PADDING = 40
+/** Grid lines closer than this on screen are thinned out, px. */
+const MIN_GRID_PX = 6
+
+/** All grid lines drawn as one shape, so large floors stay fast. */
+function Grid({ floorplan, fit }: { floorplan: Floorplan; fit: number }) {
   const { width, depth, gridSize } = floorplan
-  const lines = []
-  for (let x = gridSize; x < width; x += gridSize) {
-    lines.push(
-      <Line key={`v${x}`} points={[x * SCALE, 0, x * SCALE, depth * SCALE]} stroke={CANVAS.grid} strokeWidth={1} />,
-    )
-  }
-  for (let y = gridSize; y < depth; y += gridSize) {
-    lines.push(
-      <Line key={`h${y}`} points={[0, y * SCALE, width * SCALE, y * SCALE]} stroke={CANVAS.grid} strokeWidth={1} />,
-    )
-  }
-  return <>{lines}</>
+  // Draw every nth line when the grid would be too dense to see.
+  const every = Math.max(1, Math.ceil(MIN_GRID_PX / (gridSize * SCALE * fit)))
+  const step = gridSize * every * SCALE
+  const w = width * SCALE
+  const h = depth * SCALE
+
+  return (
+    <Shape
+      listening={false}
+      stroke={CANVAS.grid}
+      strokeWidth={1}
+      strokeScaleEnabled={false}
+      sceneFunc={(ctx, shape) => {
+        ctx.beginPath()
+        for (let x = step; x < w; x += step) {
+          ctx.moveTo(x, 0)
+          ctx.lineTo(x, h)
+        }
+        for (let y = step; y < h; y += step) {
+          ctx.moveTo(0, y)
+          ctx.lineTo(w, y)
+        }
+        ctx.strokeShape(shape)
+      }}
+    />
+  )
 }
 
 function useElementSize(ref: React.RefObject<HTMLElement | null>) {
