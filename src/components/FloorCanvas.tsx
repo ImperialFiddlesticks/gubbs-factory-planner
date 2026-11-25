@@ -12,7 +12,7 @@ import { PowerLoadTags, SupplyLines } from '@/components/canvas/SupplyLines'
 import { WalkingRoutes } from '@/components/canvas/WalkingRoutes'
 import { SCALE } from '@/constants'
 import { getMachineType } from '@/data/catalog'
-import { UTILITY_LAYER } from '@/data/layers'
+import { UTILITY_LAYER, utilityVisible } from '@/data/layers'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS, MIN_WALL_LENGTH } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
 import { conveyorRuns, snapConveyor } from '@/lib/conveyors'
@@ -344,7 +344,8 @@ function FloorStage({
           fit={fit}
         />
 
-        {utilities.map((u) => (
+        {/* Ceiling-mounted utilities (sprinklers) are only drawn while their layer is on. */}
+        {utilities.filter((u) => utilityVisible(u.kind, layers)).map((u) => (
           <UtilityNode
             key={u.id}
             utility={u}

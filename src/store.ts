@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { getMachineType } from '@/data/catalog'
 import type { EquipmentCategoryId } from '@/data/categories'
 import { DEFAULT_CONVEYOR_LENGTH } from '@/data/conveyors'
-import { DEFAULT_LAYERS, type LayerId } from '@/data/layers'
+import { DEFAULT_LAYERS, UTILITY_LAYER, utilityVisible, type LayerId } from '@/data/layers'
 import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
 import { DEFAULT_PILLAR_GRID, type PillarGrid } from '@/lib/pillarGrid'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
@@ -355,7 +355,14 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
         s.placing.length !== undefined && { placing: { ...s.placing, length } }),
     })),
 
-  toggleLayer: (id) => set((s) => ({ layers: { ...s.layers, [id]: !s.layers[id] } })),
+  toggleLayer: (id) =>
+    set((s) => {
+      const layers = { ...s.layers, [id]: !s.layers[id] }
+      // A utility whose icon the layer hides can't stay selected.
+      const selected = s.utilities.find((u) => u.id === s.selectedId)
+      const hide = selected && !utilityVisible(selected.kind, layers)
+      return { layers, ...(hide && { selectedId: null }) }
+    }),
 
   toggleLockStructures: () =>
     set((s) => {
@@ -383,7 +390,14 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
     set((s) =>
       s.placing?.kind === 'utility' && s.placing.utilityKind === utilityKind
         ? { placing: null }
-        : { placing: { kind: 'utility', utilityKind }, selectedId: null },
+        : {
+            placing: { kind: 'utility', utilityKind },
+            selectedId: null,
+            // Placing something its layer hides turns that layer on, so it doesn't vanish.
+            ...(!utilityVisible(utilityKind, s.layers) && {
+              layers: { ...s.layers, [UTILITY_LAYER[utilityKind]]: true },
+            }),
+          },
     ),
 
   startPlacingPillar: () =>
