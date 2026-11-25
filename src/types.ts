@@ -69,6 +69,8 @@ export interface MachineInstance {
   /** Centre of the machine on the floorplan, mm. */
   y: number
   rotation: Rotation
+  /** Length of a straight conveyor belt, mm (its size along x at rotation 0). */
+  length?: number
 }
 
 export type UtilityKind = 'power' | 'water' | 'sprinkler' | 'extinguisher' | 'exit'
@@ -164,6 +166,7 @@ export const MachineInstanceSchema = z.object({
   x: z.number(),
   y: z.number(),
   rotation: RotationSchema,
+  length: z.number().positive().optional(),
 }) satisfies z.ZodType<MachineInstance>
 
 export const UtilityKindSchema = z.enum([

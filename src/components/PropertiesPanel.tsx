@@ -5,10 +5,12 @@ import { UTILITY_ICONS } from '@/components/utilityIcons'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { getMachineType } from '@/data/catalog'
+import { machineTypeFor } from '@/data/catalog'
+import { isValidConveyorLength } from '@/data/conveyors'
 import { MIN_WALL_LENGTH } from '@/data/structures'
 import { EXIT_MAX_DISTANCE, UTILITY_KINDS, utilityRadius } from '@/data/utilities'
 import { animateNodeOut } from '@/lib/animations'
+import { conveyorRuns } from '@/lib/conveyors'
 import { footprint, wallLength } from '@/lib/geometry'
 import { cn } from '@/lib/utils'
 import { findLayoutIssues, powerAssignments } from '@/lib/validation'
@@ -102,8 +104,12 @@ function MachineProperties({ machine }: { machine: MachineInstance }) {
   const moveMachine = usePlanner((s) => s.moveMachine)
   const rotateMachine = usePlanner((s) => s.rotateMachine)
   const removeMachine = usePlanner((s) => s.removeMachine)
+  const setBeltLength = usePlanner((s) => s.setBeltLength)
+  const machines = usePlanner((s) => s.machines)
+  const singlePieceId = usePlanner((s) => s.singlePieceId)
+  const run = useMemo(() => conveyorRuns(machines).runOf.get(machine.id), [machines, machine.id])
 
-  const type = getMachineType(machine.typeId)
+  const type = machineTypeFor(machine)
   if (!type) return null
   const size = footprint(type, machine.rotation)
 
@@ -112,10 +118,29 @@ function MachineProperties({ machine }: { machine: MachineInstance }) {
       <div>
         <div className="text-sm font-medium">{type.name}</div>
         <div className="mt-1 text-xs text-muted-foreground">
-          {size.width / 1000} × {size.depth / 1000} m · rotated {machine.rotation}° ·{' '}
-          {type.powerKw} kW
+          {size.width / 1000} × {size.depth / 1000} m · rotated {machine.rotation}°
+          {!run && ` · ${type.powerKw} kW`}
         </div>
       </div>
+
+      {run && (
+        <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs">
+          <div className="font-medium">
+            {run.pieceIds.length > 1 ? 'Conveyor run' : 'Conveyor (not joined)'}
+          </div>
+          <div className="mt-0.5 text-muted-foreground">
+            {run.pieceIds.length} {run.pieceIds.length === 1 ? 'piece' : 'pieces'} ·{' '}
+            {Math.round(run.length / 100) / 10} m · {run.powerKw} kW, one drive
+          </div>
+          {run.pieceIds.length > 1 && (
+            <div className="mt-1.5 text-muted-foreground">
+              {singlePieceId === machine.id
+                ? 'Moving this piece on its own. Click elsewhere to move the whole run again.'
+                : 'Dragging moves the whole run. Double-click a piece to move it on its own.'}
+            </div>
+          )}
+        </div>
+      )}
 
       <PositionFields
         id={machine.id}
@@ -124,6 +149,25 @@ function MachineProperties({ machine }: { machine: MachineInstance }) {
         onMove={(x, y) => moveMachine(machine.id, x, y)}
       />
       <p className="text-xs text-muted-foreground">Position is the machine's centre.</p>
+
+      {machine.length !== undefined && (
+        <div className="space-y-1.5">
+          <Field id="belt-length-prop" label="Length (m)">
+            <CommitInput
+              key={machine.id}
+              id="belt-length-prop"
+              className="h-8"
+              min={1}
+              max={30}
+              step={0.5}
+              value={machine.length / 1000}
+              isValid={(m) => isValidConveyorLength(m * 1000)}
+              onCommit={(m) => setBeltLength(machine.id, Math.round(m * 1000))}
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground">1–30 m. The input end stays put; the belt grows in its flow direction.</p>
+        </div>
+      )}
 
       <div className="flex gap-2">
         <Button variant="secondary" className="flex-1" onClick={() => rotateMachine(machine.id)}>

@@ -28,7 +28,7 @@ export function SupplyLines({
 }) {
   if (!all && !focusId) return null
   const lines = supplyLines(machines, utilities, kind, walls).filter(
-    (l) => all || l.machineId === focusId || l.utilityId === focusId,
+    (l) => all || l.utilityId === focusId || (focusId !== null && l.servedIds.includes(focusId)),
   )
   if (lines.length === 0) return null
   const colour = UTILITY_KINDS[kind].colour
@@ -36,7 +36,7 @@ export function SupplyLines({
   return (
     <Group listening={false}>
       {lines.map((l) => {
-        const strong = l.machineId === focusId || l.utilityId === focusId
+        const strong = l.utilityId === focusId || (focusId !== null && l.servedIds.includes(focusId))
         return (
           <Group key={`${kind}-${l.machineId}`} opacity={strong ? 1 : 0.75}>
             <Line

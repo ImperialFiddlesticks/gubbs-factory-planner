@@ -1,4 +1,4 @@
-import { getMachineType } from '@/data/catalog'
+import { machineTypeFor } from '@/data/catalog'
 import { EXIT_MAX_DISTANCE, utilityRadius } from '@/data/utilities'
 import {
   bodyBox,
@@ -14,6 +14,7 @@ import {
   type Box,
   type FloorBounds,
 } from '@/lib/geometry'
+import { conveyorMachineLinks, conveyorRuns, type ConveyorRun } from '@/lib/conveyors'
 import { walkingRoutes, type WalkingRoute } from '@/lib/walking'
 import type { Floorplan, MachineInstance, MachineType, Pillar, Point, Utility, Wall } from '@/types'
 
@@ -47,7 +48,7 @@ interface Resolved {
 function resolve(machines: MachineInstance[]): Resolved[] {
   const out: Resolved[] = []
   for (const machine of machines) {
-    const type = getMachineType(machine.typeId)
+    const type = machineTypeFor(machine)
     if (type) out.push({ machine, type, body: bodyBox(type, machine), clearance: clearanceBox(type, machine) })
   }
   return out
@@ -81,9 +82,17 @@ const NEEDS: Record<Exclude<Utility['kind'], 'exit' | 'extinguisher'>, (t: Machi
   sprinkler: (t) => t.needsFireSuppression,
 }
 
-/** A machine fed by a utility: the nearest one of that kind in reach. */
+/**
+ * A machine fed by a utility: the nearest one of that kind in reach. A conveyor run gets one
+ * power line, to whichever of its pieces is nearest a power point.
+ */
 export interface SupplyLine {
+  /** The machine (or conveyor piece) the line ends at. */
   machineId: string
+  /** Everything the line supplies: the machine, or every piece of the conveyor run. */
+  servedIds: string[]
+  /** Load it puts on the utility, kW (power lines). */
+  powerKw: number
   utilityId: string
   /** The utility's position. */
   from: Point
@@ -93,7 +102,10 @@ export interface SupplyLine {
   path: Point[]
 }
 
-/** One line per machine that needs the kind and has a utility of it in reach. */
+/**
+ * One line per machine that needs the kind and has a utility of it in reach; for power, one
+ * line per conveyor run (its drive) instead of one per piece.
+ */
 export function supplyLines(
   machines: MachineInstance[],
   utilities: Utility[],
@@ -102,13 +114,29 @@ export function supplyLines(
 ): SupplyLine[] {
   const lines: SupplyLine[] = []
   const resolved = resolve(machines)
-  for (const r of resolved) {
-    if (!NEEDS[kind](r.type)) continue
-    const nearest = inReach(r, utilities, kind, walls)[0]
-    if (!nearest) continue
+  const bodies = resolved.map((o) => o.body)
+  const { runs, runOf } = kind === 'power' ? conveyorRuns(machines) : { runs: [], runOf: new Map<string, ConveyorRun>() }
+
+  const lineTo = (r: Resolved, nearest: ReturnType<typeof inReach>[number], servedIds: string[], powerKw: number) => {
     const from = { x: nearest.u.x, y: nearest.u.y }
-    const path = orthogonalRoute(from, r.body, nearest.at, walls, resolved.map((o) => o.body))
-    lines.push({ machineId: r.machine.id, utilityId: nearest.u.id, from, to: path[path.length - 1], path })
+    const path = orthogonalRoute(from, r.body, nearest.at, walls, bodies)
+    lines.push({ machineId: r.machine.id, servedIds, powerKw, utilityId: nearest.u.id, from, to: path[path.length - 1], path })
+  }
+
+  for (const r of resolved) {
+    if (runOf.has(r.machine.id) || !NEEDS[kind](r.type)) continue
+    const nearest = inReach(r, utilities, kind, walls)[0]
+    if (nearest) lineTo(r, nearest, [r.machine.id], r.type.powerKw)
+  }
+  for (const run of runs) {
+    // The run's drive is fed by the power point nearest to any of its pieces.
+    let best: { r: Resolved; nearest: ReturnType<typeof inReach>[number] } | null = null
+    for (const r of resolved) {
+      if (runOf.get(r.machine.id) !== run) continue
+      const nearest = inReach(r, utilities, kind, walls)[0]
+      if (nearest && (!best || nearest.d < best.nearest.d)) best = { r, nearest }
+    }
+    if (best) lineTo(best.r, best.nearest, run.pieceIds, run.powerKw)
   }
   return lines
 }
@@ -155,11 +183,9 @@ const withoutRepeats = (path: Point[]) =>
 export function powerAssignments(machines: MachineInstance[], utilities: Utility[], walls: Wall[]) {
   const feeds = new Map<string, string>() // machine id -> power point id
   const loads = new Map<string, number>() // power point id -> kW
-  const kwById = new Map(machines.map((m) => [m.id, getMachineType(m.typeId)?.powerKw ?? 0]))
   for (const line of supplyLines(machines, utilities, 'power', walls)) {
-    const kw = kwById.get(line.machineId) ?? 0
-    feeds.set(line.machineId, line.utilityId)
-    loads.set(line.utilityId, (loads.get(line.utilityId) ?? 0) + kw)
+    for (const id of line.servedIds) feeds.set(id, line.utilityId)
+    loads.set(line.utilityId, Math.round(((loads.get(line.utilityId) ?? 0) + line.powerKw) * 100) / 100)
   }
   return { feeds, loads }
 }
@@ -169,7 +195,9 @@ export function powerAssignments(machines: MachineInstance[], utilities: Utility
  * - a body may not overlap another body;
  * - a body may not sit in another machine's clearance (either way round);
  * - body and clearance must stay inside the floor.
- * Two clearance zones may overlap (a shared aisle).
+ * Two clearance zones may overlap (a shared aisle). Pieces of one conveyor run don't block each
+ * other's clearance (nor does a belt joined to a machine's front), and a run is powered as one
+ * drive (see supplyLines).
  *
  * Structure rules (pillars and internal walls):
  * - a body may not overlap a structure;
@@ -191,14 +219,15 @@ export function findLayoutIssues(
   structures: Structures,
 ): LayoutIssue[] {
   const resolved = resolve(machines)
+  const { runs, runOf } = conveyorRuns(machines)
   const boxes: StructureBox[] = [
     ...structures.pillars.map((p) => ({ id: p.id, noun: 'pillar' as const, box: pillarBox(p) })),
     ...structures.walls.map((w) => ({ id: w.id, noun: 'wall' as const, box: wallBox(w) })),
   ]
   return [
-    ...spaceIssues(resolved, floorplan),
+    ...spaceIssues(resolved, floorplan, runOf, conveyorMachineLinks(machines)),
     ...structureIssues(resolved, boxes, floorplan),
-    ...utilityIssues(resolved, machines, utilities, structures.walls, floorplan),
+    ...utilityIssues(resolved, machines, utilities, structures.walls, floorplan, runs, runOf),
   ]
 }
 
@@ -234,7 +263,12 @@ function structureIssues(resolved: Resolved[], structures: StructureBox[], floor
   return issues
 }
 
-function spaceIssues(resolved: Resolved[], floorplan: Floorplan): LayoutIssue[] {
+function spaceIssues(
+  resolved: Resolved[],
+  floorplan: Floorplan,
+  runOf: Map<string, ConveyorRun>,
+  linked: (a: string, b: string) => boolean,
+): LayoutIssue[] {
   const issues: LayoutIssue[] = []
   for (const r of resolved) {
     const id = r.machine.id
@@ -251,8 +285,15 @@ function spaceIssues(resolved: Resolved[], floorplan: Floorplan): LayoutIssue[] 
       const b = resolved[j]
       const ids = [a.machine.id, b.machine.id]
       const key = ids.join('|')
+      // Pieces of one conveyor run sit end to end: they may not overlap, but don't block each other.
+      // Likewise a belt joined to a machine's front.
+      const noClash =
+        (runOf.has(a.machine.id) && runOf.get(a.machine.id) === runOf.get(b.machine.id)) ||
+        linked(a.machine.id, b.machine.id)
       if (boxesOverlap(a.body, b.body)) {
         issues.push({ key: `overlap:${key}`, category: 'space', ids, message: `${a.type.name} overlaps ${b.type.name}.` })
+      } else if (noClash) {
+        continue
       } else if (boxesOverlap(a.body, b.clearance)) {
         issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${a.type.name} blocks the clearance of ${b.type.name}.` })
       } else if (boxesOverlap(b.body, a.clearance)) {
@@ -270,8 +311,18 @@ function utilityIssues(
   utilities: Utility[],
   walls: Wall[],
   floorplan: Floorplan,
+  runs: ConveyorRun[],
+  runOf: Map<string, ConveyorRun>,
 ): LayoutIssue[] {
   const issues: LayoutIssue[] = []
+  // Who gets power: a machine, or every piece of a conveyor run through its drive.
+  const powered = new Set(supplyLines(machines, utilities, 'power', walls).flatMap((l) => l.servedIds))
+  for (const run of runs) {
+    if (run.powerKw > 0 && !powered.has(run.id)) {
+      const what = run.pieceIds.length > 1 ? 'Conveyor run' : 'Conveyor'
+      issues.push({ key: `power-run:${run.id}`, category: 'utility', need: 'power', ids: run.pieceIds, message: `${what} has no power point in reach.` })
+    }
+  }
   const exits = utilities.filter((u) => u.kind === 'exit')
   if (resolved.length > 0 && exits.length === 0) {
     issues.push({ key: 'no-exit', category: 'utility', ids: [], message: 'The floor has no exit.' })
@@ -294,7 +345,7 @@ function utilityIssues(
     if (r.type.needsFireSuppression && inReach(r, utilities, 'sprinkler', walls).length === 0) {
       issues.push({ key: `sprinkler:${id}`, category: 'utility', need: 'sprinkler', ids: [id], message: `${name} is not covered by a sprinkler.` })
     }
-    if (r.type.powerKw > 0 && inReach(r, utilities, 'power', walls).length === 0) {
+    if (r.type.powerKw > 0 && !runOf.has(id) && !powered.has(id)) {
       issues.push({ key: `power:${id}`, category: 'utility', need: 'power', ids: [id], message: `${name} has no power point in reach.` })
     }
     const walked = walk.get(id)?.distance ?? Infinity

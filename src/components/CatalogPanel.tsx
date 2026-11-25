@@ -1,9 +1,11 @@
 import { ChevronRight } from 'lucide-react'
+import { CommitInput } from '@/components/CommitInput'
 import { PanelHeading } from '@/components/PanelHeading'
 import { UTILITY_ICONS } from '@/components/utilityIcons'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { CATALOG } from '@/data/catalog'
+import { CATALOG, getMachineType } from '@/data/catalog'
+import { isValidConveyorLength } from '@/data/conveyors'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
 import { EXIT_MAX_DISTANCE, UTILITY_LIST, type UtilityKindInfo } from '@/data/utilities'
 import { cn } from '@/lib/utils'
@@ -83,6 +85,8 @@ function MachineItem({ type }: { type: MachineType }) {
   const startPlacing = usePlanner((s) => s.startPlacingMachine)
   const active = usePlanner((s) => s.placing?.kind === 'machine' && s.placing.typeId === type.id)
 
+  if (getMachineType(type.id)?.conveyor === 'straight') return <BeltItem type={type} active={active} />
+
   return (
     <button
       type="button"
@@ -101,6 +105,48 @@ function MachineItem({ type }: { type: MachineType }) {
         </div>
       )}
     </button>
+  )
+}
+
+/**
+ * Straight belt: the card places it, and the length field below sets the length of the next
+ * belt (and of the one being placed). The field sits outside the button, so typing doesn't place.
+ */
+function BeltItem({ type, active }: { type: MachineType; active: boolean }) {
+  const startPlacing = usePlanner((s) => s.startPlacingMachine)
+  const length = usePlanner((s) => s.conveyorLength)
+  const setLength = usePlanner((s) => s.setConveyorLength)
+
+  return (
+    <div className={cn(cardClass, 'p-0', active && activeClass)}>
+      <button
+        type="button"
+        aria-pressed={active}
+        onClick={() => startPlacing(type.id)}
+        className="block w-full px-3 pt-2 pb-1 text-left"
+      >
+        <div className="text-sm font-medium">{type.name}</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {metres(type.depth)} m wide · 0.25 kW per m
+        </div>
+      </button>
+      <div className="flex items-center gap-2 px-3 pt-1 pb-2">
+        <label htmlFor="belt-length" className="text-xs text-muted-foreground">
+          Length
+        </label>
+        <CommitInput
+          id="belt-length"
+          className="h-7 w-16 text-xs"
+          min={1}
+          max={30}
+          step={0.5}
+          value={length / 1000}
+          isValid={(m) => isValidConveyorLength(m * 1000)}
+          onCommit={(m) => setLength(Math.round(m * 1000))}
+        />
+        <span className="text-xs text-muted-foreground">m</span>
+      </div>
+    </div>
   )
 }
 
