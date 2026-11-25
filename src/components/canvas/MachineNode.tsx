@@ -1,14 +1,16 @@
 import { useEffect, useRef } from 'react'
 import Konva from 'konva'
 import { Group, Rect, Text } from 'react-konva'
+import { ConveyorBody } from '@/components/canvas/ConveyorBody'
 import { UtilityIcon } from '@/components/canvas/UtilityNode'
 import { setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
-import { getMachineType } from '@/data/catalog'
+import { getMachineType, machineTypeFor } from '@/data/catalog'
+import { conveyorRuns, snapShift } from '@/lib/conveyors'
 import { clearanceBox, footprint } from '@/lib/geometry'
 import type { Need } from '@/lib/validation'
 import { usePlanner } from '@/store'
-import { CANVAS } from '@/theme'
+import { CANVAS, COLORS } from '@/theme'
 import type { MachineInstance, Rotation } from '@/types'
 
 export type Outline = 'none' | 'selected' | 'valid' | 'invalid'
@@ -32,7 +34,9 @@ export function Machine({
   onDrag: (drag: DragState | null) => void
 }) {
   const select = usePlanner((s) => s.select)
-  const moveMachine = usePlanner((s) => s.moveMachine)
+  const moveMachines = usePlanner((s) => s.moveMachines)
+  const selectSinglePiece = usePlanner((s) => s.selectSinglePiece)
+  const isConveyor = !!getMachineType(machine.typeId)?.conveyor
   const groupRef = useRef<Konva.Group>(null)
 
   // Juice: pop in when placed.
@@ -64,7 +68,37 @@ export function Machine({
     node.to({ rotation: 0, duration: 0.5, easing: Konva.Easings.ElasticEaseOut })
   }, [machine.rotation])
 
-  const toMm = (node: Konva.Node) => ({ x: node.x() / SCALE, y: node.y() / SCALE })
+  /** The rest of the conveyor run, moving along while this piece is dragged (set on drag start). */
+  const movingWith = useRef<MachineInstance[]>([])
+
+  /** Pieces dragged together with this one: its whole run, unless it was double-clicked. */
+  function runMates(): MachineInstance[] {
+    const { machines, singlePieceId } = usePlanner.getState()
+    if (singlePieceId === machine.id) return []
+    const run = conveyorRuns(machines).runOf.get(machine.id)
+    if (!run || run.pieceIds.length < 2) return []
+    return machines.filter((m) => m.id !== machine.id && run.pieceIds.includes(m.id))
+  }
+
+  /**
+   * Live position in mm. Conveyor pieces (and a run moving together) snap onto a nearby free
+   * end or machine front, and the node jumps there.
+   */
+  const toMm = (node: Konva.Node) => {
+    const at = { x: node.x() / SCALE, y: node.y() / SCALE }
+    const dx = at.x - machine.x
+    const dy = at.y - machine.y
+    const moving = [
+      { ...machine, ...at },
+      ...movingWith.current.map((m) => ({ ...m, x: m.x + dx, y: m.y + dy })),
+    ]
+    const shift = snapShift(moving, usePlanner.getState().machines)
+    if (!shift) return at
+    const snapped = { x: Math.round(at.x + shift.x), y: Math.round(at.y + shift.y) }
+    node.position({ x: snapped.x * SCALE, y: snapped.y * SCALE })
+    return snapped
+  }
+  const group = () => (movingWith.current.length ? movingWith.current.map((m) => m.id) : undefined)
 
   return (
     // The group sits at the machine's centre; everything inside is drawn around it.
@@ -78,15 +112,24 @@ export function Machine({
       listening={interactive}
       onMouseDown={() => select(machine.id)}
       onTouchStart={() => select(machine.id)}
+      onDblClick={() => isConveyor && selectSinglePiece(machine.id)}
+      onDblTap={() => isConveyor && selectSinglePiece(machine.id)}
       onDragStart={(e) => {
         select(machine.id)
-        onDrag({ id: machine.id, ...toMm(e.target) })
+        movingWith.current = runMates()
+        onDrag({ id: machine.id, ...toMm(e.target), group: group() })
       }}
-      onDragMove={(e) => onDrag({ id: machine.id, ...toMm(e.target) })}
+      onDragMove={(e) => onDrag({ id: machine.id, ...toMm(e.target), group: group() })}
       onDragEnd={(e) => {
-        // Free placement: no snapping, just round to whole millimetres.
+        // Free placement (conveyors snap to free ends), rounded to whole millimetres.
         const { x, y } = toMm(e.target)
-        moveMachine(machine.id, Math.round(x), Math.round(y))
+        const dx = x - machine.x
+        const dy = y - machine.y
+        moveMachines([
+          { id: machine.id, x, y },
+          ...movingWith.current.map((m) => ({ id: m.id, x: m.x + dx, y: m.y + dy })),
+        ])
+        movingWith.current = []
         onDrag(null)
         // Juice: small settle when dropped.
         e.target.scale({ x: 1.06, y: 1.06 })
@@ -97,6 +140,7 @@ export function Machine({
     >
       <MachineBody
         typeId={machine.typeId}
+        length={machine.length}
         rotation={machine.rotation}
         outline={outline}
         needs={needs}
@@ -116,6 +160,7 @@ const OUTLINE_STYLE: Record<Outline, { stroke: string; width: number }> = {
 /** The machine's rectangle, front marker, label and needs badges, drawn centred on (0, 0). */
 export function MachineBody({
   typeId,
+  length,
   rotation,
   outline,
   needs,
@@ -123,19 +168,39 @@ export function MachineBody({
   dashed = false,
 }: {
   typeId: string
+  /** Straight conveyor length, mm. */
+  length?: number
   rotation: Rotation
   outline: Outline
   needs: Need[]
   fit: number
   dashed?: boolean
 }) {
-  const type = getMachineType(typeId)
+  const type = machineTypeFor({ typeId, length })
   if (!type) return null
 
   const size = footprint(type, rotation)
   const w = size.width * SCALE
   const h = size.depth * SCALE
   const style = OUTLINE_STYLE[outline]
+
+  if (type.conveyor) {
+    return (
+      <>
+        <ConveyorBody
+          piece={type.conveyor}
+          length={type.width}
+          width={type.depth}
+          rotation={rotation}
+          stroke={outline === 'none' ? COLORS.grey700 : style.stroke}
+          strokeWidth={style.width}
+          dashed={dashed}
+          fit={fit}
+        />
+        <NeedsBadges needs={needs} top={-h / 2} fit={fit} />
+      </>
+    )
+  }
 
   return (
     <>
@@ -208,7 +273,7 @@ function NeedsBadges({ needs, top, fit }: { needs: Need[]; top: number; fit: num
 
 /** Faint area showing the free space a machine needs; green if fine, red if not. */
 export function ClearanceZone({ machine, valid }: { machine: MachineInstance; valid: boolean }) {
-  const type = getMachineType(machine.typeId)
+  const type = machineTypeFor(machine)
   if (!type) return null
   const box = clearanceBox(type, machine)
   const colour = valid ? CANVAS.valid : CANVAS.invalid

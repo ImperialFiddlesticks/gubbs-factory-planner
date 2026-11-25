@@ -1,11 +1,13 @@
 import { create } from 'zustand'
 import { getMachineType } from '@/data/catalog'
 import type { EquipmentCategoryId } from '@/data/categories'
+import { DEFAULT_CONVEYOR_LENGTH } from '@/data/conveyors'
 import { DEFAULT_LAYERS, type LayerId } from '@/data/layers'
 import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
 import { DEFAULT_PILLAR_GRID, type PillarGrid } from '@/lib/pillarGrid'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
+import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
 import type { Floorplan, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall } from '@/types'
 
@@ -13,7 +15,7 @@ export type NewFloorplanInput = Omit<Floorplan, 'id'>
 
 /** Something picked from the left panel that is following the cursor (the "ghost"). */
 export type Placing =
-  | { kind: 'machine'; typeId: string; rotation: Rotation }
+  | { kind: 'machine'; typeId: string; rotation: Rotation; length?: number }
   | { kind: 'utility'; utilityKind: UtilityKind }
   | { kind: 'pillar' }
   /** Drawing a wall: `start` is null until the first click. */
@@ -66,8 +68,15 @@ interface PlannerState {
   walls: Wall[]
   /** A machine, utility or pillar id. */
   selectedId: string | null
+  /**
+   * A conveyor piece double-clicked to move on its own; otherwise dragging a piece moves its
+   * whole run. Cleared when something else is selected. UI-only, not saved.
+   */
+  singlePieceId: string | null
   /** Set while placing from the left panel; UI-only, not saved. */
   placing: Placing | null
+  /** Length the next straight conveyor belt is placed with, mm; UI-only, not saved. */
+  conveyorLength: number
   /** Which canvas overlays are switched on; UI-only, not saved. */
   layers: Record<LayerId, boolean>
   /** Pillars and walls can't be selected or dragged; UI-only, not saved. */
@@ -85,9 +94,13 @@ interface PlannerState {
   setFloorplan: (width: number, depth: number) => void
 
   /** Add a machine; without `at` it goes to the centre of the floor. */
-  addMachine: (typeId: string, at?: { x: number; y: number; rotation?: Rotation }) => void
+  addMachine: (typeId: string, at?: { x: number; y: number; rotation?: Rotation; length?: number }) => void
   moveMachine: (id: string, x: number, y: number) => void
+  /** Move several machines at once (a conveyor run). */
+  moveMachines: (moves: { id: string; x: number; y: number }[]) => void
   rotateMachine: (id: string) => void
+  /** Change a straight belt's length, keeping its input end in place. */
+  setBeltLength: (id: string, length: number) => void
   removeMachine: (id: string) => void
 
   /** Add a utility with its kind's default radius/capacity. Exits snap to the nearest wall. */
@@ -109,7 +122,11 @@ interface PlannerState {
   removeWall: (id: string) => void
 
   select: (id: string | null) => void
+  /** Select a conveyor piece and let it be dragged on its own, out of its run. */
+  selectSinglePiece: (id: string) => void
   toggleLayer: (id: LayerId) => void
+  /** Also applies to the belt being placed, if any. */
+  setConveyorLength: (length: number) => void
   /** Locking also deselects a selected structure. */
   toggleLockStructures: () => void
 
@@ -151,8 +168,10 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   pillars: [],
   walls: [],
   selectedId: null,
+  singlePieceId: null,
   placing: null,
   layers: DEFAULT_LAYERS,
+  conveyorLength: DEFAULT_CONVEYOR_LENGTH,
   lockStructures: false,
 
   newFloorplan: (input, pillars = []) =>
@@ -197,6 +216,8 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       x: Math.round(at?.x ?? floorplan.width / 2),
       y: Math.round(at?.y ?? floorplan.depth / 2),
       rotation: at?.rotation ?? 0,
+      // Straight belts keep their own length (the catalog width is the default).
+      ...(type.conveyor === 'straight' && { length: at?.length ?? type.width }),
     }
     set((s) => ({ machines: [...s.machines, machine], selectedId: machine.id }))
   },
@@ -204,11 +225,30 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   moveMachine: (id, x, y) =>
     set((s) => ({ machines: s.machines.map((m) => (m.id === id ? { ...m, x, y } : m)) })),
 
+  moveMachines: (moves) =>
+    set((s) => {
+      const to = new Map(moves.map((m) => [m.id, m]))
+      return {
+        machines: s.machines.map((m) => {
+          const p = to.get(m.id)
+          return p ? { ...m, x: Math.round(p.x), y: Math.round(p.y) } : m
+        }),
+      }
+    }),
+
   rotateMachine: (id) =>
     set((s) => ({
       machines: s.machines.map((m) =>
         m.id === id ? { ...m, rotation: nextRotation[m.rotation] } : m,
       ),
+    })),
+
+  setBeltLength: (id, length) =>
+    set((s) => ({
+      machines: s.machines.map((m) => {
+        if (m.id !== id || m.length === undefined) return m
+        return { ...m, ...resizedBeltCentre(m, m.rotation, m.length, length), length }
+      }),
     })),
 
   removeMachine: (id) =>
@@ -303,7 +343,17 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       selectedId: s.selectedId === id ? null : s.selectedId,
     })),
 
-  select: (id) => set({ selectedId: id }),
+  select: (id) =>
+    set((s) => ({ selectedId: id, ...(id !== s.singlePieceId && { singlePieceId: null }) })),
+
+  selectSinglePiece: (id) => set({ selectedId: id, singlePieceId: id }),
+
+  setConveyorLength: (length) =>
+    set((s) => ({
+      conveyorLength: length,
+      ...(s.placing?.kind === 'machine' &&
+        s.placing.length !== undefined && { placing: { ...s.placing, length } }),
+    })),
 
   toggleLayer: (id) => set((s) => ({ layers: { ...s.layers, [id]: !s.layers[id] } })),
 
@@ -318,7 +368,15 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
     set((s) =>
       s.placing?.kind === 'machine' && s.placing.typeId === typeId
         ? { placing: null }
-        : { placing: { kind: 'machine', typeId, rotation: 0 }, selectedId: null },
+        : {
+            placing: {
+              kind: 'machine',
+              typeId,
+              rotation: 0,
+              ...(getMachineType(typeId)?.conveyor === 'straight' && { length: s.conveyorLength }),
+            },
+            selectedId: null,
+          },
     ),
 
   startPlacingUtility: (utilityKind) =>

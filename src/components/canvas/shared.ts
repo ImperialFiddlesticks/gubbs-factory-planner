@@ -5,6 +5,8 @@ export interface DragState {
   id: string
   x: number
   y: number
+  /** Other machines moving with it by the same amount (the rest of a conveyor run). */
+  group?: string[]
 }
 
 /** ID used for the ghost when it is checked against the layout rules. */

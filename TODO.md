@@ -63,9 +63,16 @@ Decided: water and power lines are drawn automatically from the existing reach r
 ## Up next (to plan)
 
 ### Conveyors
-- Length as an input: set a belt's length (m) when placing and in the properties panel, instead of a fixed size.
-- Conveyor corners: a 90° corner piece (left or right turn).
-- Snapping: belt ends and corners snap together, so a continuous line of belts can be built; a connected line reads as one conveyor run.
+
+Decided: conveyors are pieces placed one at a time (straight belts and corners), like other machines; every piece has a flow direction shown with arrows; pieces snap output-to-input only; no snapping to machines yet; a connected run has one drive (power counted once per run, by belt length) and its pieces don't clash with each other's clearance.
+
+- [x] 32. Data model: catalog conveyor pieces — "Belt conveyor" (straight, length per piece, 1–30 m, default 3 m) and "Conveyor corner" left/right (0.8 × 0.8 m) — replacing the fixed 6 m section. `length` on the placed machine; body, clearance, clashes and routes use it.
+- [x] 33. Length input: a length field on the straight belt in the catalog (used for the next placement) and in the properties panel for a placed belt.
+- [x] 34. Canvas look: belts drawn with rollers and flow arrows; corners as a curved quarter turn with an arrow; rotation turns the flow.
+- [x] 35. Snapping: while placing or dragging a piece, its input snaps onto a nearby free output (or its output onto a free input) when the flow directions line up; free ends are marked.
+- [x] 36. Runs: connected pieces form one run. No clearance clashes between pieces of a run; power is counted once per run (0.25 kW per metre of belt) from one power point that reaches any piece, with one wire; the properties panel shows the run (pieces, total length, power).
+- [x] 37. Machine fronts: a conveyor end snaps to the middle of a machine's front (feeding into it, or taking goods out of it); one conveyor per front; a joined belt and machine don't block each other's clearance; free fronts are marked while a conveyor piece is being placed or dragged.
+- [x] 38. Moving runs: dragging a conveyor piece moves its whole run (outlined together when selected, and the run's free ends snap); double-click a piece to move it on its own.
 
 ### Design rework
 - Machines: rework how machines look on the canvas (shape, label, colours, front marker, needs badges).

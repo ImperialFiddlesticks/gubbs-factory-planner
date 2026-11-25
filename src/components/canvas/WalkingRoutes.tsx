@@ -1,6 +1,6 @@
 import { Group, Label, Line, Tag, Text } from 'react-konva'
 import { SCALE } from '@/constants'
-import { getMachineType } from '@/data/catalog'
+import { machineTypeFor } from '@/data/catalog'
 import { EXIT_MAX_DISTANCE, UTILITY_KINDS, utilityRadius } from '@/data/utilities'
 import { bodyBox } from '@/lib/geometry'
 import { extinguisherRoutes } from '@/lib/validation'
@@ -45,7 +45,7 @@ export function WalkingRoutes({
   if (sources.length === 0) return null
 
   const bodies = machines.flatMap((m) => {
-    const type = getMachineType(m.typeId)
+    const type = machineTypeFor(m)
     return type ? [{ id: m.id, body: bodyBox(type, m) }] : []
   })
   const routes: { id: string; route: WalkingRoute; limit: number; ok: boolean }[] = []

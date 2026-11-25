@@ -1,10 +1,34 @@
 import type { EquipmentCategoryId } from '@/data/categories'
-import type { MachineType } from '@/types'
+import {
+  CONVEYOR_KW_PER_M,
+  CONVEYOR_WIDTH,
+  DEFAULT_CONVEYOR_LENGTH,
+  type ConveyorPiece,
+} from '@/data/conveyors'
+import type { MachineInstance, MachineType } from '@/types'
 
 /** A catalog machine: the backend MachineType plus a UI-side category. */
 export interface CatalogMachine extends MachineType {
   category: EquipmentCategoryId
+  /** Set for conveyor pieces. A straight's width is its length (along x at rotation 0). */
+  conveyor?: ConveyorPiece
 }
+
+/** Drive power for a length of belt, kW (two decimals). */
+export const conveyorKw = (mm: number) => Math.round(CONVEYOR_KW_PER_M * (mm / 1000) * 100) / 100
+
+const cornerPiece = (side: 'left' | 'right'): CatalogMachine => ({
+  id: `conveyor-corner-${side}`,
+  category: 'material-handling',
+  name: `Conveyor corner (${side} turn)`,
+  conveyor: `corner-${side}`,
+  width: CONVEYOR_WIDTH,
+  depth: CONVEYOR_WIDTH,
+  clearance: { front: 600, back: 600, left: 600, right: 600 },
+  powerKw: conveyorKw(CONVEYOR_WIDTH),
+  needsWater: false,
+  needsFireSuppression: false,
+})
 
 /**
  * Hardcoded machine catalog. Dimensions in mm, power in kW.
@@ -45,16 +69,20 @@ export const CATALOG: CatalogMachine[] = [
     needsFireSuppression: true,
   },
   {
-    id: 'belt-conveyor',
+    id: 'conveyor-straight',
     category: 'material-handling',
-    name: 'Belt conveyor (6 m section)',
-    width: 6000,
-    depth: 800,
+    name: 'Belt conveyor',
+    conveyor: 'straight',
+    // Default length; each placed belt has its own.
+    width: DEFAULT_CONVEYOR_LENGTH,
+    depth: CONVEYOR_WIDTH,
     clearance: { front: 600, back: 600, left: 300, right: 300 },
-    powerKw: 1.5,
+    powerKw: conveyorKw(DEFAULT_CONVEYOR_LENGTH),
     needsWater: false,
     needsFireSuppression: false,
   },
+  cornerPiece('left'),
+  cornerPiece('right'),
   {
     id: 'packing-table',
     category: 'assembly-packing',
@@ -81,4 +109,14 @@ export const CATALOG: CatalogMachine[] = [
 
 export function getMachineType(id: string): CatalogMachine | undefined {
   return CATALOG.find((t) => t.id === id)
+}
+
+/**
+ * The type as it applies to one placed machine: a straight belt takes its own length
+ * (as width) and the drive power for that length. Use this whenever sizing a placed machine.
+ */
+export function machineTypeFor(m: Pick<MachineInstance, 'typeId' | 'length'>): CatalogMachine | undefined {
+  const type = getMachineType(m.typeId)
+  if (type?.conveyor !== 'straight' || m.length === undefined) return type
+  return { ...type, width: m.length, powerKw: conveyorKw(m.length) }
 }

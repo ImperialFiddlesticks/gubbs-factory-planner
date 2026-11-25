@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type Konva from 'konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import { Group, Layer, Line, Shape, Stage } from 'react-konva'
+import { ConveyorEnds } from '@/components/canvas/ConveyorBody'
 import { ClearanceZone, Machine, MachineBody, type Outline } from '@/components/canvas/MachineNode'
 import { GHOST_ID, type DragState } from '@/components/canvas/shared'
 import { PillarBody, PillarNode } from '@/components/canvas/PillarNode'
@@ -14,6 +15,7 @@ import { getMachineType } from '@/data/catalog'
 import { UTILITY_LAYER } from '@/data/layers'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS, MIN_WALL_LENGTH } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
+import { conveyorRuns, snapConveyor } from '@/lib/conveyors'
 import { floorCorners } from '@/lib/floorShapes'
 import { snapToWall, straightenWall, wallLength } from '@/lib/geometry'
 import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validation'
@@ -113,6 +115,7 @@ function FloorStage({
   const walls = usePlanner((s) => s.walls)
   const lockStructures = usePlanner((s) => s.lockStructures)
   const selectedId = usePlanner((s) => s.selectedId)
+  const singlePieceId = usePlanner((s) => s.singlePieceId)
   const placing = usePlanner((s) => s.placing)
   const layers = usePlanner((s) => s.layers)
   const select = usePlanner((s) => s.select)
@@ -134,7 +137,11 @@ function FloorStage({
 
   // The layout as it would be if the active item were dropped where it is now.
   // Recomputed every render; cheap for the number of items on a floor.
-  const liveMachines = active?.kind === 'machine' ? withItem(machines, active.item) : machines
+  const liveMachines = withGroup(
+    active?.kind === 'machine' ? withItem(machines, active.item) : machines,
+    drag,
+    machines,
+  )
   const liveUtilities = active?.kind === 'utility' ? withItem(utilities, active.item) : utilities
   const livePillars = active?.kind === 'pillar' ? withItem(pillars, active.item) : pillars
   const liveWalls = active?.kind === 'wall' ? withItem(walls, active.item) : walls
@@ -176,7 +183,9 @@ function FloorStage({
         return
       }
       if (at && placing.kind === 'machine') {
-        addMachine(placing.typeId, { ...at, rotation: placing.rotation })
+        // Where the ghost is drawn, which includes conveyor snapping.
+        const ghost = active?.kind === 'machine' ? active.item : at
+        addMachine(placing.typeId, { x: ghost.x, y: ghost.y, rotation: placing.rotation, length: placing.length })
       } else if (at && placing.kind === 'utility') {
         addUtility(placing.utilityKind, at.x, at.y)
       } else if (at && placing.kind === 'pillar') {
@@ -190,9 +199,15 @@ function FloorStage({
     if (!['.machine', '.utility', '.pillar', '.wall'].some((n) => t.findAncestor(n, true))) select(null)
   }
 
+  // A selected conveyor piece selects its whole run (what a drag moves), unless double-clicked.
+  const selectedRun =
+    selectedId && selectedId !== singlePieceId
+      ? conveyorRuns(liveMachines).runOf.get(selectedId)?.pieceIds
+      : undefined
+
   function outlineFor(id: string): Outline {
     if (id === active?.item.id) return spaceBad.has(id) ? 'invalid' : 'valid'
-    if (id === selectedId) return 'selected'
+    if (id === selectedId || selectedRun?.includes(id)) return 'selected'
     return spaceBad.has(id) ? 'invalid' : 'none'
   }
 
@@ -266,17 +281,28 @@ function FloorStage({
             <ClearanceZone key={`zone-${m.id}`} machine={m} valid={!spaceBad.has(m.id)} />
           ))}
 
-        {machines.map((m) => (
-          <Machine
-            key={m.id}
-            machine={m}
-            outline={outlineFor(m.id)}
-            needs={needs.get(m.id) ?? []}
-            fit={fit}
-            interactive={!placing}
-            onDrag={setDrag}
-          />
-        ))}
+        {/* Live positions, so the rest of a dragged conveyor run moves along. */}
+        {liveMachines
+          .filter((m) => m.id !== GHOST_ID)
+          .map((m) => (
+            <Machine
+              key={m.id}
+              machine={m}
+              outline={outlineFor(m.id)}
+              needs={needs.get(m.id) ?? []}
+              fit={fit}
+              interactive={!placing}
+              onDrag={setDrag}
+            />
+          ))}
+
+        {/* Free conveyor ends, where a run can continue (includes the piece being moved), */}
+        {/* and free machine fronts while a conveyor piece is being moved. */}
+        <ConveyorEnds
+          machines={liveMachines}
+          showFronts={active?.kind === 'machine' && !!getMachineType(active.item.typeId)?.conveyor}
+          fit={fit}
+        />
 
         {/* Lines and routes go above machines (they end at the machine's edge), under utilities. */}
         <SupplyLines
@@ -350,6 +376,7 @@ function FloorStage({
             {active.kind === 'machine' ? (
               <MachineBody
                 typeId={active.item.typeId}
+                length={active.item.length}
                 rotation={active.item.rotation}
                 outline={outlineFor(GHOST_ID)}
                 needs={needs.get(GHOST_ID) ?? []}
@@ -380,6 +407,16 @@ function FloorStage({
   )
 }
 
+/** Machines with the rest of a dragged conveyor run shifted by the same amount as the dragged piece. */
+function withGroup(live: MachineInstance[], drag: DragState | null, stored: MachineInstance[]) {
+  if (!drag?.group) return live
+  const from = stored.find((m) => m.id === drag.id)
+  if (!from) return live
+  const dx = drag.x - from.x
+  const dy = drag.y - from.y
+  return live.map((m) => (drag.group?.includes(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m))
+}
+
 /** The ghost under the cursor, or the item being dragged, at its live position. */
 function activeItem(
   placing: Placing | null,
@@ -393,10 +430,15 @@ function activeItem(
 ): Active | null {
   if (placing && pointer) {
     if (placing.kind === 'machine') {
-      return {
-        kind: 'machine',
-        item: { id: GHOST_ID, typeId: placing.typeId, rotation: placing.rotation, ...pointer },
+      const item: MachineInstance = {
+        id: GHOST_ID,
+        typeId: placing.typeId,
+        rotation: placing.rotation,
+        length: placing.length,
+        ...pointer,
       }
+      // Conveyor pieces snap onto a nearby free end.
+      return { kind: 'machine', item: { ...item, ...snapConveyor(item, machines) } }
     }
     if (placing.kind === 'pillar') {
       return {
