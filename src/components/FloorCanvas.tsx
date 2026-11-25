@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type Konva from 'konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
-import { Group, Layer, Rect, Shape, Stage } from 'react-konva'
+import { Group, Layer, Line, Shape, Stage } from 'react-konva'
 import { ClearanceZone, Machine, MachineBody, type Outline } from '@/components/canvas/MachineNode'
 import { GHOST_ID, type DragState } from '@/components/canvas/shared'
 import { CoverageCircle, UtilityGlyph, UtilityNode } from '@/components/canvas/UtilityNode'
 import { SCALE } from '@/constants'
 import { getMachineType } from '@/data/catalog'
 import { UTILITY_KINDS } from '@/data/utilities'
+import { floorCorners } from '@/lib/floorShapes'
 import { snapToWall } from '@/lib/geometry'
 import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validation'
 import { usePlanner, type Placing } from '@/store'
@@ -73,6 +74,16 @@ function FloorStage({
   // Centre the floorplan in the work area.
   const originX = Math.round((size.width - floorW * fit) / 2)
   const originY = Math.round((size.height - floorH * fit) / 2)
+
+  // Floor corners in layer px, flat [x0, y0, x1, y1, ...] for Konva.
+  const floorPoints = floorCorners(floorplan).flatMap((p) => [p.x * SCALE, p.y * SCALE])
+  const clipToFloor = (ctx: Konva.Context) => {
+    ctx.beginPath()
+    for (let i = 0; i < floorPoints.length; i += 2) {
+      ctx.lineTo(floorPoints[i], floorPoints[i + 1])
+    }
+    ctx.closePath()
+  }
 
   const machines = usePlanner((s) => s.machines)
   const utilities = usePlanner((s) => s.utilities)
@@ -159,20 +170,24 @@ function FloorStage({
       }}
     >
       <Layer ref={layerRef} x={originX} y={originY} scaleX={fit} scaleY={fit}>
-        <Rect width={floorW} height={floorH} fill={CANVAS.floor} />
-        <Grid floorplan={floorplan} fit={fit} />
-        <Rect
-          width={floorW}
-          height={floorH}
+        {/* Floor, grid and walls follow the floor's outline (its rectangle when it has none). */}
+        <Line points={floorPoints} closed fill={CANVAS.floor} listening={false} />
+        <Group clipFunc={clipToFloor} listening={false}>
+          <Grid floorplan={floorplan} fit={fit} />
+        </Group>
+        <Line
+          points={floorPoints}
+          closed
           stroke={CANVAS.floorStroke}
           strokeWidth={2}
           strokeScaleEnabled={false}
+          lineJoin="round"
           listening={false}
         />
 
         {/* Coverage layer: all utilities when toggled on, otherwise just the active/selected one. */}
         {/* Clipped to the floor: reach stops at the building walls. */}
-        <Group clipX={0} clipY={0} clipWidth={floorW} clipHeight={floorH} listening={false}>
+        <Group clipFunc={clipToFloor} listening={false}>
           {liveUtilities
             .filter((u) => showCoverage || u.id === focusId)
             .map((u) => (

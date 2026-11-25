@@ -142,13 +142,17 @@ export function UtilityIcon({
 function ExitDoor({ x, y, floorplan, fit }: { x: number; y: number; floorplan: Floorplan; fit: number }) {
   const along = EXIT_WIDTH * SCALE
   const thick = 6 / fit
-  const horizontal = ['top', 'bottom'].includes(nearestWall(x, y, floorplan))
+  // Lies along the wall, including the slanted wall of a chamfered floor.
+  const { angle } = nearestWall(x, y, floorplan)
   return (
     <Rect
-      x={horizontal ? -along / 2 : -thick / 2}
-      y={horizontal ? -thick / 2 : -along / 2}
-      width={horizontal ? along : thick}
-      height={horizontal ? thick : along}
+      x={0}
+      y={0}
+      offsetX={along / 2}
+      offsetY={thick / 2}
+      width={along}
+      height={thick}
+      rotation={angle}
       fill={UTILITY_KINDS.exit.colour}
       listening={false}
     />

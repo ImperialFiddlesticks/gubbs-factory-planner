@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react'
 import { PanelHeading } from '@/components/PanelHeading'
 import { UTILITY_ICONS } from '@/components/utilityIcons'
 import { Badge } from '@/components/ui/badge'
@@ -15,19 +16,33 @@ const cardClass =
 const activeClass = 'border-accent ring-2 ring-accent/40'
 
 export function CatalogPanel() {
+  const categories = usePlanner((s) => s.setup.categories)
+  // Machines from the categories picked in the wizard come first; the rest are tucked away.
+  // With no categories picked, everything is shown as one list.
+  const mine = categories.length
+    ? CATALOG.filter((t) => categories.includes(t.category))
+    : CATALOG
+  const other = CATALOG.filter((t) => !mine.includes(t))
+
   return (
     <aside className="theme-dark overflow-y-auto border-r p-4">
-      <PanelHeading>Machines</PanelHeading>
+      <PanelHeading>{categories.length ? 'Your equipment' : 'Machines'}</PanelHeading>
       <p className="mb-3 text-xs text-muted-foreground">
         Pick an item, then click the floor to place it.
       </p>
-      <ul className="space-y-2">
-        {CATALOG.map((type) => (
-          <li key={type.id}>
-            <MachineItem type={type} />
-          </li>
-        ))}
-      </ul>
+      <MachineList types={mine} />
+
+      {other.length > 0 && (
+        <details className="group mt-4">
+          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-semibold tracking-widest text-muted-foreground uppercase hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="size-4 transition-transform group-open:rotate-90" aria-hidden />
+            Other equipment ({other.length})
+          </summary>
+          <div className="mt-3">
+            <MachineList types={other} />
+          </div>
+        </details>
+      )}
 
       <Separator className="my-5" />
 
@@ -40,6 +55,18 @@ export function CatalogPanel() {
         ))}
       </ul>
     </aside>
+  )
+}
+
+function MachineList({ types }: { types: MachineType[] }) {
+  return (
+    <ul className="space-y-2">
+      {types.map((type) => (
+        <li key={type.id}>
+          <MachineItem type={type} />
+        </li>
+      ))}
+    </ul>
   )
 }
 

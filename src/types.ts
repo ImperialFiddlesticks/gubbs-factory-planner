@@ -12,15 +12,26 @@ import { z } from 'zod'
 // Types
 // ---------------------------------------------------------------------------
 
+/** A point on the floorplan, mm. */
+export interface Point {
+  x: number
+  y: number
+}
+
 export interface Floorplan {
   id: string
   name: string
-  /** Size along x, mm. */
+  /** Size along x, mm. For a shaped floor, the width of its bounding box. */
   width: number
-  /** Size along y, mm. */
+  /** Size along y, mm. For a shaped floor, the depth of its bounding box. */
   depth: number
   /** Snap grid spacing, mm. */
   gridSize: number
+  /**
+   * Corners of a non-rectangular floor, in order (clockwise), mm. Every point lies
+   * within 0..width × 0..depth. Omitted for a plain rectangle of width × depth.
+   */
+  outline?: Point[]
 }
 
 /** Free space a machine needs around it, mm, relative to the machine's own front. */
@@ -81,12 +92,18 @@ export interface Utility {
 // schema drifts from its interface above.
 // ---------------------------------------------------------------------------
 
+export const PointSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+}) satisfies z.ZodType<Point>
+
 export const FloorplanSchema = z.object({
   id: z.string(),
   name: z.string(),
   width: z.number().positive(),
   depth: z.number().positive(),
   gridSize: z.number().positive(),
+  outline: z.array(PointSchema).min(3).optional(),
 }) satisfies z.ZodType<Floorplan>
 
 export const ClearanceSchema = z.object({

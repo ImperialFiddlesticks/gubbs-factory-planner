@@ -69,6 +69,8 @@
     --saab-charcoal-900: #262523;
     --saab-charcoal-600: #53504c; /* borders on dark */
     --saab-charcoal-500: #5a5751; /* input borders on dark */
+    /* Not part of Saab's web palette; feedback colour, mirrors COLORS.green in theme.ts. */
+    --feedback-green: #2f9e57;
 }
 
 /* shadcn theme tokens mapped onto the Saab palette (light only). */
@@ -136,4 +138,25 @@
   body {
     @apply bg-background text-foreground font-sans;
   }
+}
+
+/* Goal celebration (GoalCounter): a quick pop of the counter and a confetti burst. */
+@theme {
+    --animate-goal-pop: goal-pop 500ms ease-out;
+    --animate-confetti: confetti 900ms ease-out forwards;
+
+    @keyframes goal-pop {
+        0% { transform: scale(1); box-shadow: 0 0 0 0 rgb(255 184 56 / 0.7); }
+        35% { transform: scale(1.12); }
+        100% { transform: scale(1); box-shadow: 0 0 0 12px rgb(255 184 56 / 0); }
+    }
+
+    @keyframes confetti {
+        0% { transform: translate(0, 0) rotate(0); opacity: 1; }
+        100% { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)); opacity: 0; }
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .animate-goal-pop { animation: none; }
 }

@@ -1,4 +1,5 @@
 import { CommitInput } from '@/components/CommitInput'
+import { GoalCounter } from '@/components/GoalCounter'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -22,6 +23,7 @@ export function TopBar({ onNewFloor }: TopBarProps) {
       {floorplan && (
         <span className="truncate text-sm text-muted-foreground">{floorplan.name}</span>
       )}
+      {floorplan && <GoalCounter />}
 
       <div className="ml-auto flex items-center gap-6">
         {floorplan && (

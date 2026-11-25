@@ -1,4 +1,5 @@
-import type { Clearance, Floorplan, MachineType, Rotation } from '@/types'
+import { floorCorners } from '@/lib/floorShapes'
+import type { Clearance, Floorplan, MachineType, Point, Rotation } from '@/types'
 
 /** Axis-aligned rectangle on the floor, mm. (x, y) is the top-left corner. */
 export interface Box {
@@ -71,40 +72,87 @@ export function distanceToBox(x: number, y: number, box: Box): number {
   return Math.hypot(dx, dy)
 }
 
-export type WallSide = 'top' | 'bottom' | 'left' | 'right'
+/** Rounding slack for "on the wall" tests, mm. */
+const EPS = 1e-6
 
-/** The floor edge closest to a point. */
-export function nearestWall(x: number, y: number, floorplan: Floorplan): WallSide {
-  const d: Record<WallSide, number> = {
-    top: Math.abs(y),
-    bottom: Math.abs(floorplan.depth - y),
-    left: Math.abs(x),
-    right: Math.abs(floorplan.width - x),
-  }
-  return (Object.keys(d) as WallSide[]).reduce((a, b) => (d[b] < d[a] ? b : a))
+/** The floor's walls as segments, following its outline (or rectangle). */
+function walls(floorplan: Floorplan): [Point, Point][] {
+  const c = floorCorners(floorplan)
+  return c.map((p, i) => [p, c[(i + 1) % c.length]])
 }
 
-/** Move a point onto the nearest floor edge (used for exits). */
-export function snapToWall(x: number, y: number, floorplan: Floorplan) {
-  const clampX = Math.min(Math.max(x, 0), floorplan.width)
-  const clampY = Math.min(Math.max(y, 0), floorplan.depth)
-  switch (nearestWall(x, y, floorplan)) {
-    case 'top':
-      return { x: clampX, y: 0 }
-    case 'bottom':
-      return { x: clampX, y: floorplan.depth }
-    case 'left':
-      return { x: 0, y: clampY }
-    case 'right':
-      return { x: floorplan.width, y: clampY }
-  }
+/** Closest point to (x, y) on the segment a–b. */
+function closestOnSegment(x: number, y: number, a: Point, b: Point): Point {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  const t = len2 === 0 ? 0 : Math.min(1, Math.max(0, ((x - a.x) * dx + (y - a.y) * dy) / len2))
+  return { x: a.x + t * dx, y: a.y + t * dy }
 }
 
+/** The wall closest to a point: where on it, and its direction in degrees (0 = along +x). */
+export function nearestWall(x: number, y: number, floorplan: Floorplan) {
+  let best = { point: { x, y }, angle: 0, distance: Infinity }
+  for (const [a, b] of walls(floorplan)) {
+    const point = closestOnSegment(x, y, a, b)
+    const distance = Math.hypot(point.x - x, point.y - y)
+    if (distance < best.distance) {
+      best = { point, angle: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI, distance }
+    }
+  }
+  return best
+}
+
+/** Move a point onto the nearest wall (used for exits). */
+export function snapToWall(x: number, y: number, floorplan: Floorplan): Point {
+  return nearestWall(x, y, floorplan).point
+}
+
+/** True if the point is inside the floor or on its wall. */
+export function pointInFloor(p: Point, floorplan: Floorplan): boolean {
+  const ws = walls(floorplan)
+  // On a wall counts as inside.
+  if (ws.some(([a, b]) => {
+    const q = closestOnSegment(p.x, p.y, a, b)
+    return Math.hypot(q.x - p.x, q.y - p.y) <= EPS
+  })) return true
+  // Even-odd ray cast towards +x.
+  let inside = false
+  for (const [a, b] of ws) {
+    if (a.y > p.y !== b.y > p.y) {
+      const xCross = a.x + ((p.y - a.y) * (b.x - a.x)) / (b.y - a.y)
+      if (p.x < xCross) inside = !inside
+    }
+  }
+  return inside
+}
+
+/**
+ * True if the whole box lies on the floor. For a shaped floor: every box corner is
+ * on the floor and no floor corner pokes into the box (which catches the inner
+ * corner of an L-shape cutting across it).
+ */
 export function boxInsideFloor(box: Box, floorplan: Floorplan): boolean {
-  return (
-    box.x >= 0 &&
-    box.y >= 0 &&
-    box.x + box.width <= floorplan.width &&
-    box.y + box.depth <= floorplan.depth
+  if (!floorplan.outline) {
+    return (
+      box.x >= 0 &&
+      box.y >= 0 &&
+      box.x + box.width <= floorplan.width &&
+      box.y + box.depth <= floorplan.depth
+    )
+  }
+  const corners: Point[] = [
+    { x: box.x, y: box.y },
+    { x: box.x + box.width, y: box.y },
+    { x: box.x + box.width, y: box.y + box.depth },
+    { x: box.x, y: box.y + box.depth },
+  ]
+  if (!corners.every((c) => pointInFloor(c, floorplan))) return false
+  return !floorplan.outline.some(
+    (v) =>
+      v.x > box.x + EPS &&
+      v.x < box.x + box.width - EPS &&
+      v.y > box.y + EPS &&
+      v.y < box.y + box.depth - EPS,
   )
 }

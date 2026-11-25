@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { getMachineType } from '@/data/catalog'
+import type { EquipmentCategoryId } from '@/data/categories'
+import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
 import { UTILITY_KINDS } from '@/data/utilities'
 import { snapToWall } from '@/lib/geometry'
 import type { Floorplan, MachineInstance, Rotation, Utility, UtilityKind } from '@/types'
@@ -11,8 +13,43 @@ export type Placing =
   | { kind: 'machine'; typeId: string; rotation: Rotation }
   | { kind: 'utility'; utilityKind: UtilityKind }
 
+/** Which full-page screen is showing. */
+export type Screen = 'welcome' | 'wizard' | 'planner'
+
+/** Answers collected by the setup wizard. UI-side only, not part of the backend contract. */
+export interface SetupAnswers {
+  /** Plan a new floor, or edit an existing layout (not available yet). */
+  mode: 'new' | 'existing'
+  /** Equipment categories the person wants to plan with. */
+  categories: EquipmentCategoryId[]
+  /** How many stations need to fit. */
+  stationTarget: number
+  floorName: string
+  /** Sizes may be NaN while a field is being typed; see shapeError. */
+  floorShape: FloorShape
+}
+
+export const DEFAULT_SETUP: SetupAnswers = {
+  mode: 'new',
+  categories: [],
+  stationTarget: 6,
+  floorName: 'New factory',
+  floorShape: DEFAULT_SHAPES.rectangle,
+}
+
 interface PlannerState {
-  /** null until the person creates a floor in the "New factory floor" dialog. */
+  /** UI-only, not saved. */
+  screen: Screen
+  /** Wizard answers; kept after the wizard so the planner can use them. */
+  setup: SetupAnswers
+
+  /** Open the wizard with fresh answers. The current floor stays until the wizard finishes. */
+  startSetup: () => void
+  updateSetup: (patch: Partial<SetupAnswers>) => void
+  /** Leave the wizard without changes; only possible when a floor already exists. */
+  cancelSetup: () => void
+
+  /** null until the person finishes the setup wizard. */
   floorplan: Floorplan | null
   machines: MachineInstance[]
   utilities: Utility[]
@@ -23,9 +60,12 @@ interface PlannerState {
   /** Show every utility's reach circle; UI-only, not saved. */
   showCoverage: boolean
 
-  /** Start a fresh floor; clears all machines, utilities and selection. */
+  /** Start a fresh floor and open the planner; clears all machines, utilities and selection. */
   newFloorplan: (input: NewFloorplanInput) => void
-  /** Resize the current floor (mm). Machines are left where they are. */
+  /**
+   * Resize the current floor (mm). A shaped floor's outline is scaled to match.
+   * Machines are left where they are; exits are moved onto the new walls.
+   */
   setFloorplan: (width: number, depth: number) => void
 
   /** Add a machine; without `at` it goes to the centre of the floor. */
@@ -60,6 +100,13 @@ function placeUtility(kind: UtilityKind, x: number, y: number, floorplan: Floorp
 }
 
 export const usePlanner = create<PlannerState>()((set, get) => ({
+  screen: 'welcome',
+  setup: DEFAULT_SETUP,
+
+  startSetup: () => set({ screen: 'wizard', setup: DEFAULT_SETUP, placing: null }),
+  updateSetup: (patch) => set((s) => ({ setup: { ...s.setup, ...patch } })),
+  cancelSetup: () => set((s) => (s.floorplan ? { screen: 'planner' } : s)),
+
   floorplan: null,
   machines: [],
   utilities: [],
@@ -74,10 +121,27 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       utilities: [],
       selectedId: null,
       placing: null,
+      screen: 'planner',
     }),
 
   setFloorplan: (width, depth) =>
-    set((s) => (s.floorplan ? { floorplan: { ...s.floorplan, width, depth } } : s)),
+    set((s) => {
+      if (!s.floorplan) return s
+      const { outline, width: oldW, depth: oldD } = s.floorplan
+      // A shaped floor is stretched to the new size: each corner keeps its relative position.
+      const scaled = outline?.map((p) => ({
+        x: Math.round((p.x * width) / oldW),
+        y: Math.round((p.y * depth) / oldD),
+      }))
+      const floorplan = { ...s.floorplan, width, depth, ...(scaled && { outline: scaled }) }
+      return {
+        floorplan,
+        // The walls moved, so keep exits on them.
+        utilities: s.utilities.map((u) =>
+          u.kind === 'exit' ? { ...u, ...placeUtility(u.kind, u.x, u.y, floorplan) } : u,
+        ),
+      }
+    }),
 
   addMachine: (typeId, at) => {
     const { floorplan } = get()

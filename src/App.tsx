@@ -1,31 +1,29 @@
-import { useState } from 'react'
 import { CatalogPanel } from '@/components/CatalogPanel'
 import { FloorCanvas } from '@/components/FloorCanvas'
-import { NewFloorDialog } from '@/components/NewFloorDialog'
 import { PropertiesPanel } from '@/components/PropertiesPanel'
 import { TopBar } from '@/components/TopBar'
+import { WelcomeScreen } from '@/components/wizard/WelcomeScreen'
+import { Wizard } from '@/components/wizard/Wizard'
 import { usePlanner } from '@/store'
 
 function App() {
+  const screen = usePlanner((s) => s.screen)
+
+  if (screen === 'welcome') return <WelcomeScreen />
+  if (screen === 'wizard') return <Wizard />
+  return <Planner />
+}
+
+function Planner() {
   const floorplan = usePlanner((s) => s.floorplan)
-  const [dialogOpen, setDialogOpen] = useState(false)
+  const startSetup = usePlanner((s) => s.startSetup)
 
   return (
     <div className="grid h-screen grid-cols-[256px_1fr_288px] grid-rows-[56px_1fr]">
-      <TopBar onNewFloor={() => setDialogOpen(true)} />
+      <TopBar onNewFloor={startSetup} />
       <CatalogPanel />
       <FloorCanvas floorplan={floorplan} />
       <PropertiesPanel />
-
-      {/* Forced open until the first floor exists. Remounted on each open so
-          the form starts from the defaults. */}
-      {(dialogOpen || !floorplan) && (
-        <NewFloorDialog
-          open
-          required={!floorplan}
-          onOpenChange={setDialogOpen}
-        />
-      )}
     </div>
   )
 }
