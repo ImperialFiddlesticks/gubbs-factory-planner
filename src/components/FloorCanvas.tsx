@@ -7,8 +7,11 @@ import { GHOST_ID, type DragState } from '@/components/canvas/shared'
 import { PillarBody, PillarNode } from '@/components/canvas/PillarNode'
 import { WallBody, WallNode } from '@/components/canvas/WallNode'
 import { CoverageCircle, UtilityGlyph, UtilityNode } from '@/components/canvas/UtilityNode'
+import { PowerLoadTags, SupplyLines } from '@/components/canvas/SupplyLines'
+import { WalkingRoutes } from '@/components/canvas/WalkingRoutes'
 import { SCALE } from '@/constants'
 import { getMachineType } from '@/data/catalog'
+import { UTILITY_LAYER } from '@/data/layers'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS, MIN_WALL_LENGTH } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
 import { floorCorners } from '@/lib/floorShapes'
@@ -111,7 +114,7 @@ function FloorStage({
   const lockStructures = usePlanner((s) => s.lockStructures)
   const selectedId = usePlanner((s) => s.selectedId)
   const placing = usePlanner((s) => s.placing)
-  const showCoverage = usePlanner((s) => s.showCoverage)
+  const layers = usePlanner((s) => s.layers)
   const select = usePlanner((s) => s.select)
   const addMachine = usePlanner((s) => s.addMachine)
   const addUtility = usePlanner((s) => s.addUtility)
@@ -223,11 +226,11 @@ function FloorStage({
           listening={false}
         />
 
-        {/* Coverage layer: all utilities when toggled on, otherwise just the active/selected one. */}
+        {/* Coverage: utilities whose layer is on, plus the active/selected one. */}
         {/* Clipped to the floor: reach stops at the building walls. */}
         <Group clipFunc={clipToFloor} listening={false}>
           {liveUtilities
-            .filter((u) => showCoverage || u.id === focusId)
+            .filter((u) => layers[UTILITY_LAYER[u.kind]] || u.id === focusId)
             .map((u) => (
               <CoverageCircle key={`cover-${u.id}`} utility={u} strong={u.id === focusId} walls={liveWalls} />
             ))}
@@ -275,6 +278,46 @@ function FloorStage({
           />
         ))}
 
+        {/* Lines and routes go above machines (they end at the machine's edge), under utilities. */}
+        <SupplyLines
+          kind="water"
+          all={layers.water}
+          focusId={focusId}
+          machines={liveMachines}
+          utilities={liveUtilities}
+          walls={liveWalls}
+          fit={fit}
+        />
+        <SupplyLines
+          kind="power"
+          all={layers.electrical}
+          focusId={focusId}
+          machines={liveMachines}
+          utilities={liveUtilities}
+          walls={liveWalls}
+          fit={fit}
+        />
+        <WalkingRoutes
+          kind="extinguisher"
+          all={layers.fire}
+          focusId={focusId}
+          machines={liveMachines}
+          utilities={liveUtilities}
+          walls={liveWalls}
+          floorplan={floorplan}
+          fit={fit}
+        />
+        <WalkingRoutes
+          kind="exit"
+          all={layers.exits}
+          focusId={focusId}
+          machines={liveMachines}
+          utilities={liveUtilities}
+          walls={liveWalls}
+          floorplan={floorplan}
+          fit={fit}
+        />
+
         {utilities.map((u) => (
           <UtilityNode
             key={u.id}
@@ -287,6 +330,15 @@ function FloorStage({
             onDrag={setDrag}
           />
         ))}
+
+        <PowerLoadTags
+          all={layers.electrical}
+          focusId={focusId}
+          machines={liveMachines}
+          utilities={liveUtilities}
+          walls={liveWalls}
+          fit={fit}
+        />
 
         {active && active.kind !== 'wall' && active.item.id === GHOST_ID && (
           <Group

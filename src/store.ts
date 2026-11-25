@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { getMachineType } from '@/data/catalog'
 import type { EquipmentCategoryId } from '@/data/categories'
+import { DEFAULT_LAYERS, type LayerId } from '@/data/layers'
 import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
 import { DEFAULT_PILLAR_GRID, type PillarGrid } from '@/lib/pillarGrid'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
@@ -67,8 +68,8 @@ interface PlannerState {
   selectedId: string | null
   /** Set while placing from the left panel; UI-only, not saved. */
   placing: Placing | null
-  /** Show every utility's reach circle; UI-only, not saved. */
-  showCoverage: boolean
+  /** Which canvas overlays are switched on; UI-only, not saved. */
+  layers: Record<LayerId, boolean>
   /** Pillars and walls can't be selected or dragged; UI-only, not saved. */
   lockStructures: boolean
 
@@ -108,7 +109,7 @@ interface PlannerState {
   removeWall: (id: string) => void
 
   select: (id: string | null) => void
-  toggleCoverage: () => void
+  toggleLayer: (id: LayerId) => void
   /** Locking also deselects a selected structure. */
   toggleLockStructures: () => void
 
@@ -151,7 +152,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   walls: [],
   selectedId: null,
   placing: null,
-  showCoverage: true,
+  layers: DEFAULT_LAYERS,
   lockStructures: false,
 
   newFloorplan: (input, pillars = []) =>
@@ -304,7 +305,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
 
   select: (id) => set({ selectedId: id }),
 
-  toggleCoverage: () => set((s) => ({ showCoverage: !s.showCoverage })),
+  toggleLayer: (id) => set((s) => ({ layers: { ...s.layers, [id]: !s.layers[id] } })),
 
   toggleLockStructures: () =>
     set((s) => {

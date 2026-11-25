@@ -4,7 +4,10 @@ import type { UtilityKind } from '@/types'
 export interface UtilityKindInfo {
   kind: UtilityKind
   name: string
-  /** Default reach, mm. Exits have no radius; they use EXIT_MAX_DISTANCE instead. */
+  /**
+   * Default reach, mm. For extinguishers it is the walking distance; exits have none and
+   * use EXIT_MAX_DISTANCE instead.
+   */
   defaultRadius?: number
   /** Default supply, kW (power only). */
   defaultCapacityKw?: number
@@ -41,6 +44,16 @@ export const UTILITY_KINDS: Record<UtilityKind, UtilityKindInfo> = {
     // lucide "shower-head"
     iconPath:
       'm4 4 2.5 2.5 M13.5 6.5a4.95 4.95 0 0 0-7 7 M15 5 5 15 M14 17v.01 M10 16v.01 M13 13v.01 M16 10v.01 M11 20v.01 M17 14v.01 M20 11v.01',
+  },
+  extinguisher: {
+    kind: 'extinguisher',
+    name: 'Fire extinguisher',
+    // Walking distance, not a straight-line reach.
+    defaultRadius: 25000,
+    colour: COLORS.red,
+    // lucide "fire-extinguisher"
+    iconPath:
+      'M15 6.5V3a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v3.5 M9 18h8 M18 3h-3 M11 3a6 6 0 0 0-6 6v11 M5 13h4 M17 10a4 4 0 0 0-8 0v10a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2Z',
   },
   exit: {
     kind: 'exit',
