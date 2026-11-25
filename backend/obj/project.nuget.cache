@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "Kwj4bV1cqX0=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\Robin\\source\\repos\\gubbs-factory-planner\\backend\\backend.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\Robin\\.nuget\\packages\\microsoft.aspnetcore.openapi\\10.0.15\\microsoft.aspnetcore.openapi.10.0.15.nupkg.sha512",
+    "C:\\Users\\Robin\\.nuget\\packages\\microsoft.openapi\\2.13.0\\microsoft.openapi.2.13.0.nupkg.sha512"
+  ],
+  "logs": []
+}
