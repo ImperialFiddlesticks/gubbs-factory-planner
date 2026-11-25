@@ -50,6 +50,31 @@ Straight wall segments inside the hall, drawn by clicking a start and an end poi
 - [x] 25. Utility reach: water/power/sprinkler only reach a machine with a clear line from the utility that no wall crosses. Coverage circles are cut off behind walls.
 - [x] 26. Exit distance: measured as the walking route around internal walls and machines (gaps under 0.8 m count as closed; routes go around the inner corner of an L-shaped floor).
 
+## Layers
+
+Decided: water and power lines are drawn automatically from the existing reach rules (nearest point in reach feeds the machine); power points are the electrical hubs; fire extinguishers are a new utility with a walking-distance rule; switching a layer off hides its lines, coverage and routes but leaves the utility icons visible and clickable. The selected item always shows its own coverage/route/lines.
+
+- [x] 27. Layers menu: a "Layers" button in the top bar opens a popover with four switches (Water, Electrical, Fire safety, Exit routes), replacing the "Coverage" and "Exit routes" switches. Each layer shows its utilities' coverage; exit routes move under their layer.
+- [x] 28. Water layer: a line from each water point to every machine it feeds, in the water colour.
+- [x] 29. Electrical layer: a wire from each power point to every machine it feeds, plus a load tag on each power point (e.g. "42 / 63 kW", red when overloaded).
+- [x] 30. Fire extinguisher: new utility (catalog item, icon, properties). Every machine must be within its walking distance (default 25 m, editable per extinguisher), measured like exits; a warning and "needs" badge when none is in reach.
+- [x] 31. Fire safety layer: sprinkler coverage plus the walking route from each machine to its nearest extinguisher.
+
+## Up next (to plan)
+
+### Conveyors
+- Length as an input: set a belt's length (m) when placing and in the properties panel, instead of a fixed size.
+- Conveyor corners: a 90° corner piece (left or right turn).
+- Snapping: belt ends and corners snap together, so a continuous line of belts can be built; a connected line reads as one conveyor run.
+
+### Design rework
+- Machines: rework how machines look on the canvas (shape, label, colours, front marker, needs badges).
+- Map layout: rework the floor/canvas look and the planner layout around it (grid, floor outline, panels).
+
+### Polish the lines (potential)
+- Snap the 90° turns of water pipes and power wires to the floor grid.
+- Measure utility reach by the drawn pipe/wire length instead of the straight-line reach circle.
+
 ## Later (parked)
 - "Edit existing" path via JSON export/import
 - Limitations step and review page

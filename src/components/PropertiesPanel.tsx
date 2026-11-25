@@ -186,7 +186,7 @@ function UtilityProperties({ utility }: { utility: Utility }) {
 
       {utility.kind !== 'exit' && (
         <div className="grid grid-cols-2 gap-3">
-          <Field id="utility-radius" label="Reach (m)">
+          <Field id="utility-radius" label={utility.kind === 'extinguisher' ? 'Walking distance (m)' : 'Reach (m)'}>
             <CommitInput
               id="utility-radius"
               className="h-8"

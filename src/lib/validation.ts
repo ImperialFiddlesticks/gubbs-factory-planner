@@ -9,11 +9,13 @@ import {
   distanceToBox,
   pillarBox,
   samplePoints,
+  segmentEntersBox,
   wallBox,
   type Box,
+  type FloorBounds,
 } from '@/lib/geometry'
-import { walkingDistances } from '@/lib/walking'
-import type { Floorplan, MachineInstance, MachineType, Pillar, Utility, Wall } from '@/types'
+import { walkingRoutes, type WalkingRoute } from '@/lib/walking'
+import type { Floorplan, MachineInstance, MachineType, Pillar, Point, Utility, Wall } from '@/types'
 
 /**
  * - space:   machines clash with each other or the walls (red outline on the canvas)
@@ -22,7 +24,7 @@ import type { Floorplan, MachineInstance, MachineType, Pillar, Utility, Wall } f
 export type IssueCategory = 'space' | 'utility'
 
 /** What is missing, for the "needs" badges above a machine. */
-export type Need = 'power' | 'water' | 'sprinkler' | 'exit'
+export type Need = 'power' | 'water' | 'sprinkler' | 'extinguisher' | 'exit'
 
 export interface LayoutIssue {
   /** Stable key for React lists. */
@@ -54,22 +56,97 @@ function resolve(machines: MachineInstance[]): Resolved[] {
 /**
  * Utilities of a kind that reach the machine's body, closest first. A utility reaches it when
  * some point of the body (nearest point, a corner or an edge midpoint) is within its radius
- * with no internal wall in between.
+ * with no internal wall in between. `at` is the closest such point, where a supply line meets it.
  */
 function inReach(r: Resolved, utilities: Utility[], kind: Utility['kind'], walls: Wall[]) {
-  return utilities
-    .filter((u) => u.kind === kind)
-    .map((u) => ({ u, d: distanceToBox(u.x, u.y, r.body) }))
-    .filter(({ u, d }) => {
-      const radius = utilityRadius(u)
-      if (d > radius) return false
-      if (walls.length === 0) return true
-      return samplePoints(r.body, u).some(
-        (p) => Math.hypot(p.x - u.x, p.y - u.y) <= radius && clearLine(u, p, walls),
-      )
-    })
-    .sort((a, b) => a.d - b.d)
+  const out: { u: Utility; d: number; at: Point }[] = []
+  for (const u of utilities) {
+    if (u.kind !== kind) continue
+    const radius = utilityRadius(u)
+    if (distanceToBox(u.x, u.y, r.body) > radius) continue
+    // The nearest point comes first; with no walls it is always reachable.
+    const reachable = samplePoints(r.body, u)
+      .map((p) => ({ p, d: Math.hypot(p.x - u.x, p.y - u.y) }))
+      .filter(({ p, d }) => d <= radius && (walls.length === 0 || clearLine(u, p, walls)))
+      .sort((a, b) => a.d - b.d)[0]
+    if (reachable) out.push({ u, d: reachable.d, at: reachable.p })
+  }
+  return out.sort((a, b) => a.d - b.d)
 }
+
+/** Which supply a machine type needs from each utility kind (exits are checked separately). */
+const NEEDS: Record<Exclude<Utility['kind'], 'exit' | 'extinguisher'>, (t: MachineType) => boolean> = {
+  water: (t) => t.needsWater,
+  power: (t) => t.powerKw > 0,
+  sprinkler: (t) => t.needsFireSuppression,
+}
+
+/** A machine fed by a utility: the nearest one of that kind in reach. */
+export interface SupplyLine {
+  machineId: string
+  utilityId: string
+  /** The utility's position. */
+  from: Point
+  /** Where the line meets the machine's edge. */
+  to: Point
+  /** Drawn route from the utility to the machine: horizontal/vertical runs with 90° turns. */
+  path: Point[]
+}
+
+/** One line per machine that needs the kind and has a utility of it in reach. */
+export function supplyLines(
+  machines: MachineInstance[],
+  utilities: Utility[],
+  kind: keyof typeof NEEDS,
+  walls: Wall[],
+): SupplyLine[] {
+  const lines: SupplyLine[] = []
+  const resolved = resolve(machines)
+  for (const r of resolved) {
+    if (!NEEDS[kind](r.type)) continue
+    const nearest = inReach(r, utilities, kind, walls)[0]
+    if (!nearest) continue
+    const from = { x: nearest.u.x, y: nearest.u.y }
+    const path = orthogonalRoute(from, r.body, nearest.at, walls, resolved.map((o) => o.body))
+    lines.push({ machineId: r.machine.id, utilityId: nearest.u.id, from, to: path[path.length - 1], path })
+  }
+  return lines
+}
+
+/**
+ * A pipe/cable route from `from` to the machine body: straight when lined up with the machine,
+ * otherwise one 90° turn, entering the middle of the side it faces. The first candidate that
+ * crosses no wall or machine is used; `at` (a point the utility can see) is the fallback target.
+ */
+function orthogonalRoute(from: Point, body: Box, at: Point, walls: Wall[], bodies: Box[]): Point[] {
+  const { x, y, width: w, depth: d } = body
+  const cx = x + w / 2
+  const cy = y + d / 2
+  const edgeY = from.y < cy ? y : y + d // top or bottom side, whichever faces the utility
+  const edgeX = from.x < cx ? x : x + w // left or right side
+  const candidates: Point[][] = []
+  if (from.x >= x && from.x <= x + w) candidates.push([from, { x: from.x, y: edgeY }])
+  if (from.y >= y && from.y <= y + d) candidates.push([from, { x: edgeX, y: from.y }])
+  const viaX = [from, { x: cx, y: from.y }, { x: cx, y: edgeY }] // across, then down/up into the side
+  const viaY = [from, { x: from.x, y: cy }, { x: edgeX, y: cy }] // down/up, then across
+  candidates.push(...(pathLength(viaX) <= pathLength(viaY) ? [viaX, viaY] : [viaY, viaX]))
+  candidates.push([from, { x: at.x, y: from.y }, at], [from, { x: from.x, y: at.y }, at])
+
+  const clearRoute = (path: Point[]) =>
+    path.every((p, i) => {
+      const q = path[i + 1]
+      if (!q) return true
+      return clearLine(p, q, walls) && bodies.every((b) => segmentEntersBox(p, q, b) === null)
+    })
+  return withoutRepeats(candidates.find(clearRoute) ?? candidates[0])
+}
+
+const pathLength = (path: Point[]) =>
+  path.reduce((sum, p, i) => (i === 0 ? 0 : sum + Math.hypot(p.x - path[i - 1].x, p.y - path[i - 1].y)), 0)
+
+/** Drops points equal to the one before (a zero-length run). */
+const withoutRepeats = (path: Point[]) =>
+  path.filter((p, i) => i === 0 || p.x !== path[i - 1].x || p.y !== path[i - 1].y)
 
 /**
  * Which power point feeds each machine (its nearest one in reach) and the
@@ -78,12 +155,11 @@ function inReach(r: Resolved, utilities: Utility[], kind: Utility['kind'], walls
 export function powerAssignments(machines: MachineInstance[], utilities: Utility[], walls: Wall[]) {
   const feeds = new Map<string, string>() // machine id -> power point id
   const loads = new Map<string, number>() // power point id -> kW
-  for (const r of resolve(machines)) {
-    if (r.type.powerKw <= 0) continue
-    const nearest = inReach(r, utilities, 'power', walls)[0]
-    if (!nearest) continue
-    feeds.set(r.machine.id, nearest.u.id)
-    loads.set(nearest.u.id, (loads.get(nearest.u.id) ?? 0) + r.type.powerKw)
+  const kwById = new Map(machines.map((m) => [m.id, getMachineType(m.typeId)?.powerKw ?? 0]))
+  for (const line of supplyLines(machines, utilities, 'power', walls)) {
+    const kw = kwById.get(line.machineId) ?? 0
+    feeds.set(line.machineId, line.utilityId)
+    loads.set(line.utilityId, (loads.get(line.utilityId) ?? 0) + kw)
   }
   return { feeds, loads }
 }
@@ -105,7 +181,8 @@ export function powerAssignments(machines: MachineInstance[], utilities: Utility
  * - needsWater -> a water point in reach;
  * - needsFireSuppression -> a sprinkler in reach;
  * - powerKw > 0 -> a power point in reach, and no power point over capacity;
- * - at least one exit, and every machine within EXIT_MAX_DISTANCE of one.
+ * - at least one exit, and every machine within EXIT_MAX_DISTANCE walk of one;
+ * - at least one fire extinguisher, and every machine within the walking distance of one.
  */
 export function findLayoutIssues(
   machines: MachineInstance[],
@@ -199,13 +276,14 @@ function utilityIssues(
   if (resolved.length > 0 && exits.length === 0) {
     issues.push({ key: 'no-exit', category: 'utility', ids: [], message: 'The floor has no exit.' })
   }
+  const extinguishers = utilities.filter((u) => u.kind === 'extinguisher')
+  if (resolved.length > 0 && extinguishers.length === 0) {
+    issues.push({ key: 'no-extinguisher', category: 'utility', ids: [], message: 'The floor has no fire extinguisher.' })
+  }
   // Walking distance around machines and internal walls, not a straight line.
-  const walk = walkingDistances(
-    floorplan,
-    exits,
-    resolved.map((r) => ({ id: r.machine.id, body: r.body })),
-    walls,
-  )
+  const bodies = resolved.map((r) => ({ id: r.machine.id, body: r.body }))
+  const walk = walkingRoutes(floorplan, exits, bodies, walls)
+  const toExtinguisher = extinguisherRoutes(floorplan, extinguishers, bodies, walls)
 
   for (const r of resolved) {
     const id = r.machine.id
@@ -219,7 +297,7 @@ function utilityIssues(
     if (r.type.powerKw > 0 && inReach(r, utilities, 'power', walls).length === 0) {
       issues.push({ key: `power:${id}`, category: 'utility', need: 'power', ids: [id], message: `${name} has no power point in reach.` })
     }
-    const walked = walk.get(id) ?? Infinity
+    const walked = walk.get(id)?.distance ?? Infinity
     if (exits.length > 0 && walked > EXIT_MAX_DISTANCE) {
       issues.push({
         key: `exit:${id}`,
@@ -230,6 +308,19 @@ function utilityIssues(
           walked === Infinity
             ? `${name} has no walking route to an exit.`
             : `${name} is more than ${EXIT_MAX_DISTANCE / 1000} m walk from an exit.`,
+      })
+    }
+    const ext = toExtinguisher.get(id)
+    if (extinguishers.length > 0 && !ext?.withinReach) {
+      issues.push({
+        key: `extinguisher:${id}`,
+        category: 'utility',
+        need: 'extinguisher',
+        ids: [id],
+        message:
+          !ext || ext.distance === Infinity
+            ? `${name} has no walking route to a fire extinguisher.`
+            : `${name} is more than ${metres(utilityRadius(extinguishers[ext.source]))} m walk from a fire extinguisher.`,
       })
     }
   }
@@ -250,6 +341,28 @@ function utilityIssues(
 
   return issues
 }
+
+/**
+ * Each machine's walk to the extinguisher that best covers it (the one with the most of its
+ * walking distance to spare), and whether that is within the extinguisher's distance.
+ */
+export function extinguisherRoutes(
+  floorplan: FloorBounds,
+  extinguishers: Utility[],
+  bodies: { id: string; body: Box }[],
+  walls: Wall[],
+) {
+  const sources = extinguishers.map((u) => ({ x: u.x, y: u.y, allowance: utilityRadius(u) }))
+  const out = new Map<string, WalkingRoute & { withinReach: boolean }>()
+  for (const [id, route] of walkingRoutes(floorplan, sources, bodies, walls)) {
+    const limit = route.source >= 0 ? sources[route.source].allowance : 0
+    out.set(id, { ...route, withinReach: route.distance <= limit })
+  }
+  return out
+}
+
+/** Metres for messages, without trailing zeros (25, 12.5). */
+const metres = (mm: number) => String(Math.round(mm / 100) / 10)
 
 /** IDs of every machine/utility in at least one issue of the category. */
 export function idsWithIssues(issues: LayoutIssue[], category: IssueCategory): Set<string> {

@@ -54,18 +54,41 @@ function properlyCross(p1: Point, p2: Point, q1: Point, q2: Point) {
   return d1 * d2 < 0 && d3 * d4 < 0
 }
 
+/** A machine's best walk to a source (an exit, an extinguisher). */
+export interface WalkingRoute {
+  /** Walking length, mm; Infinity when there is no route. */
+  distance: number
+  /** Index of the source it leads to; -1 when there is no route. */
+  source: number
+  /** From the source to the machine's edge; empty when there is no route. */
+  path: Point[]
+}
+
 /**
- * Shortest walking distance (mm) from any exit to each machine, by machine id.
- * Infinity when there is no route. Machines are listed by their body box.
+ * A place people walk from. `allowance` (mm) lets sources with different limits share one
+ * search: the best source is the one with the most allowance left, not the nearest.
  */
-export function walkingDistances(
+export interface WalkSource extends Point {
+  allowance?: number
+}
+
+const NO_ROUTE: WalkingRoute = { distance: Infinity, source: -1, path: [] }
+
+/**
+ * Best walking route from the sources to each machine, by machine id: the shortest one, or with
+ * allowances, the one leaving the most allowance (walk − allowance smallest).
+ * Machines are listed by their body box.
+ */
+export function walkingRoutes(
   floor: FloorBounds,
-  exits: Point[],
+  exits: WalkSource[],
   machines: { id: string; body: Box }[],
   walls: Wall[],
-): Map<string, number> {
-  const result = new Map<string, number>(machines.map((m) => [m.id, Infinity]))
+): Map<string, WalkingRoute> {
+  const result = new Map<string, WalkingRoute>(machines.map((m) => [m.id, NO_ROUTE]))
   if (exits.length === 0 || machines.length === 0) return result
+  /** A source's head start: costs are walk − allowance. */
+  const start = exits.map((e) => -(e.allowance ?? 0))
 
   const obstacles: Obstacle[] = [
     ...machines.map((m) => ({ box: grow(m.body, WALK_MARGIN) })),
@@ -79,7 +102,7 @@ export function walkingDistances(
   const usable = (p: Point) => pointInFloor(p, floor) && !obstacles.some((o) => strictlyInside(p, o.box))
 
   // Route points: exits first (the sources), then obstacle corners, then floor-corner helpers.
-  const nodes: Point[] = [...exits]
+  const nodes: Point[] = exits.map((e) => ({ x: e.x, y: e.y }))
   /** For each machine, the indexes of its own corner points (where a route can reach it). */
   const machineNodes = machines.map(() => [] as number[])
 
@@ -112,8 +135,10 @@ export function walkingDistances(
   }
 
   // Dijkstra over a dense graph; edges are checked lazily as nodes are settled.
-  const dist = nodes.map((_, i) => (i < exits.length ? 0 : Infinity))
+  const dist = nodes.map((_, i) => (i < exits.length ? start[i] : Infinity))
   const done = nodes.map(() => false)
+  /** The node each one is reached from, for tracing the route back to its exit. */
+  const prev = nodes.map(() => -1)
   for (;;) {
     let u = -1
     for (let i = 0; i < nodes.length; i++) {
@@ -124,30 +149,57 @@ export function walkingDistances(
     for (let v = 0; v < nodes.length; v++) {
       if (done[v]) continue
       const d = dist[u] + Math.hypot(nodes[v].x - nodes[u].x, nodes[v].y - nodes[u].y)
-      if (d < dist[v] && clear(nodes[u], nodes[v])) dist[v] = d
+      if (d < dist[v] && clear(nodes[u], nodes[v])) {
+        dist[v] = d
+        prev[v] = u
+      }
     }
   }
 
+  /** Route points from the source to node n, and that source's index. */
+  function trace(n: number) {
+    const path: Point[] = []
+    let i = n
+    for (; prev[i] !== -1; i = prev[i]) path.push(nodes[i])
+    path.push(nodes[i])
+    return { path: path.reverse(), source: i }
+  }
+
   machines.forEach((m, i) => {
-    // Straight from an exit to the machine, when nothing is in the way.
-    let best = Infinity
-    for (const e of exits) {
-      const near = {
-        x: Math.min(Math.max(e.x, m.body.x), m.body.x + m.body.width),
-        y: Math.min(Math.max(e.y, m.body.y), m.body.y + m.body.depth),
-      }
+    // Straight from a source to the machine, when nothing is in the way.
+    let best = NO_ROUTE
+    let bestCost = Infinity
+    exits.forEach((e, k) => {
+      const near = nearestOnBox(e, m.body)
       const own = obstacles[i]
       const others = obstacles.filter((o) => o !== own)
       const blocked =
         others.some((o) => !strictlyInside(e, o.box) && segmentEntersBox(e, near, o.box, 0) !== null) ||
         floorEdges.some(([p, q]) => properlyCross(e, near, p, q))
-      if (!blocked) best = Math.min(best, Math.hypot(near.x - e.x, near.y - e.y))
-    }
+      const d = Math.hypot(near.x - e.x, near.y - e.y)
+      if (!blocked && start[k] + d < bestCost) {
+        bestCost = start[k] + d
+        best = { distance: d, source: k, path: [nodes[k], near] }
+      }
+    })
     // Otherwise via one of the points around it, plus the last step to its edge.
     for (const n of machineNodes[i]) {
-      best = Math.min(best, dist[n] + distanceToBox(nodes[n].x, nodes[n].y, m.body))
+      const cost = dist[n] + distanceToBox(nodes[n].x, nodes[n].y, m.body)
+      if (cost < bestCost) {
+        const { path, source } = trace(n)
+        bestCost = cost
+        best = { distance: cost - start[source], source, path: [...path, nearestOnBox(nodes[n], m.body)] }
+      }
     }
     result.set(m.id, best)
   })
   return result
+}
+
+/** The point of box b closest to p. */
+function nearestOnBox(p: Point, b: Box): Point {
+  return {
+    x: Math.min(Math.max(p.x, b.x), b.x + b.width),
+    y: Math.min(Math.max(p.y, b.y), b.y + b.depth),
+  }
 }

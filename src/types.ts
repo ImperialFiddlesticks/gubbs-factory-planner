@@ -71,7 +71,7 @@ export interface MachineInstance {
   rotation: Rotation
 }
 
-export type UtilityKind = 'power' | 'water' | 'sprinkler' | 'exit'
+export type UtilityKind = 'power' | 'water' | 'sprinkler' | 'extinguisher' | 'exit'
 
 /** A utility point on the floorplan. */
 export interface Utility {
@@ -81,7 +81,7 @@ export interface Utility {
   x: number
   /** Position on the floorplan, mm. */
   y: number
-  /** Reach of the utility, mm (e.g. sprinkler coverage). */
+  /** Reach of the utility, mm (e.g. sprinkler coverage); for extinguishers, the walking distance. */
   radius?: number
   /** Power available at this point, kW (power utilities only). */
   capacityKw?: number
@@ -170,6 +170,7 @@ export const UtilityKindSchema = z.enum([
   'power',
   'water',
   'sprinkler',
+  'extinguisher',
   'exit',
 ]) satisfies z.ZodType<UtilityKind>
 

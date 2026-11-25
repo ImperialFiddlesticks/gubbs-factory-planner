@@ -169,7 +169,9 @@ function UtilityItem({ info }: { info: UtilityKindInfo }) {
   const detail =
     info.kind === 'exit'
       ? `On a wall · machines within ${EXIT_MAX_DISTANCE / 1000} m`
-      : [
+      : info.kind === 'extinguisher'
+        ? `Machines within ${metres(info.defaultRadius ?? 0)} m walk`
+        : [
           `Reach ${metres(info.defaultRadius ?? 0)} m`,
           info.defaultCapacityKw !== undefined && `${info.defaultCapacityKw} kW`,
         ]
