@@ -60,6 +60,21 @@ Decided: water and power lines are drawn automatically from the existing reach r
 - [x] 30. Fire extinguisher: new utility (catalog item, icon, properties). Every machine must be within its walking distance (default 25 m, editable per extinguisher), measured like exits; a warning and "needs" badge when none is in reach.
 - [x] 31. Fire safety layer: sprinkler coverage plus the walking route from each machine to its nearest extinguisher.
 
+## Up next (to plan)
+
+### Conveyors
+- Length as an input: set a belt's length (m) when placing and in the properties panel, instead of a fixed size.
+- Conveyor corners: a 90° corner piece (left or right turn).
+- Snapping: belt ends and corners snap together, so a continuous line of belts can be built; a connected line reads as one conveyor run.
+
+### Design rework
+- Machines: rework how machines look on the canvas (shape, label, colours, front marker, needs badges).
+- Map layout: rework the floor/canvas look and the planner layout around it (grid, floor outline, panels).
+
+### Polish the lines (potential)
+- Snap the 90° turns of water pipes and power wires to the floor grid.
+- Measure utility reach by the drawn pipe/wire length instead of the straight-line reach circle.
+
 ## Later (parked)
 - "Edit existing" path via JSON export/import
 - Limitations step and review page
