@@ -38,5 +38,9 @@ export const CANVAS = {
   warning: COLORS.yellowDark,
   error: COLORS.red,
   valid: COLORS.green,
+  pillarFill: COLORS.charcoal500,
+  pillarHatch: COLORS.charcoal900,
+  pillarStroke: COLORS.charcoal900,
+  wallFill: COLORS.charcoal,
   invalid: COLORS.red,
 } as const

@@ -1,5 +1,5 @@
 import { floorCorners } from '@/lib/floorShapes'
-import type { Clearance, Floorplan, MachineType, Point, Rotation } from '@/types'
+import type { Clearance, Floorplan, MachineType, Pillar, Point, Rotation, Wall } from '@/types'
 
 /** Axis-aligned rectangle on the floor, mm. (x, y) is the top-left corner. */
 export interface Box {
@@ -28,6 +28,36 @@ export function footprint(type: MachineType, rotation: Rotation) {
 export function bodyBox(type: MachineType, p: Placement): Box {
   const size = footprint(type, p.rotation)
   return { x: p.x - size.width / 2, y: p.y - size.depth / 2, ...size }
+}
+
+/** A pillar's rectangle. */
+export function pillarBox(p: Pillar): Box {
+  return { x: p.x - p.width / 2, y: p.y - p.depth / 2, width: p.width, depth: p.depth }
+}
+
+/** Make `end` line up with `start` horizontally or vertically, whichever is closer. */
+export function straightenWall(start: Point, end: Point): Point {
+  return Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)
+    ? { x: end.x, y: start.y }
+    : { x: start.x, y: end.y }
+}
+
+/** Length of a wall's centre line, mm. */
+export function wallLength(w: Pick<Wall, 'start' | 'end'>) {
+  return Math.hypot(w.end.x - w.start.x, w.end.y - w.start.y)
+}
+
+/** A wall's rectangle: its centre line grown by half the thickness on every side (square ends). */
+export function wallBox(w: Pick<Wall, 'start' | 'end' | 'thickness'>): Box {
+  const half = w.thickness / 2
+  const x = Math.min(w.start.x, w.end.x) - half
+  const y = Math.min(w.start.y, w.end.y) - half
+  return {
+    x,
+    y,
+    width: Math.abs(w.end.x - w.start.x) + w.thickness,
+    depth: Math.abs(w.end.y - w.start.y) + w.thickness,
+  }
 }
 
 /**
@@ -72,11 +102,14 @@ export function distanceToBox(x: number, y: number, box: Box): number {
   return Math.hypot(dx, dy)
 }
 
+/** The parts of a floor that the wall helpers need; lets them run before a Floorplan exists. */
+export type FloorBounds = Pick<Floorplan, 'width' | 'depth' | 'outline'>
+
 /** Rounding slack for "on the wall" tests, mm. */
 const EPS = 1e-6
 
 /** The floor's walls as segments, following its outline (or rectangle). */
-function walls(floorplan: Floorplan): [Point, Point][] {
+function walls(floorplan: FloorBounds): [Point, Point][] {
   const c = floorCorners(floorplan)
   return c.map((p, i) => [p, c[(i + 1) % c.length]])
 }
@@ -91,7 +124,7 @@ function closestOnSegment(x: number, y: number, a: Point, b: Point): Point {
 }
 
 /** The wall closest to a point: where on it, and its direction in degrees (0 = along +x). */
-export function nearestWall(x: number, y: number, floorplan: Floorplan) {
+export function nearestWall(x: number, y: number, floorplan: FloorBounds) {
   let best = { point: { x, y }, angle: 0, distance: Infinity }
   for (const [a, b] of walls(floorplan)) {
     const point = closestOnSegment(x, y, a, b)
@@ -104,12 +137,12 @@ export function nearestWall(x: number, y: number, floorplan: Floorplan) {
 }
 
 /** Move a point onto the nearest wall (used for exits). */
-export function snapToWall(x: number, y: number, floorplan: Floorplan): Point {
+export function snapToWall(x: number, y: number, floorplan: FloorBounds): Point {
   return nearestWall(x, y, floorplan).point
 }
 
 /** True if the point is inside the floor or on its wall. */
-export function pointInFloor(p: Point, floorplan: Floorplan): boolean {
+export function pointInFloor(p: Point, floorplan: FloorBounds): boolean {
   const ws = walls(floorplan)
   // On a wall counts as inside.
   if (ws.some(([a, b]) => {
@@ -132,7 +165,7 @@ export function pointInFloor(p: Point, floorplan: Floorplan): boolean {
  * on the floor and no floor corner pokes into the box (which catches the inner
  * corner of an L-shape cutting across it).
  */
-export function boxInsideFloor(box: Box, floorplan: Floorplan): boolean {
+export function boxInsideFloor(box: Box, floorplan: FloorBounds): boolean {
   if (!floorplan.outline) {
     return (
       box.x >= 0 &&
@@ -155,4 +188,93 @@ export function boxInsideFloor(box: Box, floorplan: Floorplan): boolean {
       v.y > box.y + EPS &&
       v.y < box.y + box.depth - EPS,
   )
+}
+
+/**
+ * Where the segment a→b first enters the box, as a fraction 0..1 along it, or null if it
+ * misses. The box is shrunk by `inset` so a segment that only touches its edge doesn't count.
+ * (Liang–Barsky clipping.)
+ */
+export function segmentEntersBox(a: Point, b: Point, box: Box, inset = 1): number | null {
+  const minX = box.x + inset
+  const maxX = box.x + box.width - inset
+  const minY = box.y + inset
+  const maxY = box.y + box.depth - inset
+  if (minX >= maxX || minY >= maxY) return null
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  let t0 = 0
+  let t1 = 1
+  const edges: [number, number][] = [
+    [-dx, a.x - minX],
+    [dx, maxX - a.x],
+    [-dy, a.y - minY],
+    [dy, maxY - a.y],
+  ]
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return null // parallel to this edge and outside it
+      continue
+    }
+    const t = q / p
+    if (p < 0) {
+      if (t > t1) return null
+      if (t > t0) t0 = t
+    } else {
+      if (t < t0) return null
+      if (t < t1) t1 = t
+    }
+  }
+  return t0
+}
+
+/** True if no wall stands between the two points. */
+export function clearLine(a: Point, b: Point, walls: Wall[]): boolean {
+  return !walls.some((w) => segmentEntersBox(a, b, wallBox(w)) !== null)
+}
+
+/** Points on a box used for line-of-sight checks: nearest point to `from`, corners, edge midpoints. */
+export function samplePoints(box: Box, from: Point): Point[] {
+  const { x, y, width: w, depth: d } = box
+  const nearest = {
+    x: Math.min(Math.max(from.x, x), x + w),
+    y: Math.min(Math.max(from.y, y), y + d),
+  }
+  return [
+    nearest,
+    { x, y },
+    { x: x + w, y },
+    { x: x + w, y: y + d },
+    { x, y: y + d },
+    { x: x + w / 2, y },
+    { x: x + w, y: y + d / 2 },
+    { x: x + w / 2, y: y + d },
+    { x, y: y + d / 2 },
+  ]
+}
+
+/** Rays cast for a coverage shape; enough for a smooth outline at planner zoom levels. */
+const COVERAGE_RAYS = 180
+
+/**
+ * The area a utility at `origin` covers within `radius`, cut off behind walls: a polygon of
+ * ray end points, or null when no wall is in range (draw a plain circle).
+ */
+export function coverageShape(origin: Point, radius: number, walls: Wall[]): Point[] | null {
+  const near = walls.filter(
+    (w) => distanceToBox(origin.x, origin.y, wallBox(w)) < radius,
+  )
+  if (near.length === 0) return null
+  const boxes = near.map(wallBox)
+  return Array.from({ length: COVERAGE_RAYS }, (_, i) => {
+    const angle = (i / COVERAGE_RAYS) * Math.PI * 2
+    const end = { x: origin.x + Math.cos(angle) * radius, y: origin.y + Math.sin(angle) * radius }
+    let t = 1
+    for (const box of boxes) {
+      // inset 0: the shadow should start right at the wall's face.
+      const hit = segmentEntersBox(origin, end, box, 0)
+      if (hit !== null && hit < t) t = hit
+    }
+    return { x: origin.x + (end.x - origin.x) * t, y: origin.y + (end.y - origin.y) * t }
+  })
 }

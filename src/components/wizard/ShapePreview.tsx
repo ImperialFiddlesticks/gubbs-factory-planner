@@ -1,4 +1,5 @@
 import { floorCorners, shapeError, shapeOutline, type FloorShape } from '@/lib/floorShapes'
+import type { Point } from '@/types'
 
 interface ShapePreviewProps {
   shape: FloorShape
@@ -7,10 +8,12 @@ interface ShapePreviewProps {
   boxHeight: number
   /** Show width/depth labels along the edges. */
   labels?: boolean
+  /** Pillar centres to draw, mm, with their (square) size. */
+  pillars?: { at: Point[]; size: number }
 }
 
 /** Top view of a floor shape, scaled to fit. Draws nothing useful while the sizes are invalid. */
-export function ShapePreview({ shape, boxWidth, boxHeight, labels }: ShapePreviewProps) {
+export function ShapePreview({ shape, boxWidth, boxHeight, labels, pillars }: ShapePreviewProps) {
   const pad = labels ? 28 : 4
   const valid = shapeError(shape) === null
   const corners = valid
@@ -40,6 +43,21 @@ export function ShapePreview({ shape, boxWidth, boxHeight, labels }: ShapePrevie
             strokeWidth={labels ? 2 : 1.5}
             strokeLinejoin="round"
           />
+          {pillars?.at.map((p) => {
+            // At least 3 px so small pillars stay visible in the preview.
+            const s = Math.max(3, pillars.size * scale)
+            return (
+              <rect
+                key={`${p.x},${p.y}`}
+                x={ox + p.x * scale - s / 2}
+                y={oy + p.y * scale - s / 2}
+                width={s}
+                height={s}
+                fill="var(--saab-charcoal-500)"
+                stroke="var(--saab-charcoal-900)"
+              />
+            )
+          })}
           {labels && (
             <g fontSize="12" fill="var(--saab-grey-700)" textAnchor="middle">
               <text x={boxWidth / 2} y={oy + shape.depth * scale + 18}>

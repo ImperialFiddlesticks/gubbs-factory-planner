@@ -43,6 +43,7 @@ export function TopBar({ onNewFloor }: TopBarProps) {
           </>
         )}
         {floorplan && <CoverageToggle />}
+        {floorplan && <LockToggle />}
         <Button size="sm" onClick={onNewFloor}>
           New floor
         </Button>
@@ -60,6 +61,20 @@ function CoverageToggle() {
       <Switch id="show-coverage" checked={showCoverage} onCheckedChange={toggleCoverage} />
       <Label htmlFor="show-coverage" className="text-muted-foreground">
         Coverage
+      </Label>
+    </div>
+  )
+}
+
+/** Keeps pillars (and later walls) from being selected or dragged while placing machines. */
+function LockToggle() {
+  const locked = usePlanner((s) => s.lockStructures)
+  const toggle = usePlanner((s) => s.toggleLockStructures)
+  return (
+    <div className="flex items-center gap-2">
+      <Switch id="lock-structures" checked={locked} onCheckedChange={toggle} />
+      <Label htmlFor="lock-structures" className="text-muted-foreground">
+        Lock structures
       </Label>
     </div>
   )

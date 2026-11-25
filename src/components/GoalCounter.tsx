@@ -13,10 +13,12 @@ export function GoalCounter() {
   const floorplan = usePlanner((s) => s.floorplan)
   const machines = usePlanner((s) => s.machines)
   const utilities = usePlanner((s) => s.utilities)
+  const pillars = usePlanner((s) => s.pillars)
+  const walls = usePlanner((s) => s.walls)
   const target = usePlanner((s) => s.setup.stationTarget)
 
   const placed = machines.length
-  const warnings = floorplan ? findLayoutIssues(machines, utilities, floorplan).length : 0
+  const warnings = floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls }).length : 0
   const reached = placed >= target && warnings === 0
 
   // Celebrate each time the goal goes from not reached to reached (not on first render).

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { ChoiceCard } from '@/components/wizard/ChoiceCard'
 import { ShapePreview } from '@/components/wizard/ShapePreview'
 import {
@@ -12,6 +13,7 @@ import {
   type FloorShape,
   type FloorShapeKind,
 } from '@/lib/floorShapes'
+import { pillarGridError, pillarGridPositions, type PillarGrid } from '@/lib/pillarGrid'
 import { usePlanner } from '@/store'
 
 const SHAPE_CARDS: { kind: FloorShapeKind; title: string; description: string }[] = [
@@ -45,11 +47,17 @@ export function FloorShapeStep() {
   const updateSetup = usePlanner((s) => s.updateSetup)
   const machineCount = usePlanner((s) => s.machines.length)
   const hasFloor = usePlanner((s) => s.floorplan !== null)
+  const grid = usePlanner((s) => s.setup.pillarGrid)
 
   const error = shapeError(shape)
-  const area = error
-    ? null
-    : polygonArea(floorCorners({ ...shape, outline: shapeOutline(shape) })) / 1e6
+  const bounds = { width: shape.width, depth: shape.depth, outline: shapeOutline(shape) }
+  const area = error ? null : polygonArea(floorCorners(bounds)) / 1e6
+  const gridError = pillarGridError(grid)
+  const pillarAt = error ? [] : pillarGridPositions(bounds, grid)
+
+  function setGrid(patch: Partial<PillarGrid>) {
+    updateSetup({ pillarGrid: { ...grid, ...patch } })
+  }
 
   function pickShape(kind: FloorShapeKind) {
     if (kind === shape.kind) return
@@ -105,12 +113,44 @@ export function FloorShapeStep() {
             ) : (
               <p className="text-muted-foreground">
                 Floor area <span className="font-semibold text-foreground">{area!.toFixed(1)} m²</span>
+                {grid.enabled && !gridError && (
+                  <>
+                    {' · '}
+                    <span className="font-semibold text-foreground">{pillarAt.length}</span>{' '}
+                    {pillarAt.length === 1 ? 'pillar' : 'pillars'}
+                  </>
+                )}
               </p>
+            )}
+          </div>
+
+          <div className="col-span-2 space-y-4 border-t pt-4">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="pillar-grid"
+                checked={grid.enabled}
+                onCheckedChange={(enabled) => setGrid({ enabled })}
+              />
+              <Label htmlFor="pillar-grid">Add a pillar grid</Label>
+            </div>
+            {grid.enabled && (
+              <div className="grid grid-cols-3 gap-4">
+                <MetreField id="grid-x" label="Spacing across (m)" mm={grid.spacingX} onChange={(spacingX) => setGrid({ spacingX })} />
+                <MetreField id="grid-y" label="Spacing along (m)" mm={grid.spacingY} onChange={(spacingY) => setGrid({ spacingY })} />
+                <MetreField id="grid-size" label="Pillar size (m)" mm={grid.size} step={0.1} onChange={(size) => setGrid({ size })} />
+                {gridError && <p className="col-span-3 text-sm text-destructive">{gridError}</p>}
+              </div>
             )}
           </div>
         </div>
         <div className="rounded-md bg-muted p-2">
-          <ShapePreview shape={shape} boxWidth={360} boxHeight={240} labels />
+          <ShapePreview
+            shape={shape}
+            boxWidth={360}
+            boxHeight={240}
+            labels
+            pillars={{ at: pillarAt, size: grid.size }}
+          />
         </div>
       </div>
 
@@ -128,11 +168,13 @@ interface MetreFieldProps {
   id: string
   label: string
   mm: number
+  /** Input step in metres. */
+  step?: number
   /** Called on every keystroke; NaN while the field is empty or not a number. */
   onChange: (mm: number) => void
 }
 
-function MetreField({ id, label, mm, onChange }: MetreFieldProps) {
+function MetreField({ id, label, mm, step = 0.5, onChange }: MetreFieldProps) {
   const [text, setText] = useState(Number.isFinite(mm) ? String(mm / 1000) : '')
   return (
     <div className="space-y-1.5">
@@ -141,7 +183,7 @@ function MetreField({ id, label, mm, onChange }: MetreFieldProps) {
         id={id}
         type="number"
         min={0}
-        step={0.5}
+        step={step}
         value={text}
         onChange={(e) => {
           setText(e.target.value)

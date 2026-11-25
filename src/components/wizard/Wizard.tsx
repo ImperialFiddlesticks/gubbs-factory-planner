@@ -6,6 +6,7 @@ import { StationsStep } from '@/components/wizard/steps/StationsStep'
 import { WhatToPlanStep } from '@/components/wizard/steps/WhatToPlanStep'
 import { DEFAULT_FLOORPLAN } from '@/data/defaults'
 import { shapeError, shapeOutline } from '@/lib/floorShapes'
+import { pillarGridError, pillarGridPositions } from '@/lib/pillarGrid'
 import { isValidStationTarget } from '@/lib/setup'
 import { usePlanner, type SetupAnswers } from '@/store'
 
@@ -46,7 +47,10 @@ const STEPS: StepDef[] = [
     title: 'What shape is your floor?',
     description: 'Pick the shape closest to your hall, then enter its sizes.',
     content: <FloorShapeStep />,
-    isValid: (s) => s.floorName.trim() !== '' && shapeError(s.floorShape) === null,
+    isValid: (s) =>
+      s.floorName.trim() !== '' &&
+      shapeError(s.floorShape) === null &&
+      pillarGridError(s.pillarGrid) === null,
   },
 ]
 
@@ -62,15 +66,24 @@ export function Wizard() {
   const isLast = step === STEPS.length - 1
 
   function createFloor() {
-    const { floorName, floorShape } = setup
+    const { floorName, floorShape, pillarGrid } = setup
     const outline = shapeOutline(floorShape)
-    newFloorplan({
-      name: floorName.trim(),
-      width: floorShape.width,
-      depth: floorShape.depth,
-      gridSize: DEFAULT_FLOORPLAN.gridSize,
-      ...(outline && { outline }),
-    })
+    const bounds = { width: floorShape.width, depth: floorShape.depth, outline }
+    const pillars = pillarGridPositions(bounds, pillarGrid).map((p) => ({
+      ...p,
+      width: pillarGrid.size,
+      depth: pillarGrid.size,
+    }))
+    newFloorplan(
+      {
+        name: floorName.trim(),
+        width: floorShape.width,
+        depth: floorShape.depth,
+        gridSize: DEFAULT_FLOORPLAN.gridSize,
+        ...(outline && { outline }),
+      },
+      pillars,
+    )
   }
 
   return (

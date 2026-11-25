@@ -4,6 +4,7 @@ import { UTILITY_ICONS } from '@/components/utilityIcons'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { CATALOG } from '@/data/catalog'
+import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
 import { EXIT_MAX_DISTANCE, UTILITY_LIST, type UtilityKindInfo } from '@/data/utilities'
 import { cn } from '@/lib/utils'
 import { usePlanner } from '@/store'
@@ -43,6 +44,14 @@ export function CatalogPanel() {
           </div>
         </details>
       )}
+
+      <Separator className="my-5" />
+
+      <PanelHeading>Structures</PanelHeading>
+      <div className="space-y-2">
+        <PillarItem />
+        <WallItem />
+      </div>
 
       <Separator className="my-5" />
 
@@ -91,6 +100,63 @@ function MachineItem({ type }: { type: MachineType }) {
           {type.needsFireSuppression && <Badge variant="secondary">Fire suppression</Badge>}
         </div>
       )}
+    </button>
+  )
+}
+
+function PillarItem() {
+  const startPlacing = usePlanner((s) => s.startPlacingPillar)
+  const active = usePlanner((s) => s.placing?.kind === 'pillar')
+  const size = metres(DEFAULT_PILLAR_SIZE)
+
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={startPlacing}
+      className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}
+    >
+      {/* Mini hatched block, matching the pillar on the canvas. */}
+      <span
+        className="size-7 shrink-0 rounded-[2px] border border-(--saab-charcoal-900)"
+        style={{
+          backgroundColor: 'var(--saab-charcoal-500)',
+          backgroundImage:
+            'repeating-linear-gradient(135deg, var(--saab-charcoal-900) 0 1px, transparent 1px 5px)',
+        }}
+        aria-hidden
+      />
+      <span>
+        <span className="block text-sm font-medium">Pillar</span>
+        <span className="block text-xs text-muted-foreground">
+          {size} × {size} m · size editable
+        </span>
+      </span>
+    </button>
+  )
+}
+
+function WallItem() {
+  const startPlacing = usePlanner((s) => s.startPlacingWall)
+  const active = usePlanner((s) => s.placing?.kind === 'wall')
+
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={startPlacing}
+      className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}
+    >
+      {/* Mini wall bar, matching the wall on the canvas. */}
+      <span className="flex size-7 shrink-0 items-center" aria-hidden>
+        <span className="h-1.5 w-full rounded-[1px] bg-(--saab-charcoal) ring-1 ring-(--saab-grey-500)" />
+      </span>
+      <span>
+        <span className="block text-sm font-medium">Wall</span>
+        <span className="block text-xs text-muted-foreground">
+          Click start and end · {metres(DEFAULT_WALL_THICKNESS)} m thick
+        </span>
+      </span>
     </button>
   )
 }

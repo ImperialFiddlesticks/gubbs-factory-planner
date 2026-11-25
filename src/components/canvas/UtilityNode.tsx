@@ -1,12 +1,12 @@
 import Konva from 'konva'
-import { Circle, Group, Path, Rect } from 'react-konva'
+import { Circle, Group, Line, Path, Rect } from 'react-konva'
 import { setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { EXIT_WIDTH, UTILITY_KINDS, utilityRadius } from '@/data/utilities'
-import { nearestWall, snapToWall } from '@/lib/geometry'
+import { coverageShape, nearestWall, snapToWall } from '@/lib/geometry'
 import { usePlanner } from '@/store'
 import { CANVAS, COLORS } from '@/theme'
-import type { Floorplan, Utility, UtilityKind } from '@/types'
+import type { Floorplan, Utility, UtilityKind, Wall } from '@/types'
 
 /** On-screen radius of a utility icon, px (kept constant when the floor is scaled to fit). */
 const ICON_R = 11
@@ -159,11 +159,39 @@ function ExitDoor({ x, y, floorplan, fit }: { x: number; y: number; floorplan: F
   )
 }
 
-/** Faint circle showing how far a utility reaches. Exits have none. */
-export function CoverageCircle({ utility, strong }: { utility: Utility; strong: boolean }) {
+/**
+ * Faint circle showing how far a utility reaches, cut off behind internal walls.
+ * Exits have none.
+ */
+export function CoverageCircle({
+  utility,
+  strong,
+  walls,
+}: {
+  utility: Utility
+  strong: boolean
+  walls: Wall[]
+}) {
   const radius = utilityRadius(utility)
   if (utility.kind === 'exit' || radius <= 0) return null
   const colour = UTILITY_KINDS[utility.kind].colour
+  const shape = coverageShape(utility, radius, walls)
+  if (shape) {
+    return (
+      <Line
+        points={shape.flatMap((p) => [p.x * SCALE, p.y * SCALE])}
+        closed
+        fill={colour}
+        opacity={strong ? 0.22 : 0.1}
+        stroke={colour}
+        strokeWidth={strong ? 2 : 1}
+        strokeScaleEnabled={false}
+        dash={[6, 4]}
+        lineJoin="round"
+        listening={false}
+      />
+    )
+  }
   return (
     <Circle
       x={utility.x * SCALE}
