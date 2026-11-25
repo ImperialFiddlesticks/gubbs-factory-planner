@@ -5,10 +5,15 @@ import {
   boxesOverlap,
   boxInsideFloor,
   clearanceBox,
+  clearLine,
   distanceToBox,
+  pillarBox,
+  samplePoints,
+  wallBox,
   type Box,
 } from '@/lib/geometry'
-import type { Floorplan, MachineInstance, MachineType, Utility } from '@/types'
+import { walkingDistances } from '@/lib/walking'
+import type { Floorplan, MachineInstance, MachineType, Pillar, Utility, Wall } from '@/types'
 
 /**
  * - space:   machines clash with each other or the walls (red outline on the canvas)
@@ -46,12 +51,23 @@ function resolve(machines: MachineInstance[]): Resolved[] {
   return out
 }
 
-/** Utilities of a kind that reach the machine's body (nearest edge), closest first. */
-function inReach(r: Resolved, utilities: Utility[], kind: Utility['kind']) {
+/**
+ * Utilities of a kind that reach the machine's body, closest first. A utility reaches it when
+ * some point of the body (nearest point, a corner or an edge midpoint) is within its radius
+ * with no internal wall in between.
+ */
+function inReach(r: Resolved, utilities: Utility[], kind: Utility['kind'], walls: Wall[]) {
   return utilities
     .filter((u) => u.kind === kind)
     .map((u) => ({ u, d: distanceToBox(u.x, u.y, r.body) }))
-    .filter(({ u, d }) => d <= utilityRadius(u))
+    .filter(({ u, d }) => {
+      const radius = utilityRadius(u)
+      if (d > radius) return false
+      if (walls.length === 0) return true
+      return samplePoints(r.body, u).some(
+        (p) => Math.hypot(p.x - u.x, p.y - u.y) <= radius && clearLine(u, p, walls),
+      )
+    })
     .sort((a, b) => a.d - b.d)
 }
 
@@ -59,12 +75,12 @@ function inReach(r: Resolved, utilities: Utility[], kind: Utility['kind']) {
  * Which power point feeds each machine (its nearest one in reach) and the
  * total load on each power point, kW.
  */
-export function powerAssignments(machines: MachineInstance[], utilities: Utility[]) {
+export function powerAssignments(machines: MachineInstance[], utilities: Utility[], walls: Wall[]) {
   const feeds = new Map<string, string>() // machine id -> power point id
   const loads = new Map<string, number>() // power point id -> kW
   for (const r of resolve(machines)) {
     if (r.type.powerKw <= 0) continue
-    const nearest = inReach(r, utilities, 'power')[0]
+    const nearest = inReach(r, utilities, 'power', walls)[0]
     if (!nearest) continue
     feeds.set(r.machine.id, nearest.u.id)
     loads.set(nearest.u.id, (loads.get(nearest.u.id) ?? 0) + r.type.powerKw)
@@ -79,6 +95,12 @@ export function powerAssignments(machines: MachineInstance[], utilities: Utility
  * - body and clearance must stay inside the floor.
  * Two clearance zones may overlap (a shared aisle).
  *
+ * Structure rules (pillars and internal walls):
+ * - a body may not overlap a structure;
+ * - a structure may not sit in a machine's clearance;
+ * - a structure must be inside the floor.
+ * Structures touching each other or utilities are not checked (normal in a building).
+ *
  * Utility rules (reach is measured to the nearest edge of the machine):
  * - needsWater -> a water point in reach;
  * - needsFireSuppression -> a sprinkler in reach;
@@ -89,9 +111,50 @@ export function findLayoutIssues(
   machines: MachineInstance[],
   utilities: Utility[],
   floorplan: Floorplan,
+  structures: Structures,
 ): LayoutIssue[] {
   const resolved = resolve(machines)
-  return [...spaceIssues(resolved, floorplan), ...utilityIssues(resolved, machines, utilities)]
+  const boxes: StructureBox[] = [
+    ...structures.pillars.map((p) => ({ id: p.id, noun: 'pillar' as const, box: pillarBox(p) })),
+    ...structures.walls.map((w) => ({ id: w.id, noun: 'wall' as const, box: wallBox(w) })),
+  ]
+  return [
+    ...spaceIssues(resolved, floorplan),
+    ...structureIssues(resolved, boxes, floorplan),
+    ...utilityIssues(resolved, machines, utilities, structures.walls, floorplan),
+  ]
+}
+
+/** The fixed parts of the building that the layout checks take into account. */
+export interface Structures {
+  pillars: Pillar[]
+  walls: Wall[]
+}
+
+interface StructureBox {
+  id: string
+  /** For messages: "a pillar", "a wall". */
+  noun: 'pillar' | 'wall'
+  box: Box
+}
+
+function structureIssues(resolved: Resolved[], structures: StructureBox[], floorplan: Floorplan): LayoutIssue[] {
+  const issues: LayoutIssue[] = []
+  for (const s of structures) {
+    if (!boxInsideFloor(s.box, floorplan)) {
+      issues.push({ key: `${s.noun}-out:${s.id}`, category: 'space', ids: [s.id], message: `A ${s.noun} is outside the floor.` })
+    }
+    for (const r of resolved) {
+      const ids = [r.machine.id, s.id]
+      const key = ids.join('|')
+      if (boxesOverlap(r.body, s.box)) {
+        issues.push({ key: `${s.noun}-on:${key}`, category: 'space', ids, message: `${r.type.name} stands on a ${s.noun}.` })
+      } else if (boxesOverlap(r.clearance, s.box)) {
+        issues.push({ key: `${s.noun}-clear:${key}`, category: 'space', ids, message: `A ${s.noun} blocks the clearance of ${r.type.name}.` })
+      }
+    }
+  }
+  return issues
 }
 
 function spaceIssues(resolved: Resolved[], floorplan: Floorplan): LayoutIssue[] {
@@ -128,37 +191,50 @@ function utilityIssues(
   resolved: Resolved[],
   machines: MachineInstance[],
   utilities: Utility[],
+  walls: Wall[],
+  floorplan: Floorplan,
 ): LayoutIssue[] {
   const issues: LayoutIssue[] = []
   const exits = utilities.filter((u) => u.kind === 'exit')
   if (resolved.length > 0 && exits.length === 0) {
     issues.push({ key: 'no-exit', category: 'utility', ids: [], message: 'The floor has no exit.' })
   }
+  // Walking distance around machines and internal walls, not a straight line.
+  const walk = walkingDistances(
+    floorplan,
+    exits,
+    resolved.map((r) => ({ id: r.machine.id, body: r.body })),
+    walls,
+  )
 
   for (const r of resolved) {
     const id = r.machine.id
     const name = r.type.name
-    if (r.type.needsWater && inReach(r, utilities, 'water').length === 0) {
+    if (r.type.needsWater && inReach(r, utilities, 'water', walls).length === 0) {
       issues.push({ key: `water:${id}`, category: 'utility', need: 'water', ids: [id], message: `${name} has no water point in reach.` })
     }
-    if (r.type.needsFireSuppression && inReach(r, utilities, 'sprinkler').length === 0) {
+    if (r.type.needsFireSuppression && inReach(r, utilities, 'sprinkler', walls).length === 0) {
       issues.push({ key: `sprinkler:${id}`, category: 'utility', need: 'sprinkler', ids: [id], message: `${name} is not covered by a sprinkler.` })
     }
-    if (r.type.powerKw > 0 && inReach(r, utilities, 'power').length === 0) {
+    if (r.type.powerKw > 0 && inReach(r, utilities, 'power', walls).length === 0) {
       issues.push({ key: `power:${id}`, category: 'utility', need: 'power', ids: [id], message: `${name} has no power point in reach.` })
     }
-    if (exits.length > 0 && !exits.some((e) => distanceToBox(e.x, e.y, r.body) <= EXIT_MAX_DISTANCE)) {
+    const walked = walk.get(id) ?? Infinity
+    if (exits.length > 0 && walked > EXIT_MAX_DISTANCE) {
       issues.push({
         key: `exit:${id}`,
         category: 'utility',
         need: 'exit',
         ids: [id],
-        message: `${name} is more than ${EXIT_MAX_DISTANCE / 1000} m from an exit.`,
+        message:
+          walked === Infinity
+            ? `${name} has no walking route to an exit.`
+            : `${name} is more than ${EXIT_MAX_DISTANCE / 1000} m walk from an exit.`,
       })
     }
   }
 
-  const { feeds, loads } = powerAssignments(machines, utilities)
+  const { feeds, loads } = powerAssignments(machines, utilities, walls)
   for (const u of utilities) {
     const load = loads.get(u.id) ?? 0
     if (u.kind === 'power' && u.capacityKw !== undefined && load > u.capacityKw) {

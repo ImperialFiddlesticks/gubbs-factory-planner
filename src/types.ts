@@ -12,15 +12,26 @@ import { z } from 'zod'
 // Types
 // ---------------------------------------------------------------------------
 
+/** A point on the floorplan, mm. */
+export interface Point {
+  x: number
+  y: number
+}
+
 export interface Floorplan {
   id: string
   name: string
-  /** Size along x, mm. */
+  /** Size along x, mm. For a shaped floor, the width of its bounding box. */
   width: number
-  /** Size along y, mm. */
+  /** Size along y, mm. For a shaped floor, the depth of its bounding box. */
   depth: number
   /** Snap grid spacing, mm. */
   gridSize: number
+  /**
+   * Corners of a non-rectangular floor, in order (clockwise), mm. Every point lies
+   * within 0..width × 0..depth. Omitted for a plain rectangle of width × depth.
+   */
+  outline?: Point[]
 }
 
 /** Free space a machine needs around it, mm, relative to the machine's own front. */
@@ -76,10 +87,42 @@ export interface Utility {
   capacityKw?: number
 }
 
+/** A structural column: a fixed part of the building that machines must avoid. */
+export interface Pillar {
+  id: string
+  /** Centre of the pillar on the floorplan, mm. */
+  x: number
+  /** Centre of the pillar on the floorplan, mm. */
+  y: number
+  /** Size along x, mm. */
+  width: number
+  /** Size along y, mm. */
+  depth: number
+}
+
+/**
+ * An internal wall: a straight, horizontal or vertical segment inside the hall.
+ * Machines must avoid it, and it blocks utility reach and walking routes.
+ */
+export interface Wall {
+  id: string
+  /** One end of the wall's centre line, mm. */
+  start: Point
+  /** Other end of the wall's centre line, mm. Shares x or y with `start`. */
+  end: Point
+  /** mm. */
+  thickness: number
+}
+
 // ---------------------------------------------------------------------------
 // Zod schemas (runtime validation). `satisfies` makes the compiler fail if a
 // schema drifts from its interface above.
 // ---------------------------------------------------------------------------
+
+export const PointSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+}) satisfies z.ZodType<Point>
 
 export const FloorplanSchema = z.object({
   id: z.string(),
@@ -87,6 +130,7 @@ export const FloorplanSchema = z.object({
   width: z.number().positive(),
   depth: z.number().positive(),
   gridSize: z.number().positive(),
+  outline: z.array(PointSchema).min(3).optional(),
 }) satisfies z.ZodType<Floorplan>
 
 export const ClearanceSchema = z.object({
@@ -137,3 +181,22 @@ export const UtilitySchema = z.object({
   radius: z.number().positive().optional(),
   capacityKw: z.number().nonnegative().optional(),
 }) satisfies z.ZodType<Utility>
+
+export const PillarSchema = z.object({
+  id: z.string(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number().positive(),
+  depth: z.number().positive(),
+}) satisfies z.ZodType<Pillar>
+
+export const WallSchema = z
+  .object({
+    id: z.string(),
+    start: PointSchema,
+    end: PointSchema,
+    thickness: z.number().positive(),
+  })
+  .refine((w) => w.start.x === w.end.x || w.start.y === w.end.y, {
+    message: 'Walls must be horizontal or vertical.',
+  }) satisfies z.ZodType<Wall>

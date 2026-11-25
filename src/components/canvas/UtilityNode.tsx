@@ -1,12 +1,12 @@
 import Konva from 'konva'
-import { Circle, Group, Path, Rect } from 'react-konva'
+import { Circle, Group, Line, Path, Rect } from 'react-konva'
 import { setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { EXIT_WIDTH, UTILITY_KINDS, utilityRadius } from '@/data/utilities'
-import { nearestWall, snapToWall } from '@/lib/geometry'
+import { coverageShape, nearestWall, snapToWall } from '@/lib/geometry'
 import { usePlanner } from '@/store'
 import { CANVAS, COLORS } from '@/theme'
-import type { Floorplan, Utility, UtilityKind } from '@/types'
+import type { Floorplan, Utility, UtilityKind, Wall } from '@/types'
 
 /** On-screen radius of a utility icon, px (kept constant when the floor is scaled to fit). */
 const ICON_R = 11
@@ -142,24 +142,56 @@ export function UtilityIcon({
 function ExitDoor({ x, y, floorplan, fit }: { x: number; y: number; floorplan: Floorplan; fit: number }) {
   const along = EXIT_WIDTH * SCALE
   const thick = 6 / fit
-  const horizontal = ['top', 'bottom'].includes(nearestWall(x, y, floorplan))
+  // Lies along the wall, including the slanted wall of a chamfered floor.
+  const { angle } = nearestWall(x, y, floorplan)
   return (
     <Rect
-      x={horizontal ? -along / 2 : -thick / 2}
-      y={horizontal ? -thick / 2 : -along / 2}
-      width={horizontal ? along : thick}
-      height={horizontal ? thick : along}
+      x={0}
+      y={0}
+      offsetX={along / 2}
+      offsetY={thick / 2}
+      width={along}
+      height={thick}
+      rotation={angle}
       fill={UTILITY_KINDS.exit.colour}
       listening={false}
     />
   )
 }
 
-/** Faint circle showing how far a utility reaches. Exits have none. */
-export function CoverageCircle({ utility, strong }: { utility: Utility; strong: boolean }) {
+/**
+ * Faint circle showing how far a utility reaches, cut off behind internal walls.
+ * Exits have none.
+ */
+export function CoverageCircle({
+  utility,
+  strong,
+  walls,
+}: {
+  utility: Utility
+  strong: boolean
+  walls: Wall[]
+}) {
   const radius = utilityRadius(utility)
   if (utility.kind === 'exit' || radius <= 0) return null
   const colour = UTILITY_KINDS[utility.kind].colour
+  const shape = coverageShape(utility, radius, walls)
+  if (shape) {
+    return (
+      <Line
+        points={shape.flatMap((p) => [p.x * SCALE, p.y * SCALE])}
+        closed
+        fill={colour}
+        opacity={strong ? 0.22 : 0.1}
+        stroke={colour}
+        strokeWidth={strong ? 2 : 1}
+        strokeScaleEnabled={false}
+        dash={[6, 4]}
+        lineJoin="round"
+        listening={false}
+      />
+    )
+  }
   return (
     <Circle
       x={utility.x * SCALE}

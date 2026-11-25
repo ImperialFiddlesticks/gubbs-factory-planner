@@ -1,4 +1,5 @@
 import { CommitInput } from '@/components/CommitInput'
+import { GoalCounter } from '@/components/GoalCounter'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -22,6 +23,7 @@ export function TopBar({ onNewFloor }: TopBarProps) {
       {floorplan && (
         <span className="truncate text-sm text-muted-foreground">{floorplan.name}</span>
       )}
+      {floorplan && <GoalCounter />}
 
       <div className="ml-auto flex items-center gap-6">
         {floorplan && (
@@ -41,6 +43,7 @@ export function TopBar({ onNewFloor }: TopBarProps) {
           </>
         )}
         {floorplan && <CoverageToggle />}
+        {floorplan && <LockToggle />}
         <Button size="sm" onClick={onNewFloor}>
           New floor
         </Button>
@@ -58,6 +61,20 @@ function CoverageToggle() {
       <Switch id="show-coverage" checked={showCoverage} onCheckedChange={toggleCoverage} />
       <Label htmlFor="show-coverage" className="text-muted-foreground">
         Coverage
+      </Label>
+    </div>
+  )
+}
+
+/** Keeps pillars (and later walls) from being selected or dragged while placing machines. */
+function LockToggle() {
+  const locked = usePlanner((s) => s.lockStructures)
+  const toggle = usePlanner((s) => s.toggleLockStructures)
+  return (
+    <div className="flex items-center gap-2">
+      <Switch id="lock-structures" checked={locked} onCheckedChange={toggle} />
+      <Label htmlFor="lock-structures" className="text-muted-foreground">
+        Lock structures
       </Label>
     </div>
   )

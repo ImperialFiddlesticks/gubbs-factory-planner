@@ -6,14 +6,15 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { getMachineType } from '@/data/catalog'
+import { MIN_WALL_LENGTH } from '@/data/structures'
 import { EXIT_MAX_DISTANCE, UTILITY_KINDS, utilityRadius } from '@/data/utilities'
 import { animateNodeOut } from '@/lib/animations'
-import { footprint } from '@/lib/geometry'
+import { footprint, wallLength } from '@/lib/geometry'
 import { cn } from '@/lib/utils'
 import { findLayoutIssues, powerAssignments } from '@/lib/validation'
 import { usePlanner } from '@/store'
 import { CANVAS } from '@/theme'
-import type { MachineInstance, Utility } from '@/types'
+import type { MachineInstance, Pillar, Utility, Wall } from '@/types'
 
 export function PropertiesPanel() {
   return (
@@ -36,21 +37,27 @@ export function PropertiesPanel() {
 function Selection() {
   const machine = usePlanner((s) => s.machines.find((m) => m.id === s.selectedId))
   const utility = usePlanner((s) => s.utilities.find((u) => u.id === s.selectedId))
+  const pillar = usePlanner((s) => s.pillars.find((p) => p.id === s.selectedId))
+  const wall = usePlanner((s) => s.walls.find((w) => w.id === s.selectedId))
   if (machine) return <MachineProperties machine={machine} />
   if (utility) return <UtilityProperties utility={utility} />
+  if (pillar) return <PillarProperties pillar={pillar} />
+  if (wall) return <WallProperties wall={wall} />
   return <p className="text-sm text-muted-foreground">Nothing selected</p>
 }
 
 function WarningsList() {
   const machines = usePlanner((s) => s.machines)
   const utilities = usePlanner((s) => s.utilities)
+  const pillars = usePlanner((s) => s.pillars)
+  const walls = usePlanner((s) => s.walls)
   const floorplan = usePlanner((s) => s.floorplan)
   const selectedId = usePlanner((s) => s.selectedId)
   const select = usePlanner((s) => s.select)
 
   const issues = useMemo(
-    () => (floorplan ? findLayoutIssues(machines, utilities, floorplan) : []),
-    [machines, utilities, floorplan],
+    () => (floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls }) : []),
+    [machines, utilities, floorplan, pillars, walls],
   )
 
   if (issues.length === 0) {
@@ -140,13 +147,16 @@ function UtilityProperties({ utility }: { utility: Utility }) {
   const removeUtility = usePlanner((s) => s.removeUtility)
   const machines = usePlanner((s) => s.machines)
   const utilities = usePlanner((s) => s.utilities)
+  const walls = usePlanner((s) => s.walls)
 
   const info = UTILITY_KINDS[utility.kind]
   const Icon = UTILITY_ICONS[utility.kind]
   const load = useMemo(
     () =>
-      utility.kind === 'power' ? (powerAssignments(machines, utilities).loads.get(utility.id) ?? 0) : 0,
-    [utility.kind, utility.id, machines, utilities],
+      utility.kind === 'power'
+        ? (powerAssignments(machines, utilities, walls).loads.get(utility.id) ?? 0)
+        : 0,
+    [utility.kind, utility.id, machines, utilities, walls],
   )
   const overloaded = utility.capacityKw !== undefined && load > utility.capacityKw
 
@@ -213,6 +223,139 @@ function UtilityProperties({ utility }: { utility: Utility }) {
         variant="destructive"
         className="w-full"
         onClick={() => animateNodeOut(utility.id, () => removeUtility(utility.id))}
+      >
+        Delete
+      </Button>
+    </div>
+  )
+}
+
+function PillarProperties({ pillar }: { pillar: Pillar }) {
+  const movePillar = usePlanner((s) => s.movePillar)
+  const resizePillar = usePlanner((s) => s.resizePillar)
+  const removePillar = usePlanner((s) => s.removePillar)
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="text-sm font-medium">Pillar</div>
+        <div className="mt-1 text-xs text-muted-foreground">Building element · not a station</div>
+      </div>
+
+      <PositionFields
+        id={pillar.id}
+        x={pillar.x}
+        y={pillar.y}
+        onMove={(x, y) => movePillar(pillar.id, x, y)}
+      />
+
+      {/* key by pillar so switching selection resets the fields */}
+      <div key={pillar.id} className="grid grid-cols-2 gap-3">
+        <Field id="pillar-width" label="Width (m)">
+          <CommitInput
+            id="pillar-width"
+            className="h-8"
+            min={0}
+            step={0.1}
+            value={pillar.width / 1000}
+            isValid={(m) => m > 0}
+            onCommit={(m) => resizePillar(pillar.id, Math.round(m * 1000), pillar.depth)}
+          />
+        </Field>
+        <Field id="pillar-depth" label="Depth (m)">
+          <CommitInput
+            id="pillar-depth"
+            className="h-8"
+            min={0}
+            step={0.1}
+            value={pillar.depth / 1000}
+            isValid={(m) => m > 0}
+            onCommit={(m) => resizePillar(pillar.id, pillar.width, Math.round(m * 1000))}
+          />
+        </Field>
+      </div>
+      <p className="text-xs text-muted-foreground">Position is the pillar's centre.</p>
+
+      <Button
+        variant="destructive"
+        className="w-full"
+        onClick={() => animateNodeOut(pillar.id, () => removePillar(pillar.id))}
+      >
+        Delete
+      </Button>
+    </div>
+  )
+}
+
+function WallProperties({ wall }: { wall: Wall }) {
+  const updateWall = usePlanner((s) => s.updateWall)
+  const removeWall = usePlanner((s) => s.removeWall)
+
+  const horizontal = wall.start.y === wall.end.y
+  const length = wallLength(wall)
+
+  /** Keep the start and direction; move the end to the new length. */
+  function setLength(mm: number) {
+    const sx = Math.sign(wall.end.x - wall.start.x) || 1
+    const sy = Math.sign(wall.end.y - wall.start.y) || 1
+    const end = horizontal
+      ? { x: wall.start.x + sx * mm, y: wall.start.y }
+      : { x: wall.start.x, y: wall.start.y + sy * mm }
+    updateWall(wall.id, { end })
+  }
+
+  /** Move the whole wall so its start lands on (x, y). */
+  function moveStart(x: number, y: number) {
+    const dx = x - wall.start.x
+    const dy = y - wall.start.y
+    updateWall(wall.id, {
+      start: { x, y },
+      end: { x: wall.end.x + dx, y: wall.end.y + dy },
+    })
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="text-sm font-medium">Wall</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {horizontal ? 'Horizontal' : 'Vertical'} · building element
+        </div>
+      </div>
+
+      <PositionFields id={wall.id} x={wall.start.x} y={wall.start.y} onMove={moveStart} />
+      <p className="text-xs text-muted-foreground">Position is the wall's start point.</p>
+
+      {/* key by wall so switching selection resets the fields */}
+      <div key={wall.id} className="grid grid-cols-2 gap-3">
+        <Field id="wall-length" label="Length (m)">
+          <CommitInput
+            id="wall-length"
+            className="h-8"
+            min={0}
+            step={0.5}
+            value={Number((length / 1000).toFixed(3))}
+            isValid={(m) => m * 1000 >= MIN_WALL_LENGTH}
+            onCommit={(m) => setLength(Math.round(m * 1000))}
+          />
+        </Field>
+        <Field id="wall-thickness" label="Thickness (m)">
+          <CommitInput
+            id="wall-thickness"
+            className="h-8"
+            min={0}
+            step={0.05}
+            value={wall.thickness / 1000}
+            isValid={(m) => m > 0}
+            onCommit={(m) => updateWall(wall.id, { thickness: Math.round(m * 1000) })}
+          />
+        </Field>
+      </div>
+
+      <Button
+        variant="destructive"
+        className="w-full"
+        onClick={() => animateNodeOut(wall.id, () => removeWall(wall.id))}
       >
         Delete
       </Button>
