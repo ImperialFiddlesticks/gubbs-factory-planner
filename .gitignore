@@ -24,7 +24,10 @@ dist-ssr
 *.sln
 *.sw?
 
-# .NET build output and user-specific project settings
-backend/bin/
-backend/obj/
-*.csproj.user
+# .NET build files
+[Bb]in/
+[Oo]bj/
+
+# .NET user-specific files
+*.user
+*.userosscache
