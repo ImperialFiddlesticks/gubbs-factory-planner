@@ -5,32 +5,33 @@ public class PlacementService
     public (bool CanPlace, string? Code) Check(
         int hallWidthMm,
         int hallDepthMm,
-        int machineWidthMm,
-        int machineDepthMm,
-        int xMm,
-        int yMm,
-        int rotationDegrees)
+        MachineInstance machine,
+        MachineType machineType)
     {
         if (hallWidthMm <= 0 || hallDepthMm <= 0 ||
-            machineWidthMm <= 0 || machineDepthMm <= 0 ||
-            rotationDegrees is not (0 or 90 or 180 or 270))
+            machineType.WidthMm <= 0 || machineType.DepthMm <= 0 ||
+            !double.IsFinite(machine.RotationDegrees))
         {
             return (false, "INVALID_INPUT");
         }
 
-        if (rotationDegrees is 90 or 270)
-        {
-            (machineWidthMm, machineDepthMm) = (machineDepthMm, machineWidthMm);
-        }
+        double radians = machine.RotationDegrees * Math.PI / 180.0;
+        double halfWidth = machineType.WidthMm / 2.0;
+        double halfDepth = machineType.DepthMm / 2.0;
 
-        double halfWidth = machineWidthMm / 2.0;
-        double halfDepth = machineDepthMm / 2.0;
+        double rotatedHalfWidth =
+            Math.Abs(Math.Cos(radians)) * halfWidth +
+            Math.Abs(Math.Sin(radians)) * halfDepth;
+
+        double rotatedHalfDepth =
+            Math.Abs(Math.Sin(radians)) * halfWidth +
+            Math.Abs(Math.Cos(radians)) * halfDepth;
 
         bool fits =
-            xMm - halfWidth >= 0 &&
-            xMm + halfWidth <= hallWidthMm &&
-            yMm - halfDepth >= 0 &&
-            yMm + halfDepth <= hallDepthMm;
+            machine.Xmm - rotatedHalfWidth >= 0 &&
+            machine.Xmm + rotatedHalfWidth <= hallWidthMm &&
+            machine.Ymm - rotatedHalfDepth >= 0 &&
+            machine.Ymm + rotatedHalfDepth <= hallDepthMm;
 
         return fits ? (true, null) : (false, "OUTSIDE_HALL");
     }
