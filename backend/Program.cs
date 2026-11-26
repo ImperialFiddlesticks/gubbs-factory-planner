@@ -17,6 +17,7 @@ builder.Services.AddCors(options =>
     
 });
 
+builder.Services.AddScoped<PlacementService>();
 
 var app = builder.Build();
 
