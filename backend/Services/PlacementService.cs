@@ -61,6 +61,7 @@ public class PlacementService
         LayoutMachinePlacement machine,
         IReadOnlyCollection<LayoutMachinePlacement>? otherMachines = null)
     {
+        floor = NormalizeFloorOutline(floor);
         var placements = new[] { machine }
             .Concat(otherMachines ?? Array.Empty<LayoutMachinePlacement>())
             .ToArray();
@@ -71,22 +72,22 @@ public class PlacementService
         }
 
         var conveyorConnections = BuildConveyorConnections(placements);
-        var body = BodyBox(machine);
-        if (!BoxInsideFloor(body, floor))
+        var body = BodyRectangle(machine);
+        if (!RectangleInsideFloor(body, floor))
         {
             return (false, "OUTSIDE_HALL");
         }
 
-        var clearance = ClearanceBox(machine);
-        if (!BoxInsideFloor(clearance, floor))
+        var clearance = ClearanceRectangle(machine);
+        if (!RectangleInsideFloor(clearance, floor))
         {
             return (false, "OUTSIDE_CLEARANCE");
         }
 
         foreach (var other in otherMachines ?? Array.Empty<LayoutMachinePlacement>())
         {
-            var otherBody = BodyBox(other);
-            if (BoxesOverlap(body, otherBody))
+            var otherBody = BodyRectangle(other);
+            if (RectanglesOverlap(body, otherBody))
             {
                 return (false, "MACHINE_OVERLAP");
             }
@@ -96,7 +97,8 @@ public class PlacementService
                 continue;
             }
 
-            if (BoxesOverlap(body, ClearanceBox(other)) || BoxesOverlap(otherBody, clearance))
+            if (RectanglesOverlap(body, ClearanceRectangle(other)) ||
+                RectanglesOverlap(otherBody, clearance))
             {
                 return (false, "CLEARANCE_BLOCKED");
             }
@@ -105,22 +107,159 @@ public class PlacementService
         return (true, null);
     }
 
-    private static bool IsValidFloor(LayoutFloor floor) =>
-        double.IsFinite(floor.WidthMm) && floor.WidthMm > 0 &&
-        double.IsFinite(floor.DepthMm) && floor.DepthMm > 0 &&
-        (floor.Outline is null ||
-            (floor.Outline.Count >= 3 && floor.Outline.All(point =>
-                double.IsFinite(point.X) && double.IsFinite(point.Y))));
+    private static LayoutFloor NormalizeFloorOutline(LayoutFloor floor)
+    {
+        if (floor.Outline is not { Count: > 3 } outline ||
+            !SamePoint(outline[0], outline[^1]))
+        {
+            return floor;
+        }
 
-    private static bool IsValidMachine(LayoutMachinePlacement machine) =>
-        !string.IsNullOrWhiteSpace(machine.Id) &&
-        double.IsFinite(machine.Xmm) && double.IsFinite(machine.Ymm) &&
-        double.IsFinite(machine.RotationDegrees) &&
-        double.IsFinite(machine.Type.WidthMm) && machine.Type.WidthMm > 0 &&
-        double.IsFinite(machine.Type.DepthMm) && machine.Type.DepthMm > 0 &&
-        (machine.ConveyorKind is null or "straight" or "corner-left" or "corner-right") &&
-        (machine.LengthMm is null || double.IsFinite(machine.LengthMm.Value) && machine.LengthMm.Value > 0) &&
-        IsValidClearance(machine.Type.Clearance);
+        return floor with { Outline = outline.Take(outline.Count - 1).ToArray() };
+    }
+
+    private static bool IsValidFloor(LayoutFloor floor)
+    {
+        if (!double.IsFinite(floor.WidthMm) || floor.WidthMm <= 0 ||
+            !double.IsFinite(floor.DepthMm) || floor.DepthMm <= 0)
+        {
+            return false;
+        }
+
+        if (floor.Outline is null)
+        {
+            return true;
+        }
+
+        var outline = floor.Outline;
+        return outline.Count >= 3 &&
+            outline.All(point =>
+                double.IsFinite(point.X) && double.IsFinite(point.Y) &&
+                point.X >= 0 && point.X <= floor.WidthMm &&
+                point.Y >= 0 && point.Y <= floor.DepthMm) &&
+            HasThreeDistinctPoints(outline) &&
+            HasNonZeroArea(outline) &&
+            IsSimplePolygon(outline);
+    }
+
+    private static bool HasThreeDistinctPoints(IReadOnlyList<LayoutPoint> points)
+    {
+        var distinct = new List<LayoutPoint>();
+        foreach (var point in points)
+        {
+            if (distinct.All(existing => !SamePoint(point, existing)))
+            {
+                distinct.Add(point);
+            }
+        }
+
+        return distinct.Count >= 3;
+    }
+
+    private static bool SamePoint(LayoutPoint a, LayoutPoint b) =>
+        Math.Abs(a.X - b.X) <= GeometryToleranceMm &&
+        Math.Abs(a.Y - b.Y) <= GeometryToleranceMm;
+
+    private static bool HasNonZeroArea(IReadOnlyList<LayoutPoint> points)
+    {
+        var twiceArea = 0d;
+        for (var i = 0; i < points.Count; i++)
+        {
+            var next = points[(i + 1) % points.Count];
+            twiceArea += points[i].X * next.Y - next.X * points[i].Y;
+        }
+
+        return double.IsFinite(twiceArea) && Math.Abs(twiceArea) > GeometryToleranceMm;
+    }
+
+    private static bool IsSimplePolygon(IReadOnlyList<LayoutPoint> points)
+    {
+        for (var i = 0; i < points.Count; i++)
+        {
+            var a = points[i];
+            var b = points[(i + 1) % points.Count];
+            if (SamePoint(a, b))
+            {
+                return false;
+            }
+
+            for (var j = i + 1; j < points.Count; j++)
+            {
+                var adjacent = j == i + 1 || (i == 0 && j == points.Count - 1);
+                var c = points[j];
+                var d = points[(j + 1) % points.Count];
+                if (adjacent)
+                {
+                    var firstNonShared = j == i + 1 ? a : b;
+                    var secondNonShared = j == i + 1 ? d : c;
+                    if (PointOnSegment(firstNonShared, c, d) || PointOnSegment(secondNonShared, a, b))
+                    {
+                        return false;
+                    }
+                }
+                else if (SegmentsIntersect(a, b, c, d))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SegmentsIntersect(LayoutPoint a, LayoutPoint b, LayoutPoint c, LayoutPoint d)
+    {
+        var abC = Orientation(a, b, c);
+        var abD = Orientation(a, b, d);
+        var cdA = Orientation(c, d, a);
+        var cdB = Orientation(c, d, b);
+        if (abC * abD < 0 && cdA * cdB < 0)
+        {
+            return true;
+        }
+
+        return (abC == 0 && PointOnSegment(c, a, b)) ||
+            (abD == 0 && PointOnSegment(d, a, b)) ||
+            (cdA == 0 && PointOnSegment(a, c, d)) ||
+            (cdB == 0 && PointOnSegment(b, c, d));
+    }
+
+    private static int Orientation(LayoutPoint a, LayoutPoint b, LayoutPoint c)
+    {
+        var cross = (b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X);
+        var scale = Math.Max(1, Math.Sqrt(
+            (b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y)));
+        if (Math.Abs(cross) <= GeometryToleranceMm * scale)
+        {
+            return 0;
+        }
+
+        return Math.Sign(cross);
+    }
+
+    private static bool PointOnSegment(LayoutPoint point, LayoutPoint a, LayoutPoint b) =>
+        DistanceToSegment(point, a, b) <= GeometryToleranceMm;
+
+    private static bool IsValidMachine(LayoutMachinePlacement machine)
+    {
+        if (string.IsNullOrWhiteSpace(machine.Id) ||
+            !double.IsFinite(machine.Xmm) || !double.IsFinite(machine.Ymm) ||
+            !double.IsFinite(machine.RotationDegrees) ||
+            machine.RotationDegrees < 0 || machine.RotationDegrees >= 360 ||
+            !double.IsFinite(machine.Type.WidthMm) || machine.Type.WidthMm <= 0 ||
+            !double.IsFinite(machine.Type.DepthMm) || machine.Type.DepthMm <= 0 ||
+            machine.ConveyorKind is not (null or "straight" or "corner-left" or "corner-right") ||
+            (machine.LengthMm is not null &&
+                (!double.IsFinite(machine.LengthMm.Value) || machine.LengthMm.Value <= 0)) ||
+            !IsValidClearance(machine.Type.Clearance))
+        {
+            return false;
+        }
+
+        var clearance = machine.Type.Clearance;
+        return double.IsFinite(FootprintWidth(machine) + clearance.LeftMm + clearance.RightMm) &&
+            double.IsFinite(machine.Type.DepthMm + clearance.FrontMm + clearance.BackMm);
+    }
 
     private static bool IsValidClearance(LayoutClearance clearance) =>
         double.IsFinite(clearance.FrontMm) && clearance.FrontMm >= 0 &&
@@ -128,39 +267,29 @@ public class PlacementService
         double.IsFinite(clearance.LeftMm) && clearance.LeftMm >= 0 &&
         double.IsFinite(clearance.RightMm) && clearance.RightMm >= 0;
 
-    private static LayoutBox BodyBox(LayoutMachinePlacement machine)
-    {
-        var (width, depth) = RotatedSize(FootprintWidth(machine), machine.Type.DepthMm, machine.RotationDegrees);
-        return new LayoutBox(machine.Xmm - width / 2, machine.Ymm - depth / 2, width, depth);
-    }
+    private static OrientedRectangle BodyRectangle(LayoutMachinePlacement machine) =>
+        new(machine.Xmm, machine.Ymm, FootprintWidth(machine), machine.Type.DepthMm, machine.RotationDegrees);
 
-    private static LayoutBox ClearanceBox(LayoutMachinePlacement machine)
+    private static OrientedRectangle ClearanceRectangle(LayoutMachinePlacement machine)
     {
         var (cos, sin) = RotationComponents(machine.RotationDegrees);
         var clearance = machine.Type.Clearance;
-        var outerWidth = FootprintWidth(machine) + clearance.LeftMm + clearance.RightMm;
-        var outerDepth = machine.Type.DepthMm + clearance.FrontMm + clearance.BackMm;
-        var localOffsetX = (clearance.RightMm - clearance.LeftMm) / 2;
-        var localOffsetY = (clearance.FrontMm - clearance.BackMm) / 2;
-        var centerX = machine.Xmm + cos * localOffsetX - sin * localOffsetY;
-        var centerY = machine.Ymm + sin * localOffsetX + cos * localOffsetY;
-        var (width, depth) = RotatedSize(outerWidth, outerDepth, machine.RotationDegrees);
-
-        return new LayoutBox(centerX - width / 2, centerY - depth / 2, width, depth);
+        var offsetX = (clearance.RightMm - clearance.LeftMm) / 2;
+        var offsetY = (clearance.FrontMm - clearance.BackMm) / 2;
+        var centerX = machine.Xmm + cos * offsetX - sin * offsetY;
+        var centerY = machine.Ymm + sin * offsetX + cos * offsetY;
+        return new OrientedRectangle(
+            centerX,
+            centerY,
+            FootprintWidth(machine) + clearance.LeftMm + clearance.RightMm,
+            machine.Type.DepthMm + clearance.FrontMm + clearance.BackMm,
+            machine.RotationDegrees);
     }
 
     private static double FootprintWidth(LayoutMachinePlacement machine) =>
         machine.ConveyorKind == "straight" && machine.LengthMm.HasValue
             ? machine.LengthMm.Value
             : machine.Type.WidthMm;
-
-    private static (double Width, double Depth) RotatedSize(double width, double depth, double rotationDegrees)
-    {
-        var (cos, sin) = RotationComponents(rotationDegrees);
-        cos = Math.Abs(cos);
-        sin = Math.Abs(sin);
-        return (cos * width + sin * depth, sin * width + cos * depth);
-    }
 
     private static (double Cos, double Sin) RotationComponents(double rotationDegrees)
     {
@@ -290,37 +419,156 @@ public class PlacementService
     private static string PairKey(string a, string b) =>
         StringComparer.OrdinalIgnoreCase.Compare(a, b) < 0 ? $"{a}|{b}" : $"{b}|{a}";
 
-    private static bool BoxesOverlap(LayoutBox a, LayoutBox b) =>
-        a.X < b.X + b.Width && b.X < a.X + a.Width &&
-        a.Y < b.Y + b.Depth && b.Y < a.Y + a.Depth;
-
-    private static bool BoxInsideFloor(LayoutBox box, LayoutFloor floor)
+    private static LayoutPoint[] RectangleCorners(OrientedRectangle rectangle)
     {
-        if (floor.Outline is null)
-        {
-            return box.X >= 0 &&
-                box.Y >= 0 &&
-                box.X + box.Width <= floor.WidthMm &&
-                box.Y + box.Depth <= floor.DepthMm;
-        }
+        var (cos, sin) = RotationComponents(rectangle.RotationDegrees);
+        var halfWidthX = cos * rectangle.WidthMm / 2;
+        var halfWidthY = sin * rectangle.WidthMm / 2;
+        var halfDepthX = -sin * rectangle.DepthMm / 2;
+        var halfDepthY = cos * rectangle.DepthMm / 2;
+        return
+        [
+            new LayoutPoint(rectangle.CenterX - halfWidthX - halfDepthX, rectangle.CenterY - halfWidthY - halfDepthY),
+            new LayoutPoint(rectangle.CenterX + halfWidthX - halfDepthX, rectangle.CenterY + halfWidthY - halfDepthY),
+            new LayoutPoint(rectangle.CenterX + halfWidthX + halfDepthX, rectangle.CenterY + halfWidthY + halfDepthY),
+            new LayoutPoint(rectangle.CenterX - halfWidthX + halfDepthX, rectangle.CenterY - halfWidthY + halfDepthY)
+        ];
+    }
 
-        var corners = new[]
+    private static bool RectanglesOverlap(OrientedRectangle a, OrientedRectangle b)
+    {
+        var aCorners = RectangleCorners(a);
+        var bCorners = RectangleCorners(b);
+        return !HasSeparatingAxis(aCorners, bCorners, a.RotationDegrees) &&
+            !HasSeparatingAxis(aCorners, bCorners, a.RotationDegrees + 90) &&
+            !HasSeparatingAxis(aCorners, bCorners, b.RotationDegrees) &&
+            !HasSeparatingAxis(aCorners, bCorners, b.RotationDegrees + 90);
+    }
+
+    private static bool HasSeparatingAxis(
+        IReadOnlyList<LayoutPoint> a,
+        IReadOnlyList<LayoutPoint> b,
+        double axisDegrees)
+    {
+        var (cos, sin) = RotationComponents(axisDegrees);
+        var axis = new LayoutPoint(cos, sin);
+        Project(a, axis, out var aMin, out var aMax);
+        Project(b, axis, out var bMin, out var bMax);
+        return aMax <= bMin + GeometryToleranceMm || bMax <= aMin + GeometryToleranceMm;
+    }
+
+    private static void Project(
+        IReadOnlyList<LayoutPoint> points,
+        LayoutPoint axis,
+        out double min,
+        out double max)
+    {
+        min = max = points[0].X * axis.X + points[0].Y * axis.Y;
+        for (var i = 1; i < points.Count; i++)
         {
-            new LayoutPoint(box.X, box.Y),
-            new LayoutPoint(box.X + box.Width, box.Y),
-            new LayoutPoint(box.X + box.Width, box.Y + box.Depth),
-            new LayoutPoint(box.X, box.Y + box.Depth)
-        };
-        if (corners.Any(corner => !PointInFloor(corner, floor.Outline)))
+            var projection = points[i].X * axis.X + points[i].Y * axis.Y;
+            min = Math.Min(min, projection);
+            max = Math.Max(max, projection);
+        }
+    }
+
+    private static bool RectangleInsideFloor(OrientedRectangle rectangle, LayoutFloor floor)
+    {
+        var outline = floor.Outline ??
+        [
+            new LayoutPoint(0, 0),
+            new LayoutPoint(floor.WidthMm, 0),
+            new LayoutPoint(floor.WidthMm, floor.DepthMm),
+            new LayoutPoint(0, floor.DepthMm)
+        ];
+        var corners = RectangleCorners(rectangle);
+        if (corners.Any(corner => !PointInFloor(corner, outline)))
         {
             return false;
         }
 
-        return !floor.Outline.Any(point =>
-            point.X > box.X + GeometryToleranceMm &&
-            point.X < box.X + box.Width - GeometryToleranceMm &&
-            point.Y > box.Y + GeometryToleranceMm &&
-            point.Y < box.Y + box.Depth - GeometryToleranceMm);
+        if (outline.Any(point => PointStrictlyInsideRectangle(point, rectangle)))
+        {
+            return false;
+        }
+
+        for (var i = 0; i < outline.Count; i++)
+        {
+            if (SegmentCrossesRectangleInterior(outline[i], outline[(i + 1) % outline.Count], rectangle))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool PointStrictlyInsideRectangle(LayoutPoint point, OrientedRectangle rectangle)
+    {
+        var (cos, sin) = RotationComponents(rectangle.RotationDegrees);
+        var dx = point.X - rectangle.CenterX;
+        var dy = point.Y - rectangle.CenterY;
+        var localX = dx * cos + dy * sin;
+        var localY = -dx * sin + dy * cos;
+        return Math.Abs(localX) < rectangle.WidthMm / 2 - GeometryToleranceMm &&
+            Math.Abs(localY) < rectangle.DepthMm / 2 - GeometryToleranceMm;
+    }
+
+    private static bool SegmentCrossesRectangleInterior(
+        LayoutPoint start,
+        LayoutPoint end,
+        OrientedRectangle rectangle)
+    {
+        var (cos, sin) = RotationComponents(rectangle.RotationDegrees);
+        LayoutPoint ToLocal(LayoutPoint point)
+        {
+            var dx = point.X - rectangle.CenterX;
+            var dy = point.Y - rectangle.CenterY;
+            return new LayoutPoint(dx * cos + dy * sin, -dx * sin + dy * cos);
+        }
+
+        var a = ToLocal(start);
+        var b = ToLocal(end);
+        var minX = -rectangle.WidthMm / 2 + GeometryToleranceMm;
+        var maxX = rectangle.WidthMm / 2 - GeometryToleranceMm;
+        var minY = -rectangle.DepthMm / 2 + GeometryToleranceMm;
+        var maxY = rectangle.DepthMm / 2 - GeometryToleranceMm;
+        if (minX >= maxX || minY >= maxY)
+        {
+            return false;
+        }
+
+        var dx = b.X - a.X;
+        var dy = b.Y - a.Y;
+        var tMin = 0d;
+        var tMax = 1d;
+        return Clip(-dx, a.X - minX, ref tMin, ref tMax) &&
+            Clip(dx, maxX - a.X, ref tMin, ref tMax) &&
+            Clip(-dy, a.Y - minY, ref tMin, ref tMax) &&
+            Clip(dy, maxY - a.Y, ref tMin, ref tMax) &&
+            tMin < tMax;
+    }
+
+    private static bool Clip(double p, double q, ref double tMin, ref double tMax)
+    {
+        if (p == 0)
+        {
+            return q >= 0;
+        }
+
+        var t = q / p;
+        if (p < 0)
+        {
+            if (t > tMax) return false;
+            tMin = Math.Max(tMin, t);
+        }
+        else
+        {
+            if (t < tMin) return false;
+            tMax = Math.Min(tMax, t);
+        }
+
+        return true;
     }
 
     private static bool PointInFloor(LayoutPoint point, IReadOnlyList<LayoutPoint> outline)
@@ -372,6 +620,13 @@ public class PlacementService
 
     private sealed record ConveyorPorts(LayoutPort In, LayoutPort Out);
 
+    private sealed record OrientedRectangle(
+        double CenterX,
+        double CenterY,
+        double WidthMm,
+        double DepthMm,
+        double RotationDegrees);
+
     private sealed record ConveyorConnections(
         IReadOnlyDictionary<string, string> RunByMachine,
         IReadOnlySet<string> LinkedPairs)
@@ -385,6 +640,4 @@ public class PlacementService
             return sameRun || LinkedPairs.Contains(PairKey(a.Id, b.Id));
         }
     }
-
-    private sealed record LayoutBox(double X, double Y, double Width, double Depth);
 }
