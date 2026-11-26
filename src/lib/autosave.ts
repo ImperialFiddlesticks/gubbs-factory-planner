@@ -22,8 +22,18 @@ const SAVE_KEY = 'gubbs-factory-planner'
 
 type Saved = Pick<
   PlannerState,
-  'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'setup' | 'layers' | 'conveyorLength'
+  'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'setup' | 'projects' | 'layers' | 'conveyorLength'
 >
+
+/** A saved (not open) project. */
+export const ProjectSchema = z.object({
+  floorplan: FloorplanSchema,
+  machines: z.array(MachineInstanceSchema),
+  utilities: z.array(UtilitySchema),
+  pillars: z.array(PillarSchema),
+  walls: z.array(WallSchema),
+  setup: z.record(z.string(), z.unknown()).optional(),
+})
 
 /**
  * What is checked when loading. Layout data must match the backend contract; anything that
@@ -37,6 +47,8 @@ const SavedSchema = z.object({
   walls: z.array(WallSchema),
   // Wizard answers and preferences are merged over the defaults, so a missing field is fine.
   setup: z.record(z.string(), z.unknown()).optional(),
+  // Checked one by one below, so one broken project doesn't lose the others.
+  projects: z.array(z.unknown()).optional(),
   layers: z.record(z.string(), z.boolean()).optional(),
   conveyorLength: z.number().positive().optional(),
 })
@@ -51,6 +63,7 @@ export const autosave: PersistOptions<PlannerState, Saved> = {
     pillars: s.pillars,
     walls: s.walls,
     setup: s.setup,
+    projects: s.projects,
     layers: s.layers,
     conveyorLength: s.conveyorLength,
   }),
@@ -67,6 +80,18 @@ export const autosave: PersistOptions<PlannerState, Saved> = {
       pillars: saved.pillars,
       walls: saved.walls,
       setup: { ...current.setup, ...saved.setup },
+      projects: (saved.projects ?? []).flatMap((raw) => {
+        const p = ProjectSchema.safeParse(raw)
+        if (!p.success) return []
+        return [
+          {
+            ...p.data,
+            machines: p.data.machines.filter((m) => getMachineType(m.typeId)),
+            // current.setup is the default answers when loading.
+            setup: { ...current.setup, ...p.data.setup },
+          },
+        ]
+      }),
       layers: { ...DEFAULT_LAYERS, ...saved.layers },
       conveyorLength: saved.conveyorLength ?? current.conveyorLength,
       // A saved floor reopens straight in the planner.

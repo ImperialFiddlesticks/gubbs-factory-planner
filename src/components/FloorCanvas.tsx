@@ -29,6 +29,7 @@ import {
   type Box,
 } from '@/lib/geometry'
 import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validation'
+import { useElementSize } from '@/lib/useElementSize'
 import { usePlanner, type Placing } from '@/store'
 import { CANVAS } from '@/theme'
 import type { Floorplan, MachineInstance, Pillar, Point, Utility, Wall } from '@/types'
@@ -667,19 +668,4 @@ function Grid({ floorplan, fit }: { floorplan: Floorplan; fit: number }) {
       }}
     />
   )
-}
-
-function useElementSize(ref: React.RefObject<HTMLElement | null>) {
-  const [size, setSize] = useState({ width: 0, height: 0 })
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const observer = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect
-      setSize({ width: Math.floor(width), height: Math.floor(height) })
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [ref])
-  return size
 }

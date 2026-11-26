@@ -24,7 +24,7 @@ export type Placing =
   | { kind: 'wall'; start: Point | null }
 
 /** Which full-page screen is showing. */
-export type Screen = 'welcome' | 'wizard' | 'planner'
+export type Screen = 'welcome' | 'wizard' | 'planner' | 'compare'
 
 /** Answers collected by the setup wizard. UI-side only, not part of the backend contract. */
 export interface SetupAnswers {
@@ -50,13 +50,30 @@ export const DEFAULT_SETUP: SetupAnswers = {
   pillarGrid: DEFAULT_PILLAR_GRID,
 }
 
+/**
+ * A saved project that isn't open. The open project lives in the top-level fields (floorplan,
+ * machines, …, setup). A project's id is its floorplan's id, and its name the floor's name.
+ */
+export interface Project {
+  floorplan: Floorplan
+  machines: MachineInstance[]
+  utilities: Utility[]
+  pillars: Pillar[]
+  walls: Wall[]
+  setup: SetupAnswers
+}
+
 export interface PlannerState {
   /** UI-only, not saved (a saved floor reopens in the planner). */
   screen: Screen
-  /** Wizard answers; kept after the wizard so the planner can use them. */
+  /** The open project's wizard answers (station goal, equipment categories). */
   setup: SetupAnswers
+  /** Answers being filled in in the wizard; become the new project's `setup` when it finishes. */
+  wizard: SetupAnswers
+  /** Saved projects other than the open one. */
+  projects: Project[]
 
-  /** Open the wizard with fresh answers. The current floor stays until the wizard finishes. */
+  /** Open the wizard with fresh answers. The current project stays open until the wizard finishes. */
   startSetup: () => void
   updateSetup: (patch: Partial<SetupAnswers>) => void
   /** Leave the wizard without changes; only possible when a floor already exists. */
@@ -87,8 +104,8 @@ export interface PlannerState {
   lockStructures: boolean
 
   /**
-   * Start a fresh floor and open the planner; clears all machines, utilities and selection.
-   * Pillars are replaced by `pillars` (e.g. the wizard's pillar grid), or cleared.
+   * Start a new project from the wizard's answers and open it in the planner. The project that
+   * was open is kept in `projects`. `pillars` are the wizard's pillar grid, if any.
    */
   newFloorplan: (input: NewFloorplanInput, pillars?: Omit<Pillar, 'id'>[]) => void
   /**
@@ -124,6 +141,23 @@ export interface PlannerState {
   /** Move or reshape a wall; the result is kept horizontal/vertical. */
   updateWall: (id: string, patch: Partial<Pick<Wall, 'start' | 'end' | 'thickness'>>) => void
   removeWall: (id: string) => void
+
+  /** Open a saved project; the one that was open is kept in `projects`. */
+  openProject: (id: string) => void
+  /** Copy the open project as "<name> (copy)" and open the copy. */
+  duplicateProject: () => void
+  /** Rename a project (its floor). */
+  renameProject: (id: string, name: string) => void
+  /** Delete a project. Deleting the open one opens another, or the welcome page if none is left. */
+  deleteProject: (id: string) => void
+  /**
+   * Add a project read from a file and open it. It gets a new id (so importing twice gives two
+   * projects), and "(imported)" is added to its name if a project already has that name.
+   */
+  importProject: (project: Project) => void
+  /** Show the compare page / go back to the planner. */
+  openCompare: () => void
+  closeCompare: () => void
 
   select: (id: string | null) => void
   /** Select several items (box select); with `add`, they're added to the current selection. */
@@ -166,6 +200,34 @@ function placeUtility(kind: UtilityKind, x: number, y: number, floorplan: Floorp
   return { x: Math.round(p.x), y: Math.round(p.y) }
 }
 
+/** The open project as a saved project (null when no floor is open). */
+export function currentProject(s: PlannerState): Project | null {
+  if (!s.floorplan) return null
+  return { floorplan: s.floorplan, machines: s.machines, utilities: s.utilities, pillars: s.pillars, walls: s.walls, setup: s.setup }
+}
+
+/** The project list with the open project added, before something else is opened. */
+function keepOpenProject(s: PlannerState): Project[] {
+  const current = currentProject(s)
+  return current ? [current, ...s.projects] : s.projects
+}
+
+/** State fields for opening a project in the planner, with a clean selection. */
+function opened(p: Project): Partial<PlannerState> {
+  return {
+    floorplan: p.floorplan,
+    machines: p.machines,
+    utilities: p.utilities,
+    pillars: p.pillars,
+    walls: p.walls,
+    setup: p.setup,
+    ...selection([]),
+    singlePieceId: null,
+    placing: null,
+    screen: 'planner',
+  }
+}
+
 /** Selection fields for a list of selected ids: selectedId is set only for a single item. */
 export function selection(ids: string[]): Pick<PlannerState, 'selectedId' | 'selectedIds'> {
   return { selectedIds: ids, selectedId: ids.length === 1 ? ids[0] : null }
@@ -175,9 +237,11 @@ export function selection(ids: string[]): Pick<PlannerState, 'selectedId' | 'sel
 const plannerState: StateCreator<PlannerState> = (set, get) => ({
   screen: 'welcome',
   setup: DEFAULT_SETUP,
+  wizard: DEFAULT_SETUP,
+  projects: [],
 
-  startSetup: () => set({ screen: 'wizard', setup: DEFAULT_SETUP, placing: null }),
-  updateSetup: (patch) => set((s) => ({ setup: { ...s.setup, ...patch } })),
+  startSetup: () => set({ screen: 'wizard', wizard: DEFAULT_SETUP, placing: null }),
+  updateSetup: (patch) => set((s) => ({ wizard: { ...s.wizard, ...patch } })),
   cancelSetup: () => set((s) => (s.floorplan ? { screen: 'planner' } : s)),
 
   floorplan: null,
@@ -194,15 +258,78 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   lockStructures: false,
 
   newFloorplan: (input, pillars = []) =>
-    set({
+    set((s) => ({
+      projects: keepOpenProject(s),
       floorplan: { id: crypto.randomUUID(), ...input },
       machines: [],
       utilities: [],
       pillars: pillars.map((p) => ({ id: crypto.randomUUID(), ...p })),
       walls: [],
+      setup: s.wizard,
       ...selection([]),
+      singlePieceId: null,
       placing: null,
       screen: 'planner',
+    })),
+
+  importProject: (project) =>
+    set((s) => {
+      const names = new Set(keepOpenProject(s).map((p) => p.floorplan.name))
+      const name = names.has(project.floorplan.name) ? `${project.floorplan.name} (imported)` : project.floorplan.name
+      return {
+        ...opened({ ...project, floorplan: { ...project.floorplan, id: crypto.randomUUID(), name } }),
+        projects: keepOpenProject(s),
+      }
+    }),
+
+  openCompare: () => set((s) => (s.floorplan ? { screen: 'compare', placing: null } : s)),
+  closeCompare: () => set({ screen: 'planner' }),
+
+  openProject: (id) =>
+    set((s) => {
+      const target = s.projects.find((p) => p.floorplan.id === id)
+      if (!target) return s
+      return { ...opened(target), projects: keepOpenProject(s).filter((p) => p !== target) }
+    }),
+
+  duplicateProject: () =>
+    set((s) => {
+      if (!s.floorplan) return s
+      return {
+        projects: keepOpenProject(s),
+        floorplan: { ...s.floorplan, id: crypto.randomUUID(), name: `${s.floorplan.name} (copy)` },
+        ...selection([]),
+        singlePieceId: null,
+        placing: null,
+      }
+    }),
+
+  renameProject: (id, name) =>
+    set((s) => {
+      if (s.floorplan?.id === id) return { floorplan: { ...s.floorplan, name } }
+      return {
+        projects: s.projects.map((p) => (p.floorplan.id === id ? { ...p, floorplan: { ...p.floorplan, name } } : p)),
+      }
+    }),
+
+  deleteProject: (id) =>
+    set((s) => {
+      if (s.floorplan?.id !== id) return { projects: s.projects.filter((p) => p.floorplan.id !== id) }
+      // Deleting the open project: open the next one, or go back to the start.
+      const [next, ...rest] = s.projects
+      if (next) return { ...opened(next), projects: rest }
+      return {
+        floorplan: null,
+        machines: [],
+        utilities: [],
+        pillars: [],
+        walls: [],
+        setup: DEFAULT_SETUP,
+        ...selection([]),
+        singlePieceId: null,
+        placing: null,
+        screen: 'welcome',
+      }
     }),
 
   setFloorplan: (width, depth) =>

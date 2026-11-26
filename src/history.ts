@@ -5,7 +5,8 @@ import { selection, usePlanner, type PlannerState } from '@/store'
  * Undo / redo for the layout. Every change to the layout (floor, machines, utilities, pillars,
  * walls) is recorded as one step: actions update the store once per change, and drags only
  * update it when dropped, so a whole drag is one step. Selection, layers and other UI state
- * aren't recorded. History lasts for the session only (not autosaved).
+ * aren't recorded. History is per project (it starts fresh when another project is opened) and
+ * lasts for the session only (not autosaved).
  */
 
 type Layout = Pick<PlannerState, 'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls'>
@@ -42,8 +43,12 @@ export const useHistory = create<HistoryState>()(() => ({ past: [], future: [] }
 let restoring = false
 
 usePlanner.subscribe((state, prev) => {
-  // The very first floor (from nothing) isn't undoable: there's no planner without a floor.
-  if (restoring || !prev.floorplan || !changed(state, prev)) return
+  // Opening, creating or deleting a project starts a fresh history: undo stays within a project.
+  if (state.floorplan?.id !== prev.floorplan?.id) {
+    useHistory.setState({ past: [], future: [] })
+    return
+  }
+  if (restoring || !changed(state, prev)) return
   useHistory.setState((h) => ({ past: [...h.past, layoutOf(prev)].slice(-LIMIT), future: [] }))
 })
 

@@ -1,10 +1,11 @@
 import { CommitInput } from '@/components/CommitInput'
 import { GoalCounter } from '@/components/GoalCounter'
-import { Button } from '@/components/ui/button'
+import { ProjectSwitcher } from '@/components/ProjectSwitcher'
 import { Label } from '@/components/ui/label'
 import { usePlanner } from '@/store'
 
 interface TopBarProps {
+  /** Opens the wizard for a new project (from the project menu). */
   onNewFloor: () => void
 }
 
@@ -19,9 +20,7 @@ export function TopBar({ onNewFloor }: TopBarProps) {
         <h1 className="text-sm font-semibold tracking-widest uppercase">Factory Planner</h1>
       </div>
 
-      {floorplan && (
-        <span className="truncate text-sm text-muted-foreground">{floorplan.name}</span>
-      )}
+      {floorplan && <ProjectSwitcher onNewProject={onNewFloor} />}
       {floorplan && <GoalCounter />}
 
       <div className="ml-auto flex items-center gap-6">
@@ -41,9 +40,6 @@ export function TopBar({ onNewFloor }: TopBarProps) {
             />
           </>
         )}
-        <Button size="sm" onClick={onNewFloor}>
-          New floor
-        </Button>
       </div>
     </header>
   )

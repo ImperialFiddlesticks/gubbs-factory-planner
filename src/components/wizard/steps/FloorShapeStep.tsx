@@ -42,12 +42,12 @@ const FIELDS: { [K in FloorShapeKind]: { key: string; label: string }[] } = {
 }
 
 export function FloorShapeStep() {
-  const name = usePlanner((s) => s.setup.floorName)
-  const shape = usePlanner((s) => s.setup.floorShape)
+  const name = usePlanner((s) => s.wizard.floorName)
+  const shape = usePlanner((s) => s.wizard.floorShape)
   const updateSetup = usePlanner((s) => s.updateSetup)
-  const machineCount = usePlanner((s) => s.machines.length)
+  const currentName = usePlanner((s) => s.floorplan?.name)
   const hasFloor = usePlanner((s) => s.floorplan !== null)
-  const grid = usePlanner((s) => s.setup.pillarGrid)
+  const grid = usePlanner((s) => s.wizard.pillarGrid)
 
   const error = shapeError(shape)
   const bounds = { width: shape.width, depth: shape.depth, outline: shapeOutline(shape) }
@@ -154,10 +154,10 @@ export function FloorShapeStep() {
         </div>
       </div>
 
-      {hasFloor && machineCount > 0 && (
+      {hasFloor && (
         <p className="text-sm text-muted-foreground">
-          Creating this floor replaces the current one and removes its {machineCount}{' '}
-          {machineCount === 1 ? 'machine' : 'machines'}.
+          This creates a new project. Your current one{currentName && ` ("${currentName}")`} stays saved;
+          switch between them from the floor name in the header.
         </p>
       )}
     </div>

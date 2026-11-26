@@ -1,4 +1,5 @@
 import { CatalogPanel } from '@/components/CatalogPanel'
+import { ComparePage } from '@/components/compare/ComparePage'
 import { FloorCanvas } from '@/components/FloorCanvas'
 import { PropertiesPanel } from '@/components/PropertiesPanel'
 import { TopBar } from '@/components/TopBar'
@@ -11,6 +12,7 @@ function App() {
 
   if (screen === 'welcome') return <WelcomeScreen />
   if (screen === 'wizard') return <Wizard />
+  if (screen === 'compare') return <ComparePage />
   return <Planner />
 }
 

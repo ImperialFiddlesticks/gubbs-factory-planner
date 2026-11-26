@@ -88,8 +88,13 @@ Decided: conveyors are pieces placed one at a time (straight belts and corners),
 - [x] Multi-select: click-and-drag on empty floor draws a selection box; everything inside is selected and can be dragged together (Shift-click adds/removes). Delete removes the selection.
 
 ### Compare projects
-- Saved projects: keep several layouts (e.g. "Option A", "Option B"), with save, rename, duplicate ("try a variant") and switch between them. Stored locally until the backend can save plans; JSON export/import as a fallback.
-- Compare view: pick two projects and see them side by side (both floors drawn at the same scale), with a table of key figures: stations placed, warnings, floor area used, longest walk to an exit, total power, conveyor length. The better value in each row is highlighted.
+
+Decided: the floor name in the header is the project switcher (no new header buttons); a duplicate is named "<name> (copy)" and opens straight away (rename from the menu); compare is a full page with both floors side by side and a table of figures.
+
+- [x] 39. Projects in the store: the open project plus a list of other saved projects (each: floor, machines, utilities, pillars, walls, wizard answers), all autosaved. The wizard's "New floor" creates a new project instead of replacing the current one. Undo history resets when switching project.
+- [x] 40. Project switcher: click the floor name in the header for a menu — list of projects (click to open), Duplicate, Rename, Delete (with confirm), Compare….
+- [x] 41. Compare screen: pick two projects; both floors drawn side by side at the same scale (view only); a table of key figures (stations, warnings, floor area used, longest walk to an exit, total power, conveyor length) with the better value highlighted; an "Open" button under each.
+- [x] 42. Export / import a project as a JSON file (in the switcher menu), for sharing until the backend can sync.
 
 ### Free rotation
 - Machines can stand at any angle: a rotate handle on the selected machine and an angle field in the properties panel; snaps every 15° (stronger at 0/90/180/270), Shift for any angle; R / Rotate button still turn 90°. Conveyors stay at 90° steps for now.

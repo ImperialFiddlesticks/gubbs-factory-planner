@@ -6,7 +6,7 @@ import { isValidStationTarget, MAX_STATIONS, MIN_STATIONS } from '@/lib/setup'
 import { usePlanner } from '@/store'
 
 export function StationsStep() {
-  const target = usePlanner((s) => s.setup.stationTarget)
+  const target = usePlanner((s) => s.wizard.stationTarget)
   const updateSetup = usePlanner((s) => s.updateSetup)
   // Kept as text so the field can be empty while typing; the store gets the parsed number,
   // which is invalid (and disables Next) until it is a whole number in range.
