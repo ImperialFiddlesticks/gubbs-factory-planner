@@ -1,5 +1,5 @@
 import { floorCorners } from '@/lib/floorShapes'
-import type { Clearance, Floorplan, MachineType, Pillar, Point, Rotation, Wall } from '@/types'
+import type { Floorplan, MachineType, Pillar, Point, Rotation, Wall } from '@/types'
 
 /** Axis-aligned rectangle on the floor, mm. (x, y) is the top-left corner. */
 export interface Box {
@@ -18,10 +18,14 @@ export interface Placement {
 
 /** Footprint (mm) of a machine type after rotation. */
 export function footprint(type: MachineType, rotation: Rotation) {
-  const sideways = rotation === 90 || rotation === 270
-  return sideways
-    ? { width: type.depth, depth: type.width }
-    : { width: type.width, depth: type.depth }
+    const radians = (rotation * Math.PI) / 180
+    const cos = Math.abs(Math.cos(radians))
+    const sin = Math.abs(Math.sin(radians))
+
+    return{
+        width: cos * type.width + sin * type.depth,
+        depth: sin * type.width + cos * type.depth,
+    }
 }
 
 /** The machine's own rectangle. */
@@ -65,28 +69,44 @@ export function wallBox(w: Pick<Wall, 'start' | 'end' | 'thickness'>): Box {
  * At rotation 0 the machine's front faces +y (down on the plan) and its left
  * side is -x. Rotation is clockwise.
  */
-export function clearanceMargins(c: Clearance, rotation: Rotation) {
-  switch (rotation) {
-    case 0:
-      return { top: c.back, right: c.right, bottom: c.front, left: c.left }
-    case 90:
-      return { top: c.left, right: c.back, bottom: c.right, left: c.front }
-    case 180:
-      return { top: c.front, right: c.left, bottom: c.back, left: c.right }
-    case 270:
-      return { top: c.right, right: c.front, bottom: c.left, left: c.back }
-  }
-}
+// export function clearanceMargins(c: Clearance, rotation: Rotation) {
+//   switch (rotation) {
+//     case 0:
+//       return { top: c.back, right: c.right, bottom: c.front, left: c.left }
+//     case 90:
+//       return { top: c.left, right: c.back, bottom: c.right, left: c.front }
+//     case 180:
+//       return { top: c.front, right: c.left, bottom: c.back, left: c.right }
+//     case 270:
+//       return { top: c.right, right: c.front, bottom: c.left, left: c.back }
+//   }
+// }
 
 /** The machine's rectangle grown by its clearances. */
 export function clearanceBox(type: MachineType, p: Placement): Box {
-  const body = bodyBox(type, p)
-  const m = clearanceMargins(type.clearance, p.rotation)
+  const radians = (p.rotation * Math.PI) / 180
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
+  const absCos = Math.abs(cos)
+  const absSin = Math.abs(sin)
+
+  const outerWidth = type.width + type.clearance.left + type.clearance.right
+  const outerDepth = type.depth + type.clearance.front + type.clearance.back
+
+  const localOffsetX = (type.clearance.right - type.clearance.left) / 2
+  const localOffsetY = (type.clearance.front - type.clearance.back) / 2
+
+  const centerX = p.x + cos * localOffsetX - sin * localOffsetY
+  const centerY = p.y + sin * localOffsetX + cos * localOffsetY
+
+  const width = absCos * outerWidth + absSin * outerDepth
+  const depth = absSin * outerWidth + absCos * outerDepth
+
   return {
-    x: body.x - m.left,
-    y: body.y - m.top,
-    width: body.width + m.left + m.right,
-    depth: body.depth + m.top + m.bottom,
+    x: centerX - width / 2,
+    y: centerY - depth / 2,
+    width,
+    depth,
   }
 }
 
