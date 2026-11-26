@@ -7,4 +7,5 @@ public class MachineInstance
 	public int Xmm { get; set; }
 	public int Ymm { get; set; }
 	public double RotationDegrees { get; set; }
+	public double? Length { get; set; }
 }

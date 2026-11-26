@@ -1,5 +1,13 @@
 ﻿using System;
 
+public class MachineClearance
+{
+    public double FrontMm { get; set; }
+    public double BackMm { get; set; }
+    public double LeftMm { get; set; }
+    public double RightMm { get; set; }
+}
+
 public class MachineType
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -9,6 +17,10 @@ public class MachineType
     public int WidthMm { get; set; }
 
     public int DepthMm { get; set; }
+
+    public MachineClearance Clearance { get; set; } = new();
+
+    public string? Conveyor { get; set; }
 
     public double PowerKw { get; set; }
 
