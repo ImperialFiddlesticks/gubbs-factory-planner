@@ -4,3 +4,28 @@ GET {{backend_HostAddress}}/weatherforecast/
 Accept: application/json
 
 ###
+POST {{backend_HostAddress}}/api/placement-checks/
+Accept: application/json
+Content-Type:  application/json
+    
+{
+  "hallWidthMm": 10000,
+
+  "machine": {
+    "xmm": 800,
+    "ymm": 3000,
+    "rotationDegrees": 0
+  },
+
+  "machineType": {
+    "widthMm": 2000,
+    "depthMm": 1500,
+    "powerKw": 15,
+    "needsWater": false,
+    "needsFireSuppression": true
+  },
+
+  "hallDepthMm": 6000
+}
+
+
