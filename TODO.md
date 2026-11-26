@@ -62,6 +62,12 @@ Decided: water and power lines are drawn automatically from the existing reach r
 
 ## Up next (to plan)
 
+Priority from the organisers: the layout itself, simple, fun and easy to use. Simulation (animated flows) is only a bonus. Sections below are in the planned order.
+
+Persona (UX): Victoria Andersson, production technician at Saab Aeronautics — "I want to test ideas quickly without spending hours preparing models." Needs: change layouts quickly, experiment without losing work, understand space limits and dimensions (incl. heights), compare alternatives, collect colleagues' feedback. Dislikes complicated programs, CAD preparation, and finding space problems late.
+
+UI rule of thumb (for Victoria: "few menus"): new features shouldn't each add a top-bar control or a new menu; prefer actions next to the selected item, keyboard shortcuts, and folding options into existing panels.
+
 ### Conveyors
 
 Decided: conveyors are pieces placed one at a time (straight belts and corners), like other machines; every piece has a flow direction shown with arrows; pieces snap output-to-input only; no snapping to machines yet; a connected run has one drive (power counted once per run, by belt length) and its pieces don't clash with each other's clearance.
@@ -74,9 +80,63 @@ Decided: conveyors are pieces placed one at a time (straight belts and corners),
 - [x] 37. Machine fronts: a conveyor end snaps to the middle of a machine's front (feeding into it, or taking goods out of it); one conveyor per front; a joined belt and machine don't block each other's clearance; free fronts are marked while a conveyor piece is being placed or dragged.
 - [x] 38. Moving runs: dragging a conveyor piece moves its whole run (outlined together when selected, and the run's free ends snap); double-click a piece to move it on its own.
 
+### Autosave
+- Keep the current layout (floor, machines, utilities, structures, wizard answers) in the browser and restore it after a refresh or a closed tab, so no work is lost. Saved quietly on every change; "New floor" still starts fresh. First piece of saved projects.
+
+### Editing
+- Undo / redo: Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y) plus buttons in the top bar, covering every change to the layout (machines, utilities, structures, floor size); a drag counts as one step.
+- Multi-select: click-and-drag on empty floor draws a selection box; everything inside is selected and can be dragged together (Shift-click adds/removes). Delete removes the selection.
+
+### Compare projects
+- Saved projects: keep several layouts (e.g. "Option A", "Option B"), with save, rename, duplicate ("try a variant") and switch between them. Stored locally until the backend can save plans; JSON export/import as a fallback.
+- Compare view: pick two projects and see them side by side (both floors drawn at the same scale), with a table of key figures: stations placed, warnings, floor area used, longest walk to an exit, total power, conveyor length. The better value in each row is highlighted.
+
+### Ease of use
+- Alignment guides: while dragging, dashed guide lines appear when a machine lines up with another's edge or centre, and it snaps gently onto them; a distance label (e.g. "1.2 m") shows the gap to the nearest neighbour.
+- Drag from the catalog: drag an item straight onto the floor, as well as click-then-place.
+- Quick actions: a small floating bar next to the selected item (Rotate, Duplicate, Comment, Delete), plus shortcuts: R rotate, Ctrl+D duplicate, Delete, arrow keys to nudge (Shift for bigger steps).
+- Example floors: ready-made templates in the wizard (e.g. "Small machining cell", "Assembly line") to start from instead of an empty hall.
+- First-time hints: two or three short tips the first time someone places a machine (drag to move, R to rotate, red means it needs more space), dismissable and shown once.
+- Catalog search: filter the catalog by name (needed once there are more machines).
+
+### Comments (working together)
+- Add a comment to anything on the plan: a machine, utility, structure, zone, or a spot on the empty floor.
+- On the canvas a comment shows only as a small chat-bubble icon next to what it's about; clicking it opens the full comment.
+- An "All comments" panel lists every comment, so the whole plan's discussion can be reviewed in one place; clicking one selects and shows its item.
+- To decide when planning: author name on each comment, replies (threads), marking a comment resolved, and how comments are shared between people (needs the backend to sync; local-only until then).
+
+### More machines
+- Extend the catalog across the equipment categories (e.g. laser cutter, press brake, welding robot cell, injection moulding machine, CMM / inspection station, workbench, pallet racking, paint booth). Each with size, clearance, power, water/fire needs and height.
+
+### Height limits
+- Machines get a height. Height-limit zones (drawn as rectangles, with a max height) mark low ceilings, ducts or mezzanines; a machine taller than the limit of a zone it stands in gets a warning. Possibly a floor-wide ceiling height in the wizard too.
+
+### Keep-clear aisles
+- Aisle zones (drawn as rectangles, hatched green, labelled "Keep aisle clear") where no machine body may stand; a machine in an aisle gets a warning. Utilities and walking routes may use them.
+
+### Open floor shapes
+- A floor side can be marked open (no wall) where the hall continues into an adjoining area, e.g. a corridor or another hall. Drawn as a dashed edge; machines may not cross it, but walking routes can leave through it (counts like a wide exit), and exits don't snap to it. Chosen per side in the wizard's floor step and editable in the planner.
+
 ### Design rework
-- Machines: rework how machines look on the canvas (shape, label, colours, front marker, needs badges).
-- Map layout: rework the floor/canvas look and the planner layout around it (grid, floor outline, panels).
+
+Inspiration (Factory Runs screenshot): light, schematic look instead of solid blue boxes. Candidates only: we pick which parts to use when we get to this section.
+
+- Machines: light rounded "cards" with a soft border, an inner schematic hinting at the type (e.g. spindle circle and control panel for CNCs, jig points for assembly), short numbered names ("CNC 01", "Assembly 05") with dimensions underneath, and an arrow showing the front/flow direction. Warning state: red-tinted card with a red border.
+- Clearance: every machine's clearance drawn as a faint dashed rounded outline (not only when selected); red-tinted when it clashes.
+- Floor: warm off-white floor with a subtle grid, a thick grey building outline, and a small "Grid: 0.5 m per square" note.
+- Dimension rulers along the top and left of the floor (e.g. "19 m", "11 m").
+- Zoom controls in the corner: +, −, zoom level and a "fit" button (plus scroll-to-zoom and pan).
+- Bottom status bar: legend for the zone colours (clear aisle, height limit, clearance, warning) and a summary such as "4 spatial checks flagged".
+- Possible: a blueprint view toggle — classic blueprint blue background with a fine white grid, and white line sketches of the floor, walls, machines and utilities (outlines only, no fills).
+
+### Fun
+- Layout score: a live grade (S/A/B/…) in the top bar from warnings, floor-space use and walking distances; tells you what would raise it.
+- Juice and sound: soft "thunk" on placing, a click when conveyors snap, a small wobble on a clash, a chime when the goal is reached; a mute toggle.
+- Achievements: small badges with the confetti, e.g. "Zero warnings", "Fire marshal" (every machine within 15 m of an exit), "Lean line" (one continuous conveyor run).
+
+### Bonus (only if there's time)
+- Fire drill: workers walk from every machine to the nearest exit along the walking routes, with an evacuation timer.
+- Run the factory: boxes travel along conveyor runs between machines; a machine with input but no output piles up and shows as a bottleneck.
 
 ### Polish the lines (potential)
 - Snap the 90° turns of water pipes and power wires to the floor grid.
@@ -85,5 +145,4 @@ Decided: conveyors are pieces placed one at a time (straight belts and corners),
 ## Later (parked)
 - "Edit existing" path via JSON export/import
 - Limitations step and review page
-- Open floor shapes (one side open onto an adjoining area)
-- Other ideas from the Factory Runs concept: challenges, runs + knowledge vault, run archive, keep-clear aisles, height-limit zones, undo/reset, catalog search, arrow-key nudging, example floors, drawing underlay, visible grid, comments, layout alternatives
+- Other ideas from the Factory Runs concept: challenges, runs + knowledge vault, run archive, drawing underlay, visible grid
