@@ -64,6 +64,8 @@ Decided: water and power lines are drawn automatically from the existing reach r
 
 Priority from the organisers: the layout itself, simple, fun and easy to use. Simulation (animated flows) is only a bonus. Sections below are in the planned order.
 
+Kickoff brief (Saab, hackathon 2026): a user-friendly tool that gives a good understanding of the **production flow between jigs** and the **work performed in each jig**; start from a 2D building drawing; a library of workshop equipment with editable L/W/D; colour, text and dimensions on objects; snapping; multi-select; pan/zoom; measure. Optional: coloured, labelled floor areas, area between points, comments, export a 2D layout. Assembly workshops are the hardest case (10s of jigs, 2–3 people per jig, benches, tools). We stay in 2D. Demo video due on the hack day, Nov 28 16:30; finals Dec 10. Jury: does it address the needs, creativity, potential, "would we move forward with this?"
+
 Persona (UX): Victoria Andersson, production technician at Saab Aeronautics — "I want to test ideas quickly without spending hours preparing models." Needs: change layouts quickly, experiment without losing work, understand space limits and dimensions (incl. heights), compare alternatives, collect colleagues' feedback. Dislikes complicated programs, CAD preparation, and finding space problems late.
 
 UI rule of thumb (for Victoria: "few menus"): new features shouldn't each add a top-bar control or a new menu; prefer actions next to the selected item, keyboard shortcuts, and folding options into existing panels.
@@ -96,6 +98,40 @@ Decided: the floor name in the header is the project switcher (no new header but
 - [x] 41. Compare screen: pick two projects; both floors drawn side by side at the same scale (view only); a table of key figures (stations, warnings, floor area used, longest walk to an exit, total power, conveyor length) with the better value highlighted; an "Open" button under each.
 - [x] 42. Export / import a project as a JSON file (in the switcher menu), for sharing until the backend can sync.
 
+### Production flow (kickoff: "flow between jigs") — paused for now
+- Process order: give stations a step number (in the properties panel, or by clicking stations one after another in a "flow" mode). Several products/flows can come later.
+- Flow view: arrows from station to station in process order, drawn along the walking routes (around walls and machines), with each leg's distance and the total travel distance. Conveyor runs between stations count as part of the flow. A static view, not a simulation — shown as its own layer.
+- Figures: total flow distance (also in the compare table), and the longest leg highlighted, so a tangled layout is easy to spot.
+
+### Object details (kickoff: "work performed in each jig", "colour, text, dimensions")
+- Name/label per placed item (e.g. "M1", "Jig 3 – wing spar"), shown on the canvas instead of the type name; auto-numbered by type when placed ("CNC 01", "Bench 02").
+- Work description per item (free text) and number of people working there; shown in the properties panel and as a tooltip on hover.
+- Editable size: width/depth (and height) per placed item, starting from the catalog values.
+- Colour per item (a small palette), e.g. to mark which product line it belongs to.
+
+### Zones (kickoff: "mark floor areas with colours and text"; replaces keep-clear aisles and height limits)
+- Draw a zone as a rectangle (click-drag), with a name, colour and type; the label is drawn in the zone (like "Zon 2: Svets & plåt" in the example layout).
+- Zone types: plain area (labelling only); keep-clear aisle (hatched, no machine body may stand in it — warning); height limit (max height — a taller machine standing in it gets a warning); maybe welding/hazard area.
+- Area shown for each zone (m²), and machines can tell which zone they're in.
+
+### Equipment library (assembly first)
+- Assembly-shop equipment, the hardest case for Saab: assembly jig (large, 2–3 people, clearance all round), work bench, tool cabinet/trolley, storage shelf, EUR-pallet spot, chemicals cabinet, quality-control table, parts washer, welding table, press brake, compressor — sizes from the example layout's legend.
+- Machines get a height (for height-limit zones). Catalog search once the list is long.
+
+### View and measure (kickoff: "pan, zoom", "measure between points")
+- Zoom (scroll, +/− in the map toolbar, zoom level, fit-to-screen) and pan (drag with Space held or the middle mouse button).
+- Measure tool: click two points to see the distance; snaps to item edges and corners. Optionally the area of a rectangle.
+- Dimension rulers along the floor edges.
+
+### Drawing underlay (kickoff: "start from a 2D drawing of the building")
+- Load a PDF page or an image (PNG/JPG) of the building drawing under the floor; set its scale by clicking two points and typing the real distance; adjust opacity and lock it. Trace walls and place machines on top.
+
+### Doors in internal walls
+- Doors and openings in internal walls (with a door-swing symbol, as in the example layout); walking routes pass through them.
+
+### Export the layout (kickoff: "export a new 2D layout")
+- Export the floor as a PNG and/or PDF, with a title block (name, size, date), scale bar and a legend of items.
+
 ### Free rotation
 - Machines can stand at any angle: a rotate handle on the selected machine and an angle field in the properties panel; snaps every 15° (stronger at 0/90/180/270), Shift for any angle; R / Rotate button still turn 90°. Conveyors stay at 90° steps for now.
 - Needs: `rotation` becomes any angle in degrees (backend contract change — tell the backend team); clashes, clearance, inside-floor, utility reach, walking routes, supply lines, machine fronts and box select all work with rotated rectangles instead of upright boxes. Estimate ~1–1.5 days.
@@ -103,25 +139,16 @@ Decided: the floor name in the header is the project switcher (no new header but
 ### Ease of use
 - Alignment guides: while dragging, dashed guide lines appear when a machine lines up with another's edge or centre, and it snaps gently onto them; a distance label (e.g. "1.2 m") shows the gap to the nearest neighbour.
 - Drag from the catalog: drag an item straight onto the floor, as well as click-then-place.
-- Quick actions: a small floating bar next to the selected item (Rotate, Duplicate, Comment, Delete), plus shortcuts: R rotate, Ctrl+D duplicate, Delete, arrow keys to nudge (Shift for bigger steps).
-- Example floors: ready-made templates in the wizard (e.g. "Small machining cell", "Assembly line") to start from instead of an empty hall.
+- Quick actions: a small floating bar next to the selected item (Rotate, Duplicate, Comment, Delete), plus shortcuts: R rotate, Ctrl+D duplicate, arrow keys to nudge (Shift for bigger steps).
+- Example floors: ready-made templates in the wizard (e.g. the example 22 × 13 m mechanical workshop, an assembly hall) to start from instead of an empty hall.
 - First-time hints: two or three short tips the first time someone places a machine (drag to move, R to rotate, red means it needs more space), dismissable and shown once.
-- Catalog search: filter the catalog by name (needed once there are more machines).
+- Wizard "Edit an existing layout": open a saved project or import a project file.
 
 ### Comments (working together)
 - Add a comment to anything on the plan: a machine, utility, structure, zone, or a spot on the empty floor.
 - On the canvas a comment shows only as a small chat-bubble icon next to what it's about; clicking it opens the full comment.
 - An "All comments" panel lists every comment, so the whole plan's discussion can be reviewed in one place; clicking one selects and shows its item.
 - To decide when planning: author name on each comment, replies (threads), marking a comment resolved, and how comments are shared between people (needs the backend to sync; local-only until then).
-
-### More machines
-- Extend the catalog across the equipment categories (e.g. laser cutter, press brake, welding robot cell, injection moulding machine, CMM / inspection station, workbench, pallet racking, paint booth). Each with size, clearance, power, water/fire needs and height.
-
-### Height limits
-- Machines get a height. Height-limit zones (drawn as rectangles, with a max height) mark low ceilings, ducts or mezzanines; a machine taller than the limit of a zone it stands in gets a warning. Possibly a floor-wide ceiling height in the wizard too.
-
-### Keep-clear aisles
-- Aisle zones (drawn as rectangles, hatched green, labelled "Keep aisle clear") where no machine body may stand; a machine in an aisle gets a warning. Utilities and walking routes may use them.
 
 ### Open floor shapes
 - A floor side can be marked open (no wall) where the hall continues into an adjoining area, e.g. a corridor or another hall. Drawn as a dashed edge; machines may not cross it, but walking routes can leave through it (counts like a wide exit), and exits don't snap to it. Chosen per side in the wizard's floor step and editable in the planner.
@@ -133,25 +160,23 @@ Inspiration (Factory Runs screenshot): light, schematic look instead of solid bl
 - Machines: light rounded "cards" with a soft border, an inner schematic hinting at the type (e.g. spindle circle and control panel for CNCs, jig points for assembly), short numbered names ("CNC 01", "Assembly 05") with dimensions underneath, and an arrow showing the front/flow direction. Warning state: red-tinted card with a red border.
 - Clearance: every machine's clearance drawn as a faint dashed rounded outline (not only when selected); red-tinted when it clashes.
 - Floor: warm off-white floor with a subtle grid, a thick grey building outline, and a small "Grid: 0.5 m per square" note.
-- Dimension rulers along the top and left of the floor (e.g. "19 m", "11 m").
-- Zoom controls in the corner: +, −, zoom level and a "fit" button (plus scroll-to-zoom and pan).
 - Bottom status bar: legend for the zone colours (clear aisle, height limit, clearance, warning) and a summary such as "4 spatial checks flagged".
 - Possible: a blueprint view toggle — classic blueprint blue background with a fine white grid, and white line sketches of the floor, walls, machines and utilities (outlines only, no fills).
 
 ### Fun
-- Layout score: a live grade (S/A/B/…) in the top bar from warnings, floor-space use and walking distances; tells you what would raise it.
+- Layout score: a live grade (S/A/B/…) in the top bar from warnings, floor-space use, walking and flow distances; tells you what would raise it.
 - Juice and sound: soft "thunk" on placing, a click when conveyors snap, a small wobble on a clash, a chime when the goal is reached; a mute toggle.
 - Achievements: small badges with the confetti, e.g. "Zero warnings", "Fire marshal" (every machine within 15 m of an exit), "Lean line" (one continuous conveyor run).
 
 ### Bonus (only if there's time)
 - Fire drill: workers walk from every machine to the nearest exit along the walking routes, with an evacuation timer.
-- Run the factory: boxes travel along conveyor runs between machines; a machine with input but no output piles up and shows as a bottleneck.
+- Run the factory: boxes travel along the production flow and conveyor runs between machines; a machine with input but no output piles up and shows as a bottleneck.
 
 ### Polish the lines (potential)
 - Snap the 90° turns of water pipes and power wires to the floor grid.
 - Measure utility reach by the drawn pipe/wire length instead of the straight-line reach circle.
 
 ## Later (parked)
-- "Edit existing" path via JSON export/import
 - Limitations step and review page
-- Other ideas from the Factory Runs concept: challenges, runs + knowledge vault, run archive, drawing underlay, visible grid
+- Kickoff optional ideas not planned (3D-only or out of scope for 2D): lighting/transparency, kinematics, scanned objects, first-person view, fly-through, animations, STEP/IGES export, VR, basic CAD for custom shapes
+- Other ideas from the Factory Runs concept: challenges, runs + knowledge vault, run archive
