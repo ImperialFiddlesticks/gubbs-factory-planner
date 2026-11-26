@@ -72,22 +72,22 @@ public class PlacementService
         }
 
         var conveyorConnections = BuildConveyorConnections(placements);
-        var body = BodyRectangle(machine);
-        if (!RectangleInsideFloor(body, floor))
+        var body = BodyBox(machine);
+        if (!BoxInsideFloor(body, floor))
         {
             return (false, "OUTSIDE_HALL");
         }
 
-        var clearance = ClearanceRectangle(machine);
-        if (!RectangleInsideFloor(clearance, floor))
+        var clearance = ClearanceBox(machine);
+        if (!BoxInsideFloor(clearance, floor))
         {
             return (false, "OUTSIDE_CLEARANCE");
         }
 
         foreach (var other in otherMachines ?? Array.Empty<LayoutMachinePlacement>())
         {
-            var otherBody = BodyRectangle(other);
-            if (RectanglesOverlap(body, otherBody))
+            var otherBody = BodyBox(other);
+            if (BoxesOverlap(body, otherBody))
             {
                 return (false, "MACHINE_OVERLAP");
             }
@@ -97,8 +97,8 @@ public class PlacementService
                 continue;
             }
 
-            if (RectanglesOverlap(body, ClearanceRectangle(other)) ||
-                RectanglesOverlap(otherBody, clearance))
+            if (BoxesOverlap(body, ClearanceBox(other)) ||
+                BoxesOverlap(otherBody, clearance))
             {
                 return (false, "CLEARANCE_BLOCKED");
             }
@@ -267,23 +267,45 @@ public class PlacementService
         double.IsFinite(clearance.LeftMm) && clearance.LeftMm >= 0 &&
         double.IsFinite(clearance.RightMm) && clearance.RightMm >= 0;
 
-    private static OrientedRectangle BodyRectangle(LayoutMachinePlacement machine) =>
-        new(machine.Xmm, machine.Ymm, FootprintWidth(machine), machine.Type.DepthMm, machine.RotationDegrees);
-
-    private static OrientedRectangle ClearanceRectangle(LayoutMachinePlacement machine)
+    private static LayoutBox BodyBox(LayoutMachinePlacement machine)
     {
-        var (cos, sin) = RotationComponents(machine.RotationDegrees);
+        var width = FootprintWidth(machine);
+        var depth = machine.Type.DepthMm;
+        var radians = machine.RotationDegrees * Math.PI / 180;
+        var absCos = Math.Abs(Math.Cos(radians));
+        var absSin = Math.Abs(Math.Sin(radians));
+        var rotatedWidth = absCos * width + absSin * depth;
+        var rotatedDepth = absSin * width + absCos * depth;
+        return new LayoutBox(
+            machine.Xmm - rotatedWidth / 2,
+            machine.Ymm - rotatedDepth / 2,
+            rotatedWidth,
+            rotatedDepth);
+    }
+
+    private static LayoutBox ClearanceBox(LayoutMachinePlacement machine)
+    {
+        var radians = machine.RotationDegrees * Math.PI / 180;
+        var cos = Math.Cos(radians);
+        var sin = Math.Sin(radians);
+        var absCos = Math.Abs(cos);
+        var absSin = Math.Abs(sin);
         var clearance = machine.Type.Clearance;
-        var offsetX = (clearance.RightMm - clearance.LeftMm) / 2;
-        var offsetY = (clearance.FrontMm - clearance.BackMm) / 2;
-        var centerX = machine.Xmm + cos * offsetX - sin * offsetY;
-        var centerY = machine.Ymm + sin * offsetX + cos * offsetY;
-        return new OrientedRectangle(
-            centerX,
-            centerY,
-            FootprintWidth(machine) + clearance.LeftMm + clearance.RightMm,
-            machine.Type.DepthMm + clearance.FrontMm + clearance.BackMm,
-            machine.RotationDegrees);
+        var width = FootprintWidth(machine);
+        var outerWidth = width + clearance.LeftMm + clearance.RightMm;
+        var outerDepth = machine.Type.DepthMm + clearance.FrontMm + clearance.BackMm;
+        var localOffsetX = (clearance.RightMm - clearance.LeftMm) / 2;
+        var localOffsetY = (clearance.FrontMm - clearance.BackMm) / 2;
+        var centerX = machine.Xmm + cos * localOffsetX - sin * localOffsetY;
+        var centerY = machine.Ymm + sin * localOffsetX + cos * localOffsetY;
+        var rotatedWidth = absCos * outerWidth + absSin * outerDepth;
+        var rotatedDepth = absSin * outerWidth + absCos * outerDepth;
+
+        return new LayoutBox(
+            centerX - rotatedWidth / 2,
+            centerY - rotatedDepth / 2,
+            rotatedWidth,
+            rotatedDepth);
     }
 
     private static double FootprintWidth(LayoutMachinePlacement machine) =>
@@ -294,27 +316,7 @@ public class PlacementService
     private static (double Cos, double Sin) RotationComponents(double rotationDegrees)
     {
         var radians = rotationDegrees * Math.PI / 180;
-        var cos = Math.Cos(radians);
-        var sin = Math.Sin(radians);
-        if (Math.Abs(cos) <= 1e-12)
-        {
-            cos = 0;
-        }
-        else if (Math.Abs(Math.Abs(cos) - 1) <= 1e-12)
-        {
-            cos = Math.Sign(cos);
-        }
-
-        if (Math.Abs(sin) <= 1e-12)
-        {
-            sin = 0;
-        }
-        else if (Math.Abs(Math.Abs(sin) - 1) <= 1e-12)
-        {
-            sin = Math.Sign(sin);
-        }
-
-        return (cos, sin);
+        return (Math.Cos(radians), Math.Sin(radians));
     }
 
     private static ConveyorConnections BuildConveyorConnections(IReadOnlyCollection<LayoutMachinePlacement> machines)
@@ -419,156 +421,37 @@ public class PlacementService
     private static string PairKey(string a, string b) =>
         StringComparer.OrdinalIgnoreCase.Compare(a, b) < 0 ? $"{a}|{b}" : $"{b}|{a}";
 
-    private static LayoutPoint[] RectangleCorners(OrientedRectangle rectangle)
-    {
-        var (cos, sin) = RotationComponents(rectangle.RotationDegrees);
-        var halfWidthX = cos * rectangle.WidthMm / 2;
-        var halfWidthY = sin * rectangle.WidthMm / 2;
-        var halfDepthX = -sin * rectangle.DepthMm / 2;
-        var halfDepthY = cos * rectangle.DepthMm / 2;
-        return
-        [
-            new LayoutPoint(rectangle.CenterX - halfWidthX - halfDepthX, rectangle.CenterY - halfWidthY - halfDepthY),
-            new LayoutPoint(rectangle.CenterX + halfWidthX - halfDepthX, rectangle.CenterY + halfWidthY - halfDepthY),
-            new LayoutPoint(rectangle.CenterX + halfWidthX + halfDepthX, rectangle.CenterY + halfWidthY + halfDepthY),
-            new LayoutPoint(rectangle.CenterX - halfWidthX + halfDepthX, rectangle.CenterY - halfWidthY + halfDepthY)
-        ];
-    }
+    private static bool BoxesOverlap(LayoutBox a, LayoutBox b) =>
+        a.X < b.X + b.Width && b.X < a.X + a.Width &&
+        a.Y < b.Y + b.Depth && b.Y < a.Y + a.Depth;
 
-    private static bool RectanglesOverlap(OrientedRectangle a, OrientedRectangle b)
+    private static bool BoxInsideFloor(LayoutBox box, LayoutFloor floor)
     {
-        var aCorners = RectangleCorners(a);
-        var bCorners = RectangleCorners(b);
-        return !HasSeparatingAxis(aCorners, bCorners, a.RotationDegrees) &&
-            !HasSeparatingAxis(aCorners, bCorners, a.RotationDegrees + 90) &&
-            !HasSeparatingAxis(aCorners, bCorners, b.RotationDegrees) &&
-            !HasSeparatingAxis(aCorners, bCorners, b.RotationDegrees + 90);
-    }
-
-    private static bool HasSeparatingAxis(
-        IReadOnlyList<LayoutPoint> a,
-        IReadOnlyList<LayoutPoint> b,
-        double axisDegrees)
-    {
-        var (cos, sin) = RotationComponents(axisDegrees);
-        var axis = new LayoutPoint(cos, sin);
-        Project(a, axis, out var aMin, out var aMax);
-        Project(b, axis, out var bMin, out var bMax);
-        return aMax <= bMin + GeometryToleranceMm || bMax <= aMin + GeometryToleranceMm;
-    }
-
-    private static void Project(
-        IReadOnlyList<LayoutPoint> points,
-        LayoutPoint axis,
-        out double min,
-        out double max)
-    {
-        min = max = points[0].X * axis.X + points[0].Y * axis.Y;
-        for (var i = 1; i < points.Count; i++)
+        if (floor.Outline is null)
         {
-            var projection = points[i].X * axis.X + points[i].Y * axis.Y;
-            min = Math.Min(min, projection);
-            max = Math.Max(max, projection);
+            return box.X >= 0 &&
+                box.Y >= 0 &&
+                box.X + box.Width <= floor.WidthMm &&
+                box.Y + box.Depth <= floor.DepthMm;
         }
-    }
 
-    private static bool RectangleInsideFloor(OrientedRectangle rectangle, LayoutFloor floor)
-    {
-        var outline = floor.Outline ??
-        [
-            new LayoutPoint(0, 0),
-            new LayoutPoint(floor.WidthMm, 0),
-            new LayoutPoint(floor.WidthMm, floor.DepthMm),
-            new LayoutPoint(0, floor.DepthMm)
-        ];
-        var corners = RectangleCorners(rectangle);
-        if (corners.Any(corner => !PointInFloor(corner, outline)))
+        var corners = new[]
+        {
+            new LayoutPoint(box.X, box.Y),
+            new LayoutPoint(box.X + box.Width, box.Y),
+            new LayoutPoint(box.X + box.Width, box.Y + box.Depth),
+            new LayoutPoint(box.X, box.Y + box.Depth)
+        };
+        if (corners.Any(corner => !PointInFloor(corner, floor.Outline)))
         {
             return false;
         }
 
-        if (outline.Any(point => PointStrictlyInsideRectangle(point, rectangle)))
-        {
-            return false;
-        }
-
-        for (var i = 0; i < outline.Count; i++)
-        {
-            if (SegmentCrossesRectangleInterior(outline[i], outline[(i + 1) % outline.Count], rectangle))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool PointStrictlyInsideRectangle(LayoutPoint point, OrientedRectangle rectangle)
-    {
-        var (cos, sin) = RotationComponents(rectangle.RotationDegrees);
-        var dx = point.X - rectangle.CenterX;
-        var dy = point.Y - rectangle.CenterY;
-        var localX = dx * cos + dy * sin;
-        var localY = -dx * sin + dy * cos;
-        return Math.Abs(localX) < rectangle.WidthMm / 2 - GeometryToleranceMm &&
-            Math.Abs(localY) < rectangle.DepthMm / 2 - GeometryToleranceMm;
-    }
-
-    private static bool SegmentCrossesRectangleInterior(
-        LayoutPoint start,
-        LayoutPoint end,
-        OrientedRectangle rectangle)
-    {
-        var (cos, sin) = RotationComponents(rectangle.RotationDegrees);
-        LayoutPoint ToLocal(LayoutPoint point)
-        {
-            var dx = point.X - rectangle.CenterX;
-            var dy = point.Y - rectangle.CenterY;
-            return new LayoutPoint(dx * cos + dy * sin, -dx * sin + dy * cos);
-        }
-
-        var a = ToLocal(start);
-        var b = ToLocal(end);
-        var minX = -rectangle.WidthMm / 2 + GeometryToleranceMm;
-        var maxX = rectangle.WidthMm / 2 - GeometryToleranceMm;
-        var minY = -rectangle.DepthMm / 2 + GeometryToleranceMm;
-        var maxY = rectangle.DepthMm / 2 - GeometryToleranceMm;
-        if (minX >= maxX || minY >= maxY)
-        {
-            return false;
-        }
-
-        var dx = b.X - a.X;
-        var dy = b.Y - a.Y;
-        var tMin = 0d;
-        var tMax = 1d;
-        return Clip(-dx, a.X - minX, ref tMin, ref tMax) &&
-            Clip(dx, maxX - a.X, ref tMin, ref tMax) &&
-            Clip(-dy, a.Y - minY, ref tMin, ref tMax) &&
-            Clip(dy, maxY - a.Y, ref tMin, ref tMax) &&
-            tMin < tMax;
-    }
-
-    private static bool Clip(double p, double q, ref double tMin, ref double tMax)
-    {
-        if (p == 0)
-        {
-            return q >= 0;
-        }
-
-        var t = q / p;
-        if (p < 0)
-        {
-            if (t > tMax) return false;
-            tMin = Math.Max(tMin, t);
-        }
-        else
-        {
-            if (t < tMin) return false;
-            tMax = Math.Min(tMax, t);
-        }
-
-        return true;
+        return !floor.Outline.Any(point =>
+            point.X > box.X + GeometryToleranceMm &&
+            point.X < box.X + box.Width - GeometryToleranceMm &&
+            point.Y > box.Y + GeometryToleranceMm &&
+            point.Y < box.Y + box.Depth - GeometryToleranceMm);
     }
 
     private static bool PointInFloor(LayoutPoint point, IReadOnlyList<LayoutPoint> outline)
@@ -620,12 +503,7 @@ public class PlacementService
 
     private sealed record ConveyorPorts(LayoutPort In, LayoutPort Out);
 
-    private sealed record OrientedRectangle(
-        double CenterX,
-        double CenterY,
-        double WidthMm,
-        double DepthMm,
-        double RotationDegrees);
+    private sealed record LayoutBox(double X, double Y, double Width, double Depth);
 
     private sealed record ConveyorConnections(
         IReadOnlyDictionary<string, string> RunByMachine,
