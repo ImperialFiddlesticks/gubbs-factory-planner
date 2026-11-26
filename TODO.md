@@ -81,15 +81,19 @@ Decided: conveyors are pieces placed one at a time (straight belts and corners),
 - [x] 38. Moving runs: dragging a conveyor piece moves its whole run (outlined together when selected, and the run's free ends snap); double-click a piece to move it on its own.
 
 ### Autosave
-- Keep the current layout (floor, machines, utilities, structures, wizard answers) in the browser and restore it after a refresh or a closed tab, so no work is lost. Saved quietly on every change; "New floor" still starts fresh. First piece of saved projects.
+- [x] Keep the current layout (floor, machines, utilities, structures, wizard answers) in the browser and restore it after a refresh or a closed tab, so no work is lost. Saved quietly on every change; "New floor" still starts fresh. First piece of saved projects.
 
 ### Editing
-- Undo / redo: Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y) plus buttons in the top bar, covering every change to the layout (machines, utilities, structures, floor size); a drag counts as one step.
-- Multi-select: click-and-drag on empty floor draws a selection box; everything inside is selected and can be dragged together (Shift-click adds/removes). Delete removes the selection.
+- [x] Undo / redo: Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y) plus buttons in the top bar, covering every change to the layout (machines, utilities, structures, floor size); a drag counts as one step.
+- [x] Multi-select: click-and-drag on empty floor draws a selection box; everything inside is selected and can be dragged together (Shift-click adds/removes). Delete removes the selection.
 
 ### Compare projects
 - Saved projects: keep several layouts (e.g. "Option A", "Option B"), with save, rename, duplicate ("try a variant") and switch between them. Stored locally until the backend can save plans; JSON export/import as a fallback.
 - Compare view: pick two projects and see them side by side (both floors drawn at the same scale), with a table of key figures: stations placed, warnings, floor area used, longest walk to an exit, total power, conveyor length. The better value in each row is highlighted.
+
+### Free rotation
+- Machines can stand at any angle: a rotate handle on the selected machine and an angle field in the properties panel; snaps every 15° (stronger at 0/90/180/270), Shift for any angle; R / Rotate button still turn 90°. Conveyors stay at 90° steps for now.
+- Needs: `rotation` becomes any angle in degrees (backend contract change — tell the backend team); clashes, clearance, inside-floor, utility reach, walking routes, supply lines, machine fronts and box select all work with rotated rectangles instead of upright boxes. Estimate ~1–1.5 days.
 
 ### Ease of use
 - Alignment guides: while dragging, dashed guide lines appear when a machine lines up with another's edge or centre, and it snaps gently onto them; a distance label (e.g. "1.2 m") shows the gap to the nearest neighbour.

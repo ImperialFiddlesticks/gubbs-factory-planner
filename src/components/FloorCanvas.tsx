@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type Konva from 'konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
-import { Group, Layer, Line, Shape, Stage } from 'react-konva'
+import { Group, Layer, Line, Rect, Shape, Stage } from 'react-konva'
+import { MapToolbar } from '@/components/MapToolbar'
 import { ConveyorEnds } from '@/components/canvas/ConveyorBody'
 import { ClearanceZone, Machine, MachineBody, type Outline } from '@/components/canvas/MachineNode'
 import { GHOST_ID, type DragState } from '@/components/canvas/shared'
@@ -11,13 +12,22 @@ import { CoverageCircle, UtilityGlyph, UtilityNode } from '@/components/canvas/U
 import { PowerLoadTags, SupplyLines } from '@/components/canvas/SupplyLines'
 import { WalkingRoutes } from '@/components/canvas/WalkingRoutes'
 import { SCALE } from '@/constants'
-import { getMachineType } from '@/data/catalog'
+import { getMachineType, machineTypeFor } from '@/data/catalog'
 import { UTILITY_LAYER, utilityVisible } from '@/data/layers'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS, MIN_WALL_LENGTH } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
 import { conveyorRuns, snapConveyor } from '@/lib/conveyors'
 import { floorCorners } from '@/lib/floorShapes'
-import { snapToWall, straightenWall, wallLength } from '@/lib/geometry'
+import {
+  bodyBox,
+  boxesOverlap,
+  pillarBox,
+  snapToWall,
+  straightenWall,
+  wallBox,
+  wallLength,
+  type Box,
+} from '@/lib/geometry'
 import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validation'
 import { usePlanner, type Placing } from '@/store'
 import { CANVAS } from '@/theme'
@@ -39,6 +49,7 @@ export function FloorCanvas({ floorplan }: FloorCanvasProps) {
     >
       {floorplan && size.width > 0 && <FloorStage floorplan={floorplan} size={size} />}
       <PlacingHint />
+      {floorplan && <MapToolbar />}
     </main>
   )
 }
@@ -89,15 +100,17 @@ function FloorStage({
 }) {
   const floorW = floorplan.width * SCALE
   const floorH = floorplan.depth * SCALE
+  // The map toolbar sits at the bottom, so the floor uses the space above it.
+  const viewH = size.height - TOOLBAR_SPACE
   // Floors larger than the work area are shrunk to fit; smaller ones stay at SCALE.
   const fit = Math.min(
     1,
     (size.width - 2 * VIEW_PADDING) / floorW,
-    (size.height - 2 * VIEW_PADDING) / floorH,
+    (viewH - 2 * VIEW_PADDING) / floorH,
   )
-  // Centre the floorplan in the work area.
+  // Centre the floorplan in the work area above the toolbar.
   const originX = Math.round((size.width - floorW * fit) / 2)
-  const originY = Math.round((size.height - floorH * fit) / 2)
+  const originY = Math.round((viewH - floorH * fit) / 2)
 
   // Floor corners in layer px, flat [x0, y0, x1, y1, ...] for Konva.
   const floorPoints = floorCorners(floorplan).flatMap((p) => [p.x * SCALE, p.y * SCALE])
@@ -115,6 +128,8 @@ function FloorStage({
   const walls = usePlanner((s) => s.walls)
   const lockStructures = usePlanner((s) => s.lockStructures)
   const selectedId = usePlanner((s) => s.selectedId)
+  const selectedIds = usePlanner((s) => s.selectedIds)
+  const selectMany = usePlanner((s) => s.selectMany)
   const singlePieceId = usePlanner((s) => s.singlePieceId)
   const placing = usePlanner((s) => s.placing)
   const layers = usePlanner((s) => s.layers)
@@ -130,21 +145,32 @@ function FloorStage({
   /** Cursor position on the floor in mm, while it is over the canvas. */
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
+  /** Selection box being dragged out on empty floor, in mm; `add` when Shift was held. */
+  const [box, setBox] = useState<{ start: Point; end: Point; add: boolean } | null>(null)
 
   usePlacingKeys()
+  useSelectionKeys()
 
   const active = activeItem(placing, pointer, drag, machines, utilities, pillars, walls, floorplan)
 
-  // The layout as it would be if the active item were dropped where it is now.
+  // Items moving along with the dragged one (multi-selection, conveyor run), at their live spot.
+  const delta = groupDelta(drag, machines, utilities, pillars, walls)
+  const moving = new Set(delta ? drag?.group : [])
+  const shiftItems = <T extends { id: string; x: number; y: number }>(list: T[]) =>
+    delta ? list.map((i) => (moving.has(i.id) ? { ...i, x: i.x + delta.x, y: i.y + delta.y } : i)) : list
+  const shiftPoint = (p: Point) => (delta ? { x: p.x + delta.x, y: p.y + delta.y } : p)
+  const shownUtilities = shiftItems(utilities)
+  const shownPillars = shiftItems(pillars)
+  const shownWalls = delta
+    ? walls.map((w) => (moving.has(w.id) ? { ...w, start: shiftPoint(w.start), end: shiftPoint(w.end) } : w))
+    : walls
+
+  // The layout as it would be if the active item (and its group) were dropped where it is now.
   // Recomputed every render; cheap for the number of items on a floor.
-  const liveMachines = withGroup(
-    active?.kind === 'machine' ? withItem(machines, active.item) : machines,
-    drag,
-    machines,
-  )
-  const liveUtilities = active?.kind === 'utility' ? withItem(utilities, active.item) : utilities
-  const livePillars = active?.kind === 'pillar' ? withItem(pillars, active.item) : pillars
-  const liveWalls = active?.kind === 'wall' ? withItem(walls, active.item) : walls
+  const liveMachines = shiftItems(active?.kind === 'machine' ? withItem(machines, active.item) : machines)
+  const liveUtilities = active?.kind === 'utility' ? withItem(shownUtilities, active.item) : shownUtilities
+  const livePillars = active?.kind === 'pillar' ? withItem(shownPillars, active.item) : shownPillars
+  const liveWalls = active?.kind === 'wall' ? withItem(shownWalls, active.item) : shownWalls
 
   const issues = findLayoutIssues(liveMachines, liveUtilities, floorplan, { pillars: livePillars, walls: liveWalls })
   const spaceBad = idsWithIssues(issues, 'space')
@@ -194,20 +220,58 @@ function FloorStage({
       cancelPlacing()
       return
     }
-    // Clicking empty floor clears the selection.
+    // Pressing empty floor starts a selection box (a plain click clears the selection on release).
     const t = e.target
-    if (!['.machine', '.utility', '.pillar', '.wall'].some((n) => t.findAncestor(n, true))) select(null)
+    if (['.machine', '.utility', '.pillar', '.wall'].some((n) => t.findAncestor(n, true))) return
+    if ('button' in e.evt && e.evt.button !== 0) return
+    const at = pointerMm()
+    if (at) setBox({ start: at, end: at, add: e.evt.shiftKey })
   }
 
-  // A selected conveyor piece selects its whole run (what a drag moves), unless double-clicked.
-  const selectedRun =
-    selectedId && selectedId !== singlePieceId
-      ? conveyorRuns(liveMachines).runOf.get(selectedId)?.pieceIds
-      : undefined
+  function handlePointerMove() {
+    const at = pointerMm()
+    setPointer(at)
+    if (box && at) setBox({ ...box, end: at })
+  }
+
+  /** Release: select everything the box touches (added to the selection with Shift). */
+  function finishBox() {
+    if (!box) return
+    setBox(null)
+    const r = boxRect(box.start, box.end)
+    // Barely moved: it was a click on empty floor.
+    if (Math.max(r.width, r.depth) * SCALE * fit < 4) {
+      if (!box.add) select(null)
+      return
+    }
+    const hit = (b: Box) => boxesOverlap(r, b)
+    const ids = [
+      ...machines.flatMap((m) => {
+        const type = machineTypeFor(m)
+        return type && hit(bodyBox(type, m)) ? [m.id] : []
+      }),
+      ...utilities
+        .filter((u) => utilityVisible(u.kind, layers))
+        .filter((u) => u.x >= r.x && u.x <= r.x + r.width && u.y >= r.y && u.y <= r.y + r.depth)
+        .map((u) => u.id),
+      // Locked structures can't be selected.
+      ...(lockStructures ? [] : pillars.filter((p) => hit(pillarBox(p))).map((p) => p.id)),
+      ...(lockStructures ? [] : walls.filter((w) => hit(wallBox(w))).map((w) => w.id)),
+    ]
+    selectMany(ids, box.add)
+  }
+
+  // Everything selected, plus the whole run of any selected conveyor piece (what a drag moves),
+  // unless the piece was double-clicked to move on its own.
+  const selected = new Set(selectedIds)
+  const { runOf } = conveyorRuns(liveMachines)
+  for (const id of selectedIds) {
+    if (id !== singlePieceId) runOf.get(id)?.pieceIds.forEach((p) => selected.add(p))
+  }
 
   function outlineFor(id: string): Outline {
     if (id === active?.item.id) return spaceBad.has(id) ? 'invalid' : 'valid'
-    if (id === selectedId || selectedRun?.includes(id)) return 'selected'
+    if (selected.has(id)) return 'selected'
     return spaceBad.has(id) ? 'invalid' : 'none'
   }
 
@@ -218,8 +282,14 @@ function FloorStage({
       style={{ cursor: placing ? 'crosshair' : undefined }}
       onMouseDown={handlePointerDown}
       onTouchStart={handlePointerDown}
-      onMouseMove={() => setPointer(pointerMm())}
-      onMouseLeave={() => setPointer(null)}
+      onMouseMove={handlePointerMove}
+      onTouchMove={handlePointerMove}
+      onMouseUp={finishBox}
+      onTouchEnd={finishBox}
+      onMouseLeave={() => {
+        setPointer(null)
+        finishBox()
+      }}
       onContextMenu={(e) => {
         e.evt.preventDefault()
         cancelPlacing()
@@ -252,23 +322,23 @@ function FloorStage({
         </Group>
 
         {/* Walls and pillars sit under machines and their clearance zones, so a clash stays visible. */}
-        {walls.map((w) => (
+        {shownWalls.map((w) => (
           <WallNode
             key={w.id}
             wall={w}
             fit={fit}
-            selected={w.id === selectedId}
+            selected={selected.has(w.id)}
             invalid={spaceBad.has(w.id)}
             interactive={!placing && !lockStructures}
             onDrag={setDrag}
           />
         ))}
-        {pillars.map((p) => (
+        {shownPillars.map((p) => (
           <PillarNode
             key={p.id}
             pillar={p}
             fit={fit}
-            selected={p.id === selectedId}
+            selected={selected.has(p.id)}
             invalid={spaceBad.has(p.id)}
             interactive={!placing && !lockStructures}
             onDrag={setDrag}
@@ -345,13 +415,13 @@ function FloorStage({
         />
 
         {/* Ceiling-mounted utilities (sprinklers) are only drawn while their layer is on. */}
-        {utilities.filter((u) => utilityVisible(u.kind, layers)).map((u) => (
+        {shownUtilities.filter((u) => utilityVisible(u.kind, layers)).map((u) => (
           <UtilityNode
             key={u.id}
             utility={u}
             floorplan={floorplan}
             fit={fit}
-            selected={u.id === selectedId}
+            selected={selected.has(u.id)}
             invalid={utilityBad.has(u.id)}
             interactive={!placing}
             onDrag={setDrag}
@@ -403,19 +473,65 @@ function FloorStage({
             <WallBody wall={active.item} fit={fit} outline={outlineFor(GHOST_ID)} showLength />
           </Group>
         )}
+        {/* Selection box while dragging on empty floor. */}
+        {box && <SelectionBox rect={boxRect(box.start, box.end)} />}
       </Layer>
     </Stage>
   )
 }
 
-/** Machines with the rest of a dragged conveyor run shifted by the same amount as the dragged piece. */
-function withGroup(live: MachineInstance[], drag: DragState | null, stored: MachineInstance[]) {
-  if (!drag?.group) return live
-  const from = stored.find((m) => m.id === drag.id)
-  if (!from) return live
-  const dx = drag.x - from.x
-  const dy = drag.y - from.y
-  return live.map((m) => (drag.group?.includes(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m))
+/** How far the dragged item has moved, when other items move along with it (else null). */
+function groupDelta(
+  drag: DragState | null,
+  machines: MachineInstance[],
+  utilities: Utility[],
+  pillars: Pillar[],
+  walls: Wall[],
+): Point | null {
+  if (!drag?.group?.length) return null
+  // A wall reports its offset from where it started; everything else its position.
+  if (walls.some((w) => w.id === drag.id)) return { x: drag.x, y: drag.y }
+  const from = [...machines, ...utilities, ...pillars].find((i) => i.id === drag.id)
+  return from ? { x: drag.x - from.x, y: drag.y - from.y } : null
+}
+
+/** Faint yellow fill with a dashed yellow border. */
+function SelectionBox({ rect }: { rect: Box }) {
+  const px = { x: rect.x * SCALE, y: rect.y * SCALE, width: rect.width * SCALE, height: rect.depth * SCALE }
+  return (
+    <Group listening={false}>
+      <Rect {...px} fill={CANVAS.selected} opacity={0.12} />
+      <Rect {...px} stroke={CANVAS.selected} strokeWidth={1.5} strokeScaleEnabled={false} dash={[6, 4]} />
+    </Group>
+  )
+}
+
+/** The rectangle between two corners, mm. */
+function boxRect(a: Point, b: Point): Box {
+  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), depth: Math.abs(b.y - a.y) }
+}
+
+/**
+ * Delete / Backspace removes the selection (one undo step); Esc clears it. Ignored while
+ * placing (Esc cancels that instead) or typing in a field.
+ */
+function useSelectionKeys() {
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
+      const s = usePlanner.getState()
+      if (s.placing || s.selectedIds.length === 0) return
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        s.removeItems(s.selectedIds)
+      } else if (e.key === 'Escape') {
+        s.select(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 }
 
 /** The ghost under the cursor, or the item being dragged, at its live position. */
@@ -517,6 +633,8 @@ function usePlacingKeys() {
 
 /** Space kept between the floor and the edge of the work area, px. */
 const VIEW_PADDING = 40
+/** Height kept free at the bottom of the work area for the map toolbar, px. */
+const TOOLBAR_SPACE = 40
 /** Grid lines closer than this on screen are thinned out, px. */
 const MIN_GRID_PX = 6
 

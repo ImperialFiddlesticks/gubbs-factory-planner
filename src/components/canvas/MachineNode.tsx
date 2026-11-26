@@ -3,10 +3,10 @@ import Konva from 'konva'
 import { Group, Rect, Text } from 'react-konva'
 import { ConveyorBody } from '@/components/canvas/ConveyorBody'
 import { UtilityIcon } from '@/components/canvas/UtilityNode'
-import { setCursor, type DragState } from '@/components/canvas/shared'
+import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { getMachineType, machineTypeFor } from '@/data/catalog'
-import { conveyorRuns, snapShift } from '@/lib/conveyors'
+import { snapShift } from '@/lib/conveyors'
 import { clearanceBox, footprint } from '@/lib/geometry'
 import type { Need } from '@/lib/validation'
 import { usePlanner } from '@/store'
@@ -33,8 +33,7 @@ export function Machine({
   /** Reports the live position while dragging, and null when the drag ends. */
   onDrag: (drag: DragState | null) => void
 }) {
-  const select = usePlanner((s) => s.select)
-  const moveMachines = usePlanner((s) => s.moveMachines)
+  const moveItems = usePlanner((s) => s.moveItems)
   const selectSinglePiece = usePlanner((s) => s.selectSinglePiece)
   const isConveyor = !!getMachineType(machine.typeId)?.conveyor
   const groupRef = useRef<Konva.Group>(null)
@@ -68,37 +67,34 @@ export function Machine({
     node.to({ rotation: 0, duration: 0.5, easing: Konva.Easings.ElasticEaseOut })
   }, [machine.rotation])
 
-  /** The rest of the conveyor run, moving along while this piece is dragged (set on drag start). */
-  const movingWith = useRef<MachineInstance[]>([])
-
-  /** Pieces dragged together with this one: its whole run, unless it was double-clicked. */
-  function runMates(): MachineInstance[] {
-    const { machines, singlePieceId } = usePlanner.getState()
-    if (singlePieceId === machine.id) return []
-    const run = conveyorRuns(machines).runOf.get(machine.id)
-    if (!run || run.pieceIds.length < 2) return []
-    return machines.filter((m) => m.id !== machine.id && run.pieceIds.includes(m.id))
-  }
+  /**
+   * Set on drag start: where this machine started (the props follow the live position while
+   * dragging, so they can't be used to measure the move), the ids moving with it (rest of a
+   * multi-selection or conveyor run), and those of them that are machines (for conveyor snapping).
+   */
+  const drag = useRef<{ from: { x: number; y: number }; group: string[]; machines: MachineInstance[] }>({
+    from: { x: 0, y: 0 },
+    group: [],
+    machines: [],
+  })
 
   /**
-   * Live position in mm. Conveyor pieces (and a run moving together) snap onto a nearby free
-   * end or machine front, and the node jumps there.
+   * Live position in mm. Conveyor pieces (and a run or selection moving together) snap onto a
+   * nearby free end or machine front, and the node jumps there.
    */
   const toMm = (node: Konva.Node) => {
     const at = { x: node.x() / SCALE, y: node.y() / SCALE }
-    const dx = at.x - machine.x
-    const dy = at.y - machine.y
-    const moving = [
-      { ...machine, ...at },
-      ...movingWith.current.map((m) => ({ ...m, x: m.x + dx, y: m.y + dy })),
-    ]
+    const { from, machines } = drag.current
+    const dx = at.x - from.x
+    const dy = at.y - from.y
+    const moving = [{ ...machine, ...at }, ...machines.map((m) => ({ ...m, x: m.x + dx, y: m.y + dy }))]
     const shift = snapShift(moving, usePlanner.getState().machines)
     if (!shift) return at
     const snapped = { x: Math.round(at.x + shift.x), y: Math.round(at.y + shift.y) }
     node.position({ x: snapped.x * SCALE, y: snapped.y * SCALE })
     return snapped
   }
-  const group = () => (movingWith.current.length ? movingWith.current.map((m) => m.id) : undefined)
+  const group = () => (drag.current.group.length ? drag.current.group : undefined)
 
   return (
     // The group sits at the machine's centre; everything inside is drawn around it.
@@ -110,26 +106,29 @@ export function Machine({
       y={machine.y * SCALE}
       draggable={interactive}
       listening={interactive}
-      onMouseDown={() => select(machine.id)}
-      onTouchStart={() => select(machine.id)}
+      onMouseDown={(e) => pressItem(machine.id, e)}
+      onTouchStart={(e) => pressItem(machine.id, e)}
+      onClick={(e) => clickItem(machine.id, e)}
+      onTap={(e) => clickItem(machine.id, e)}
       onDblClick={() => isConveyor && selectSinglePiece(machine.id)}
       onDblTap={() => isConveyor && selectSinglePiece(machine.id)}
       onDragStart={(e) => {
-        select(machine.id)
-        movingWith.current = runMates()
+        const ids = dragGroup(machine.id)
+        const { machines } = usePlanner.getState()
+        drag.current = {
+          from: machines.find((m) => m.id === machine.id) ?? machine,
+          group: ids,
+          machines: machines.filter((m) => ids.includes(m.id)),
+        }
         onDrag({ id: machine.id, ...toMm(e.target), group: group() })
       }}
       onDragMove={(e) => onDrag({ id: machine.id, ...toMm(e.target), group: group() })}
       onDragEnd={(e) => {
         // Free placement (conveyors snap to free ends), rounded to whole millimetres.
         const { x, y } = toMm(e.target)
-        const dx = x - machine.x
-        const dy = y - machine.y
-        moveMachines([
-          { id: machine.id, x, y },
-          ...movingWith.current.map((m) => ({ id: m.id, x: m.x + dx, y: m.y + dy })),
-        ])
-        movingWith.current = []
+        const { from, group: ids } = drag.current
+        moveItems([machine.id, ...ids], x - from.x, y - from.y)
+        drag.current = { from: { x: 0, y: 0 }, group: [], machines: [] }
         onDrag(null)
         // Juice: small settle when dropped.
         e.target.scale({ x: 1.06, y: 1.06 })

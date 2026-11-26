@@ -1,0 +1,79 @@
+import { create } from 'zustand'
+import { selection, usePlanner, type PlannerState } from '@/store'
+
+/**
+ * Undo / redo for the layout. Every change to the layout (floor, machines, utilities, pillars,
+ * walls) is recorded as one step: actions update the store once per change, and drags only
+ * update it when dropped, so a whole drag is one step. Selection, layers and other UI state
+ * aren't recorded. History lasts for the session only (not autosaved).
+ */
+
+type Layout = Pick<PlannerState, 'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls'>
+
+/** Steps kept; older ones are dropped. */
+const LIMIT = 100
+
+const layoutOf = (s: Layout): Layout => ({
+  floorplan: s.floorplan,
+  machines: s.machines,
+  utilities: s.utilities,
+  pillars: s.pillars,
+  walls: s.walls,
+})
+
+/** The store never mutates, so a changed list or floor is a new object. */
+const changed = (a: Layout, b: Layout) =>
+  a.floorplan !== b.floorplan ||
+  a.machines !== b.machines ||
+  a.utilities !== b.utilities ||
+  a.pillars !== b.pillars ||
+  a.walls !== b.walls
+
+interface HistoryState {
+  /** Earlier layouts, oldest first. */
+  past: Layout[]
+  /** Undone layouts, next redo first. */
+  future: Layout[]
+}
+
+export const useHistory = create<HistoryState>()(() => ({ past: [], future: [] }))
+
+/** Set while undo/redo writes to the store, so that write isn't recorded as a new step. */
+let restoring = false
+
+usePlanner.subscribe((state, prev) => {
+  // The very first floor (from nothing) isn't undoable: there's no planner without a floor.
+  if (restoring || !prev.floorplan || !changed(state, prev)) return
+  useHistory.setState((h) => ({ past: [...h.past, layoutOf(prev)].slice(-LIMIT), future: [] }))
+})
+
+function restore(layout: Layout) {
+  restoring = true
+  usePlanner.setState((s) => {
+    const ids = new Set([...layout.machines, ...layout.utilities, ...layout.pillars, ...layout.walls].map((x) => x.id))
+    return {
+      ...layout,
+      // Keep the selection where the items still exist; stop placing so the ghost doesn't linger.
+      ...selection(s.selectedIds.filter((id) => ids.has(id))),
+      singlePieceId: s.singlePieceId && ids.has(s.singlePieceId) ? s.singlePieceId : null,
+      placing: null,
+    }
+  })
+  restoring = false
+}
+
+export function undo() {
+  const { past, future } = useHistory.getState()
+  const previous = past.at(-1)
+  if (!previous) return
+  useHistory.setState({ past: past.slice(0, -1), future: [layoutOf(usePlanner.getState()), ...future] })
+  restore(previous)
+}
+
+export function redo() {
+  const { past, future } = useHistory.getState()
+  const next = future[0]
+  if (!next) return
+  useHistory.setState({ past: [...past, layoutOf(usePlanner.getState())], future: future.slice(1) })
+  restore(next)
+}

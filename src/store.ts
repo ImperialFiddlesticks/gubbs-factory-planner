@@ -1,4 +1,5 @@
-import { create } from 'zustand'
+import { create, type StateCreator } from 'zustand'
+import { persist } from 'zustand/middleware'
 import { getMachineType } from '@/data/catalog'
 import type { EquipmentCategoryId } from '@/data/categories'
 import { DEFAULT_CONVEYOR_LENGTH } from '@/data/conveyors'
@@ -7,6 +8,7 @@ import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
 import { DEFAULT_PILLAR_GRID, type PillarGrid } from '@/lib/pillarGrid'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
+import { autosave } from '@/lib/autosave'
 import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
 import type { Floorplan, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall } from '@/types'
@@ -48,8 +50,8 @@ export const DEFAULT_SETUP: SetupAnswers = {
   pillarGrid: DEFAULT_PILLAR_GRID,
 }
 
-interface PlannerState {
-  /** UI-only, not saved. */
+export interface PlannerState {
+  /** UI-only, not saved (a saved floor reopens in the planner). */
   screen: Screen
   /** Wizard answers; kept after the wizard so the planner can use them. */
   setup: SetupAnswers
@@ -66,8 +68,10 @@ interface PlannerState {
   utilities: Utility[]
   pillars: Pillar[]
   walls: Wall[]
-  /** A machine, utility or pillar id. */
+  /** The selected item (machine, utility, pillar or wall) when exactly one is selected, else null. */
   selectedId: string | null
+  /** Everything selected (one item, or several from box select / Shift-click). */
+  selectedIds: string[]
   /**
    * A conveyor piece double-clicked to move on its own; otherwise dragging a piece moves its
    * whole run. Cleared when something else is selected. UI-only, not saved.
@@ -75,9 +79,9 @@ interface PlannerState {
   singlePieceId: string | null
   /** Set while placing from the left panel; UI-only, not saved. */
   placing: Placing | null
-  /** Length the next straight conveyor belt is placed with, mm; UI-only, not saved. */
+  /** Length the next straight conveyor belt is placed with, mm; UI-only, autosaved as a preference. */
   conveyorLength: number
-  /** Which canvas overlays are switched on; UI-only, not saved. */
+  /** Which canvas overlays are switched on; UI-only, autosaved as a preference. */
   layers: Record<LayerId, boolean>
   /** Pillars and walls can't be selected or dragged; UI-only, not saved. */
   lockStructures: boolean
@@ -122,6 +126,14 @@ interface PlannerState {
   removeWall: (id: string) => void
 
   select: (id: string | null) => void
+  /** Select several items (box select); with `add`, they're added to the current selection. */
+  selectMany: (ids: string[], add?: boolean) => void
+  /** Shift-click: add the item to the selection, or take it out. */
+  toggleSelected: (id: string) => void
+  /** Move items of any kind by (dx, dy) mm in one step; exits stay on the wall. */
+  moveItems: (ids: string[], dx: number, dy: number) => void
+  /** Delete items of any kind in one step. */
+  removeItems: (ids: string[]) => void
   /** Select a conveyor piece and let it be dragged on its own, out of its run. */
   selectSinglePiece: (id: string) => void
   toggleLayer: (id: LayerId) => void
@@ -154,7 +166,13 @@ function placeUtility(kind: UtilityKind, x: number, y: number, floorplan: Floorp
   return { x: Math.round(p.x), y: Math.round(p.y) }
 }
 
-export const usePlanner = create<PlannerState>()((set, get) => ({
+/** Selection fields for a list of selected ids: selectedId is set only for a single item. */
+export function selection(ids: string[]): Pick<PlannerState, 'selectedId' | 'selectedIds'> {
+  return { selectedIds: ids, selectedId: ids.length === 1 ? ids[0] : null }
+}
+
+/** The whole planner state and its actions. */
+const plannerState: StateCreator<PlannerState> = (set, get) => ({
   screen: 'welcome',
   setup: DEFAULT_SETUP,
 
@@ -168,6 +186,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   pillars: [],
   walls: [],
   selectedId: null,
+  selectedIds: [],
   singlePieceId: null,
   placing: null,
   layers: DEFAULT_LAYERS,
@@ -181,7 +200,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       utilities: [],
       pillars: pillars.map((p) => ({ id: crypto.randomUUID(), ...p })),
       walls: [],
-      selectedId: null,
+      ...selection([]),
       placing: null,
       screen: 'planner',
     }),
@@ -219,7 +238,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       // Straight belts keep their own length (the catalog width is the default).
       ...(type.conveyor === 'straight' && { length: at?.length ?? type.width }),
     }
-    set((s) => ({ machines: [...s.machines, machine], selectedId: machine.id }))
+    set((s) => ({ machines: [...s.machines, machine], ...selection([machine.id]) }))
   },
 
   moveMachine: (id, x, y) =>
@@ -254,7 +273,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   removeMachine: (id) =>
     set((s) => ({
       machines: s.machines.filter((m) => m.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
+      ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
   addUtility: (kind, x, y) => {
@@ -268,7 +287,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       ...(info.defaultRadius !== undefined && { radius: info.defaultRadius }),
       ...(info.defaultCapacityKw !== undefined && { capacityKw: info.defaultCapacityKw }),
     }
-    set((s) => ({ utilities: [...s.utilities, utility], selectedId: utility.id }))
+    set((s) => ({ utilities: [...s.utilities, utility], ...selection([utility.id]) }))
   },
 
   moveUtility: (id, x, y) => {
@@ -287,7 +306,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   removeUtility: (id) =>
     set((s) => ({
       utilities: s.utilities.filter((u) => u.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
+      ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
   addPillar: (x, y, size) => {
@@ -299,7 +318,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       width: size?.width ?? DEFAULT_PILLAR_SIZE,
       depth: size?.depth ?? DEFAULT_PILLAR_SIZE,
     }
-    set((s) => ({ pillars: [...s.pillars, pillar], selectedId: pillar.id }))
+    set((s) => ({ pillars: [...s.pillars, pillar], ...selection([pillar.id]) }))
   },
 
   movePillar: (id, x, y) =>
@@ -313,7 +332,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   removePillar: (id) =>
     set((s) => ({
       pillars: s.pillars.filter((p) => p.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
+      ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
   addWall: (start, end) => {
@@ -324,7 +343,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       end: roundPoint(straightenWall(start, end)),
       thickness: DEFAULT_WALL_THICKNESS,
     }
-    set((s) => ({ walls: [...s.walls, wall], selectedId: wall.id }))
+    set((s) => ({ walls: [...s.walls, wall], ...selection([wall.id]) }))
   },
 
   updateWall: (id, patch) =>
@@ -340,13 +359,50 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   removeWall: (id) =>
     set((s) => ({
       walls: s.walls.filter((w) => w.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
+      ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
   select: (id) =>
-    set((s) => ({ selectedId: id, ...(id !== s.singlePieceId && { singlePieceId: null }) })),
+    set((s) => ({ ...selection(id ? [id] : []), ...(id !== s.singlePieceId && { singlePieceId: null }) })),
 
-  selectSinglePiece: (id) => set({ selectedId: id, singlePieceId: id }),
+  selectMany: (ids, add = false) =>
+    set((s) => ({ ...selection(add ? [...new Set([...s.selectedIds, ...ids])] : ids), singlePieceId: null })),
+
+  toggleSelected: (id) =>
+    set((s) => ({
+      ...selection(s.selectedIds.includes(id) ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id]),
+      singlePieceId: null,
+    })),
+
+  moveItems: (ids, dx, dy) =>
+    set((s) => {
+      const moving = new Set(ids)
+      const by = <T extends { id: string; x: number; y: number }>(item: T) =>
+        moving.has(item.id) ? { ...item, x: Math.round(item.x + dx), y: Math.round(item.y + dy) } : item
+      const shift = (p: Point) => ({ x: Math.round(p.x + dx), y: Math.round(p.y + dy) })
+      return {
+        machines: s.machines.map(by),
+        pillars: s.pillars.map(by),
+        utilities: s.utilities.map((u) =>
+          moving.has(u.id) && s.floorplan ? { ...u, ...placeUtility(u.kind, u.x + dx, u.y + dy, s.floorplan) } : u,
+        ),
+        walls: s.walls.map((w) => (moving.has(w.id) ? { ...w, start: shift(w.start), end: shift(w.end) } : w)),
+      }
+    }),
+
+  removeItems: (ids) =>
+    set((s) => {
+      const gone = new Set(ids)
+      return {
+        machines: s.machines.filter((m) => !gone.has(m.id)),
+        utilities: s.utilities.filter((u) => !gone.has(u.id)),
+        pillars: s.pillars.filter((p) => !gone.has(p.id)),
+        walls: s.walls.filter((w) => !gone.has(w.id)),
+        ...selection(s.selectedIds.filter((x) => !gone.has(x))),
+      }
+    }),
+
+  selectSinglePiece: (id) => set({ ...selection([id]), singlePieceId: id }),
 
   setConveyorLength: (length) =>
     set((s) => ({
@@ -358,17 +414,16 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   toggleLayer: (id) =>
     set((s) => {
       const layers = { ...s.layers, [id]: !s.layers[id] }
-      // A utility whose icon the layer hides can't stay selected.
-      const selected = s.utilities.find((u) => u.id === s.selectedId)
-      const hide = selected && !utilityVisible(selected.kind, layers)
-      return { layers, ...(hide && { selectedId: null }) }
+      // Utilities whose icons the layer hides can't stay selected.
+      const hidden = new Set(s.utilities.filter((u) => !utilityVisible(u.kind, layers)).map((u) => u.id))
+      return { layers, ...selection(s.selectedIds.filter((x) => !hidden.has(x))) }
     }),
 
   toggleLockStructures: () =>
     set((s) => {
       const lock = !s.lockStructures
-      const structureSelected = [...s.pillars, ...s.walls].some((x) => x.id === s.selectedId)
-      return { lockStructures: lock, ...(lock && structureSelected && { selectedId: null }) }
+      const structures = new Set([...s.pillars, ...s.walls].map((x) => x.id))
+      return { lockStructures: lock, ...(lock && selection(s.selectedIds.filter((x) => !structures.has(x)))) }
     }),
 
   startPlacingMachine: (typeId) =>
@@ -382,7 +437,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
               rotation: 0,
               ...(getMachineType(typeId)?.conveyor === 'straight' && { length: s.conveyorLength }),
             },
-            selectedId: null,
+            ...selection([]),
           },
     ),
 
@@ -392,7 +447,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
         ? { placing: null }
         : {
             placing: { kind: 'utility', utilityKind },
-            selectedId: null,
+            ...selection([]),
             // Placing something its layer hides turns that layer on, so it doesn't vanish.
             ...(!utilityVisible(utilityKind, s.layers) && {
               layers: { ...s.layers, [UTILITY_LAYER[utilityKind]]: true },
@@ -402,14 +457,14 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
 
   startPlacingPillar: () =>
     set((s) =>
-      s.placing?.kind === 'pillar' ? { placing: null } : { placing: { kind: 'pillar' }, selectedId: null },
+      s.placing?.kind === 'pillar' ? { placing: null } : { placing: { kind: 'pillar' }, ...selection([]) },
     ),
 
   startPlacingWall: () =>
     set((s) =>
       s.placing?.kind === 'wall'
         ? { placing: null }
-        : { placing: { kind: 'wall', start: null }, selectedId: null },
+        : { placing: { kind: 'wall', start: null }, ...selection([]) },
     ),
 
   setWallStart: (start) =>
@@ -423,4 +478,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
     ),
 
   cancelPlacing: () => set({ placing: null }),
-}))
+})
+
+/** The planner store, autosaved to the browser (see lib/autosave). */
+export const usePlanner = create<PlannerState>()(persist(plannerState, autosave))
