@@ -57,7 +57,7 @@ export interface MachineType {
 }
 
 /** Rotation in degrees, clockwise. */
-export type Rotation = 0 | 90 | 180 | 270
+export type Rotation = number
 
 /** A machine placed on the floorplan. */
 export interface MachineInstance {
@@ -153,12 +153,11 @@ export const MachineTypeSchema = z.object({
   needsFireSuppression: z.boolean(),
 }) satisfies z.ZodType<MachineType>
 
-export const RotationSchema = z.union([
-  z.literal(0),
-  z.literal(90),
-  z.literal(180),
-  z.literal(270),
-]) satisfies z.ZodType<Rotation>
+export const RotationSchema = z
+    .number()
+    .finite()
+    .min(0)
+    .refine((rotation) => rotation < 360) satisfies z.ZodType<Rotation>
 
 export const MachineInstanceSchema = z.object({
   id: z.string(),

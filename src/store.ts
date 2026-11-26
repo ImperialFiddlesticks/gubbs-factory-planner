@@ -190,7 +190,9 @@ export interface PlannerState {
   cancelPlacing: () => void
 }
 
-const nextRotation: Record<Rotation, Rotation> = { 0: 90, 90: 180, 180: 270, 270: 0 }
+function rotateBy(current: Rotation, degrees: number): Rotation {
+    return (current + degrees + 360) % 360
+}
 
 const roundPoint = (p: Point): Point => ({ x: Math.round(p.x), y: Math.round(p.y) })
 
@@ -385,7 +387,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   rotateMachine: (id) =>
     set((s) => ({
       machines: s.machines.map((m) =>
-        m.id === id ? { ...m, rotation: nextRotation[m.rotation] } : m,
+        m.id === id ? { ...m, rotation: rotateBy(m.rotation, 15) } : m,
       ),
     })),
 
@@ -600,7 +602,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   rotatePlacing: () =>
     set((s) =>
       s.placing?.kind === 'machine'
-        ? { placing: { ...s.placing, rotation: nextRotation[s.placing.rotation] } }
+        ? { placing: { ...s.placing, rotation: rotateBy(s.placing.rotation, 15) } }
         : s,
     ),
 

@@ -222,7 +222,7 @@ function MachineProperties({ machine }: { machine: MachineInstance }) {
 
       <div className="flex gap-2">
         <Button variant="secondary" className="flex-1" onClick={() => rotateMachine(machine.id)}>
-          Rotate 90°
+          Rotate 15°
         </Button>
         <Button
           variant="destructive"
