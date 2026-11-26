@@ -3,7 +3,7 @@ import { ChoiceCard } from '@/components/wizard/ChoiceCard'
 import { usePlanner } from '@/store'
 
 export function WhatToPlanStep() {
-  const mode = usePlanner((s) => s.setup.mode)
+  const mode = usePlanner((s) => s.wizard.mode)
   const updateSetup = usePlanner((s) => s.updateSetup)
 
   return (

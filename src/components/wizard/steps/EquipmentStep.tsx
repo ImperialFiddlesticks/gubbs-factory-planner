@@ -13,7 +13,7 @@ const CATEGORY_ICONS: Record<EquipmentCategoryId, LucideIcon> = {
 }
 
 export function EquipmentStep() {
-  const selected = usePlanner((s) => s.setup.categories)
+  const selected = usePlanner((s) => s.wizard.categories)
   const updateSetup = usePlanner((s) => s.updateSetup)
 
   function toggle(id: EquipmentCategoryId) {

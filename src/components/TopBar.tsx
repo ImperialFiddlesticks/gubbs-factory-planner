@@ -1,14 +1,11 @@
 import { CommitInput } from '@/components/CommitInput'
 import { GoalCounter } from '@/components/GoalCounter'
-import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ProjectSwitcher } from '@/components/ProjectSwitcher'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import { LAYERS } from '@/data/layers'
 import { usePlanner } from '@/store'
-import { Layers as LayersIcon } from 'lucide-react'
 
 interface TopBarProps {
+  /** Opens the wizard for a new project (from the project menu). */
   onNewFloor: () => void
 }
 
@@ -23,9 +20,7 @@ export function TopBar({ onNewFloor }: TopBarProps) {
         <h1 className="text-sm font-semibold tracking-widest uppercase">Factory Planner</h1>
       </div>
 
-      {floorplan && (
-        <span className="truncate text-sm text-muted-foreground">{floorplan.name}</span>
-      )}
+      {floorplan && <ProjectSwitcher onNewProject={onNewFloor} />}
       {floorplan && <GoalCounter />}
 
       <div className="ml-auto flex items-center gap-6">
@@ -45,66 +40,8 @@ export function TopBar({ onNewFloor }: TopBarProps) {
             />
           </>
         )}
-        {floorplan && <LayersMenu />}
-        {floorplan && <LockToggle />}
-        <Button size="sm" onClick={onNewFloor}>
-          New floor
-        </Button>
       </div>
     </header>
-  )
-}
-
-/** Popover with a switch per canvas layer. */
-function LayersMenu() {
-  const layers = usePlanner((s) => s.layers)
-  const toggleLayer = usePlanner((s) => s.toggleLayer)
-  const onCount = LAYERS.filter((l) => layers[l.id]).length
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button size="sm" variant="outline">
-          <LayersIcon />
-          Layers
-          <span className="text-muted-foreground tabular-nums">
-            {onCount}/{LAYERS.length}
-          </span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-64 p-2">
-        <ul className="flex flex-col">
-          {LAYERS.map((l) => (
-            <li key={l.id}>
-              <label
-                htmlFor={`layer-${l.id}`}
-                className="flex cursor-pointer items-center gap-3 rounded-sm px-2 py-2 hover:bg-muted"
-              >
-                <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: l.colour }} aria-hidden />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="text-sm font-medium">{l.name}</span>
-                  <span className="text-xs text-muted-foreground">{l.description}</span>
-                </span>
-                <Switch id={`layer-${l.id}`} checked={layers[l.id]} onCheckedChange={() => toggleLayer(l.id)} />
-              </label>
-            </li>
-          ))}
-        </ul>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-/** Keeps pillars (and later walls) from being selected or dragged while placing machines. */
-function LockToggle() {
-  const locked = usePlanner((s) => s.lockStructures)
-  const toggle = usePlanner((s) => s.toggleLockStructures)
-  return (
-    <div className="flex items-center gap-2">
-      <Switch id="lock-structures" checked={locked} onCheckedChange={toggle} />
-      <Label htmlFor="lock-structures" className="text-muted-foreground">
-        Lock structures
-      </Label>
-    </div>
   )
 }
 

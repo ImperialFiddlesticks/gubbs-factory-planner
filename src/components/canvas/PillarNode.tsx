@@ -1,6 +1,7 @@
+import { useRef } from 'react'
 import type { Outline } from '@/components/canvas/MachineNode'
 import { Group, Rect, Shape } from 'react-konva'
-import { setCursor, type DragState } from '@/components/canvas/shared'
+import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { usePlanner } from '@/store'
 import { CANVAS } from '@/theme'
@@ -26,8 +27,11 @@ export function PillarNode({
   interactive: boolean
   onDrag: (drag: DragState | null) => void
 }) {
-  const select = usePlanner((s) => s.select)
   const movePillar = usePlanner((s) => s.movePillar)
+  const moveItems = usePlanner((s) => s.moveItems)
+  /** Set on drag start: where it started and what moves with it (see dragGroup). */
+  const drag = useRef<{ from: { x: number; y: number }; group: string[] }>({ from: { x: 0, y: 0 }, group: [] })
+  const group = () => (drag.current.group.length ? drag.current.group : undefined)
 
   const position = (x: number, y: number) => ({ x: x / SCALE, y: y / SCALE })
 
@@ -39,16 +43,22 @@ export function PillarNode({
       y={pillar.y * SCALE}
       draggable={interactive}
       listening={interactive}
-      onMouseDown={() => select(pillar.id)}
-      onTouchStart={() => select(pillar.id)}
+      onMouseDown={(e) => pressItem(pillar.id, e)}
+      onTouchStart={(e) => pressItem(pillar.id, e)}
+      onClick={(e) => clickItem(pillar.id, e)}
+      onTap={(e) => clickItem(pillar.id, e)}
       onDragStart={(e) => {
-        select(pillar.id)
-        onDrag({ id: pillar.id, ...position(e.target.x(), e.target.y()) })
+        const from = usePlanner.getState().pillars.find((p) => p.id === pillar.id) ?? pillar
+        drag.current = { from, group: dragGroup(pillar.id) }
+        onDrag({ id: pillar.id, ...position(e.target.x(), e.target.y()), group: group() })
       }}
-      onDragMove={(e) => onDrag({ id: pillar.id, ...position(e.target.x(), e.target.y()) })}
+      onDragMove={(e) => onDrag({ id: pillar.id, ...position(e.target.x(), e.target.y()), group: group() })}
       onDragEnd={(e) => {
         const p = position(e.target.x(), e.target.y())
-        movePillar(pillar.id, p.x, p.y)
+        const { from, group: ids } = drag.current
+        if (ids.length) moveItems([pillar.id, ...ids], p.x - from.x, p.y - from.y)
+        else movePillar(pillar.id, p.x, p.y)
+        drag.current = { from: { x: 0, y: 0 }, group: [] }
         onDrag(null)
       }}
       onMouseEnter={(e) => setCursor(e, 'move')}

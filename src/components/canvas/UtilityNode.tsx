@@ -1,6 +1,7 @@
+import { useRef } from 'react'
 import Konva from 'konva'
 import { Circle, Group, Line, Path, Rect } from 'react-konva'
-import { setCursor, type DragState } from '@/components/canvas/shared'
+import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { EXIT_WIDTH, UTILITY_KINDS, utilityRadius } from '@/data/utilities'
 import { coverageShape, nearestWall, snapToWall } from '@/lib/geometry'
@@ -30,14 +31,17 @@ export function UtilityNode({
   interactive: boolean
   onDrag: (drag: DragState | null) => void
 }) {
-  const select = usePlanner((s) => s.select)
   const moveUtility = usePlanner((s) => s.moveUtility)
+  const moveItems = usePlanner((s) => s.moveItems)
+  /** Set on drag start: where it started and what moves with it (see dragGroup). */
+  const drag = useRef<{ from: { x: number; y: number }; group: string[] }>({ from: { x: 0, y: 0 }, group: [] })
+  const group = () => (drag.current.group.length ? drag.current.group : undefined)
 
-  /** Current node position in mm; exits are pulled onto the nearest wall. */
+  /** Current node position in mm; exits are pulled onto the nearest wall (when moved alone). */
   function position(node: Konva.Node) {
     const x = node.x() / SCALE
     const y = node.y() / SCALE
-    if (utility.kind !== 'exit') return { x, y }
+    if (utility.kind !== 'exit' || drag.current.group.length) return { x, y }
     const p = snapToWall(x, y, floorplan)
     node.position({ x: p.x * SCALE, y: p.y * SCALE })
     return p
@@ -51,16 +55,22 @@ export function UtilityNode({
       y={utility.y * SCALE}
       draggable={interactive}
       listening={interactive}
-      onMouseDown={() => select(utility.id)}
-      onTouchStart={() => select(utility.id)}
+      onMouseDown={(e) => pressItem(utility.id, e)}
+      onTouchStart={(e) => pressItem(utility.id, e)}
+      onClick={(e) => clickItem(utility.id, e)}
+      onTap={(e) => clickItem(utility.id, e)}
       onDragStart={(e) => {
-        select(utility.id)
-        onDrag({ id: utility.id, ...position(e.target) })
+        const from = usePlanner.getState().utilities.find((u) => u.id === utility.id) ?? utility
+        drag.current = { from, group: dragGroup(utility.id) }
+        onDrag({ id: utility.id, ...position(e.target), group: group() })
       }}
-      onDragMove={(e) => onDrag({ id: utility.id, ...position(e.target) })}
+      onDragMove={(e) => onDrag({ id: utility.id, ...position(e.target), group: group() })}
       onDragEnd={(e) => {
         const p = position(e.target)
-        moveUtility(utility.id, p.x, p.y)
+        const { from, group: ids } = drag.current
+        if (ids.length) moveItems([utility.id, ...ids], p.x - from.x, p.y - from.y)
+        else moveUtility(utility.id, p.x, p.y)
+        drag.current = { from: { x: 0, y: 0 }, group: [] }
         onDrag(null)
       }}
       onMouseEnter={(e) => setCursor(e, 'move')}

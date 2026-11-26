@@ -1,7 +1,8 @@
+import { useRef } from 'react'
 import type Konva from 'konva'
 import { Group, Label, Rect, Tag, Text } from 'react-konva'
 import type { Outline } from '@/components/canvas/MachineNode'
-import { setCursor, type DragState } from '@/components/canvas/shared'
+import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { wallBox, wallLength } from '@/lib/geometry'
 import { usePlanner } from '@/store'
@@ -31,8 +32,11 @@ export function WallNode({
   /** Live drag offset in mm (as x/y), or null when the drag ends. */
   onDrag: (drag: DragState | null) => void
 }) {
-  const select = usePlanner((s) => s.select)
   const updateWall = usePlanner((s) => s.updateWall)
+  const moveItems = usePlanner((s) => s.moveItems)
+  /** Set on drag start: what moves with it (see dragGroup). */
+  const groupIds = useRef<string[]>([])
+  const group = () => (groupIds.current.length ? groupIds.current : undefined)
 
   const cx = ((wall.start.x + wall.end.x) / 2) * SCALE
   const cy = ((wall.start.y + wall.end.y) / 2) * SCALE
@@ -47,16 +51,20 @@ export function WallNode({
       y={cy}
       draggable={interactive}
       listening={interactive}
-      onMouseDown={() => select(wall.id)}
-      onTouchStart={() => select(wall.id)}
+      onMouseDown={(e) => pressItem(wall.id, e)}
+      onTouchStart={(e) => pressItem(wall.id, e)}
+      onClick={(e) => clickItem(wall.id, e)}
+      onTap={(e) => clickItem(wall.id, e)}
       onDragStart={(e) => {
-        select(wall.id)
-        onDrag({ id: wall.id, ...offset(e.target) })
+        groupIds.current = dragGroup(wall.id)
+        onDrag({ id: wall.id, ...offset(e.target), group: group() })
       }}
-      onDragMove={(e) => onDrag({ id: wall.id, ...offset(e.target) })}
+      onDragMove={(e) => onDrag({ id: wall.id, ...offset(e.target), group: group() })}
       onDragEnd={(e) => {
         const d = offset(e.target)
-        updateWall(wall.id, { start: shift(wall.start, d), end: shift(wall.end, d) })
+        if (groupIds.current.length) moveItems([wall.id, ...groupIds.current], d.x, d.y)
+        else updateWall(wall.id, { start: shift(wall.start, d), end: shift(wall.end, d) })
+        groupIds.current = []
         onDrag(null)
       }}
       onMouseEnter={(e) => setCursor(e, 'move')}

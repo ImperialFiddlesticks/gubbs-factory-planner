@@ -41,11 +41,62 @@ function Selection() {
   const utility = usePlanner((s) => s.utilities.find((u) => u.id === s.selectedId))
   const pillar = usePlanner((s) => s.pillars.find((p) => p.id === s.selectedId))
   const wall = usePlanner((s) => s.walls.find((w) => w.id === s.selectedId))
+  const count = usePlanner((s) => s.selectedIds.length)
+  if (count > 1) return <MultiProperties />
   if (machine) return <MachineProperties machine={machine} />
   if (utility) return <UtilityProperties utility={utility} />
   if (pillar) return <PillarProperties pillar={pillar} />
   if (wall) return <WallProperties wall={wall} />
-  return <p className="text-sm text-muted-foreground">Nothing selected</p>
+  return (
+    <p className="text-sm text-muted-foreground">
+      Nothing selected. Click an item, or drag on empty floor to select several.
+    </p>
+  )
+}
+
+/** Several items selected: what's in the selection, how to move it, and delete. */
+function MultiProperties() {
+  const selectedIds = usePlanner((s) => s.selectedIds)
+  const machines = usePlanner((s) => s.machines)
+  const utilities = usePlanner((s) => s.utilities)
+  const pillars = usePlanner((s) => s.pillars)
+  const walls = usePlanner((s) => s.walls)
+  const removeItems = usePlanner((s) => s.removeItems)
+  const select = usePlanner((s) => s.select)
+
+  const ids = new Set(selectedIds)
+  const count = (list: { id: string }[]) => list.filter((x) => ids.has(x.id)).length
+  const parts = [
+    [count(machines), 'machine', 'machines'],
+    [count(utilities), 'utility', 'utilities'],
+    [count(pillars), 'pillar', 'pillars'],
+    [count(walls), 'wall', 'walls'],
+  ] as const
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="text-sm font-medium">{selectedIds.length} items selected</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {parts
+            .filter(([n]) => n > 0)
+            .map(([n, one, many]) => `${n} ${n === 1 ? one : many}`)
+            .join(' · ')}
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Drag any of them to move them all. Shift-click adds or removes an item. Esc clears the selection.
+      </p>
+      <div className="flex gap-2">
+        <Button variant="secondary" className="flex-1" onClick={() => select(null)}>
+          Clear
+        </Button>
+        <Button variant="destructive" className="flex-1" onClick={() => removeItems(selectedIds)}>
+          Delete all
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 function WarningsList() {

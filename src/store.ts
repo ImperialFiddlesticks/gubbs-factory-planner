@@ -1,4 +1,5 @@
-import { create } from 'zustand'
+import { create, type StateCreator } from 'zustand'
+import { persist } from 'zustand/middleware'
 import { getMachineType } from '@/data/catalog'
 import type { EquipmentCategoryId } from '@/data/categories'
 import { DEFAULT_CONVEYOR_LENGTH } from '@/data/conveyors'
@@ -7,6 +8,7 @@ import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
 import { DEFAULT_PILLAR_GRID, type PillarGrid } from '@/lib/pillarGrid'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
+import { autosave } from '@/lib/autosave'
 import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
 import type { Floorplan, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall } from '@/types'
@@ -22,7 +24,7 @@ export type Placing =
   | { kind: 'wall'; start: Point | null }
 
 /** Which full-page screen is showing. */
-export type Screen = 'welcome' | 'wizard' | 'planner'
+export type Screen = 'welcome' | 'wizard' | 'planner' | 'compare'
 
 /** Answers collected by the setup wizard. UI-side only, not part of the backend contract. */
 export interface SetupAnswers {
@@ -48,13 +50,30 @@ export const DEFAULT_SETUP: SetupAnswers = {
   pillarGrid: DEFAULT_PILLAR_GRID,
 }
 
-interface PlannerState {
-  /** UI-only, not saved. */
-  screen: Screen
-  /** Wizard answers; kept after the wizard so the planner can use them. */
+/**
+ * A saved project that isn't open. The open project lives in the top-level fields (floorplan,
+ * machines, …, setup). A project's id is its floorplan's id, and its name the floor's name.
+ */
+export interface Project {
+  floorplan: Floorplan
+  machines: MachineInstance[]
+  utilities: Utility[]
+  pillars: Pillar[]
+  walls: Wall[]
   setup: SetupAnswers
+}
 
-  /** Open the wizard with fresh answers. The current floor stays until the wizard finishes. */
+export interface PlannerState {
+  /** UI-only, not saved (a saved floor reopens in the planner). */
+  screen: Screen
+  /** The open project's wizard answers (station goal, equipment categories). */
+  setup: SetupAnswers
+  /** Answers being filled in in the wizard; become the new project's `setup` when it finishes. */
+  wizard: SetupAnswers
+  /** Saved projects other than the open one. */
+  projects: Project[]
+
+  /** Open the wizard with fresh answers. The current project stays open until the wizard finishes. */
   startSetup: () => void
   updateSetup: (patch: Partial<SetupAnswers>) => void
   /** Leave the wizard without changes; only possible when a floor already exists. */
@@ -66,8 +85,10 @@ interface PlannerState {
   utilities: Utility[]
   pillars: Pillar[]
   walls: Wall[]
-  /** A machine, utility or pillar id. */
+  /** The selected item (machine, utility, pillar or wall) when exactly one is selected, else null. */
   selectedId: string | null
+  /** Everything selected (one item, or several from box select / Shift-click). */
+  selectedIds: string[]
   /**
    * A conveyor piece double-clicked to move on its own; otherwise dragging a piece moves its
    * whole run. Cleared when something else is selected. UI-only, not saved.
@@ -75,16 +96,16 @@ interface PlannerState {
   singlePieceId: string | null
   /** Set while placing from the left panel; UI-only, not saved. */
   placing: Placing | null
-  /** Length the next straight conveyor belt is placed with, mm; UI-only, not saved. */
+  /** Length the next straight conveyor belt is placed with, mm; UI-only, autosaved as a preference. */
   conveyorLength: number
-  /** Which canvas overlays are switched on; UI-only, not saved. */
+  /** Which canvas overlays are switched on; UI-only, autosaved as a preference. */
   layers: Record<LayerId, boolean>
   /** Pillars and walls can't be selected or dragged; UI-only, not saved. */
   lockStructures: boolean
 
   /**
-   * Start a fresh floor and open the planner; clears all machines, utilities and selection.
-   * Pillars are replaced by `pillars` (e.g. the wizard's pillar grid), or cleared.
+   * Start a new project from the wizard's answers and open it in the planner. The project that
+   * was open is kept in `projects`. `pillars` are the wizard's pillar grid, if any.
    */
   newFloorplan: (input: NewFloorplanInput, pillars?: Omit<Pillar, 'id'>[]) => void
   /**
@@ -121,7 +142,32 @@ interface PlannerState {
   updateWall: (id: string, patch: Partial<Pick<Wall, 'start' | 'end' | 'thickness'>>) => void
   removeWall: (id: string) => void
 
+  /** Open a saved project; the one that was open is kept in `projects`. */
+  openProject: (id: string) => void
+  /** Copy the open project as "<name> (copy)" and open the copy. */
+  duplicateProject: () => void
+  /** Rename a project (its floor). */
+  renameProject: (id: string, name: string) => void
+  /** Delete a project. Deleting the open one opens another, or the welcome page if none is left. */
+  deleteProject: (id: string) => void
+  /**
+   * Add a project read from a file and open it. It gets a new id (so importing twice gives two
+   * projects), and "(imported)" is added to its name if a project already has that name.
+   */
+  importProject: (project: Project) => void
+  /** Show the compare page / go back to the planner. */
+  openCompare: () => void
+  closeCompare: () => void
+
   select: (id: string | null) => void
+  /** Select several items (box select); with `add`, they're added to the current selection. */
+  selectMany: (ids: string[], add?: boolean) => void
+  /** Shift-click: add the item to the selection, or take it out. */
+  toggleSelected: (id: string) => void
+  /** Move items of any kind by (dx, dy) mm in one step; exits stay on the wall. */
+  moveItems: (ids: string[], dx: number, dy: number) => void
+  /** Delete items of any kind in one step. */
+  removeItems: (ids: string[]) => void
   /** Select a conveyor piece and let it be dragged on its own, out of its run. */
   selectSinglePiece: (id: string) => void
   toggleLayer: (id: LayerId) => void
@@ -154,12 +200,48 @@ function placeUtility(kind: UtilityKind, x: number, y: number, floorplan: Floorp
   return { x: Math.round(p.x), y: Math.round(p.y) }
 }
 
-export const usePlanner = create<PlannerState>()((set, get) => ({
+/** The open project as a saved project (null when no floor is open). */
+export function currentProject(s: PlannerState): Project | null {
+  if (!s.floorplan) return null
+  return { floorplan: s.floorplan, machines: s.machines, utilities: s.utilities, pillars: s.pillars, walls: s.walls, setup: s.setup }
+}
+
+/** The project list with the open project added, before something else is opened. */
+function keepOpenProject(s: PlannerState): Project[] {
+  const current = currentProject(s)
+  return current ? [current, ...s.projects] : s.projects
+}
+
+/** State fields for opening a project in the planner, with a clean selection. */
+function opened(p: Project): Partial<PlannerState> {
+  return {
+    floorplan: p.floorplan,
+    machines: p.machines,
+    utilities: p.utilities,
+    pillars: p.pillars,
+    walls: p.walls,
+    setup: p.setup,
+    ...selection([]),
+    singlePieceId: null,
+    placing: null,
+    screen: 'planner',
+  }
+}
+
+/** Selection fields for a list of selected ids: selectedId is set only for a single item. */
+export function selection(ids: string[]): Pick<PlannerState, 'selectedId' | 'selectedIds'> {
+  return { selectedIds: ids, selectedId: ids.length === 1 ? ids[0] : null }
+}
+
+/** The whole planner state and its actions. */
+const plannerState: StateCreator<PlannerState> = (set, get) => ({
   screen: 'welcome',
   setup: DEFAULT_SETUP,
+  wizard: DEFAULT_SETUP,
+  projects: [],
 
-  startSetup: () => set({ screen: 'wizard', setup: DEFAULT_SETUP, placing: null }),
-  updateSetup: (patch) => set((s) => ({ setup: { ...s.setup, ...patch } })),
+  startSetup: () => set({ screen: 'wizard', wizard: DEFAULT_SETUP, placing: null }),
+  updateSetup: (patch) => set((s) => ({ wizard: { ...s.wizard, ...patch } })),
   cancelSetup: () => set((s) => (s.floorplan ? { screen: 'planner' } : s)),
 
   floorplan: null,
@@ -168,6 +250,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   pillars: [],
   walls: [],
   selectedId: null,
+  selectedIds: [],
   singlePieceId: null,
   placing: null,
   layers: DEFAULT_LAYERS,
@@ -175,15 +258,78 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   lockStructures: false,
 
   newFloorplan: (input, pillars = []) =>
-    set({
+    set((s) => ({
+      projects: keepOpenProject(s),
       floorplan: { id: crypto.randomUUID(), ...input },
       machines: [],
       utilities: [],
       pillars: pillars.map((p) => ({ id: crypto.randomUUID(), ...p })),
       walls: [],
-      selectedId: null,
+      setup: s.wizard,
+      ...selection([]),
+      singlePieceId: null,
       placing: null,
       screen: 'planner',
+    })),
+
+  importProject: (project) =>
+    set((s) => {
+      const names = new Set(keepOpenProject(s).map((p) => p.floorplan.name))
+      const name = names.has(project.floorplan.name) ? `${project.floorplan.name} (imported)` : project.floorplan.name
+      return {
+        ...opened({ ...project, floorplan: { ...project.floorplan, id: crypto.randomUUID(), name } }),
+        projects: keepOpenProject(s),
+      }
+    }),
+
+  openCompare: () => set((s) => (s.floorplan ? { screen: 'compare', placing: null } : s)),
+  closeCompare: () => set({ screen: 'planner' }),
+
+  openProject: (id) =>
+    set((s) => {
+      const target = s.projects.find((p) => p.floorplan.id === id)
+      if (!target) return s
+      return { ...opened(target), projects: keepOpenProject(s).filter((p) => p !== target) }
+    }),
+
+  duplicateProject: () =>
+    set((s) => {
+      if (!s.floorplan) return s
+      return {
+        projects: keepOpenProject(s),
+        floorplan: { ...s.floorplan, id: crypto.randomUUID(), name: `${s.floorplan.name} (copy)` },
+        ...selection([]),
+        singlePieceId: null,
+        placing: null,
+      }
+    }),
+
+  renameProject: (id, name) =>
+    set((s) => {
+      if (s.floorplan?.id === id) return { floorplan: { ...s.floorplan, name } }
+      return {
+        projects: s.projects.map((p) => (p.floorplan.id === id ? { ...p, floorplan: { ...p.floorplan, name } } : p)),
+      }
+    }),
+
+  deleteProject: (id) =>
+    set((s) => {
+      if (s.floorplan?.id !== id) return { projects: s.projects.filter((p) => p.floorplan.id !== id) }
+      // Deleting the open project: open the next one, or go back to the start.
+      const [next, ...rest] = s.projects
+      if (next) return { ...opened(next), projects: rest }
+      return {
+        floorplan: null,
+        machines: [],
+        utilities: [],
+        pillars: [],
+        walls: [],
+        setup: DEFAULT_SETUP,
+        ...selection([]),
+        singlePieceId: null,
+        placing: null,
+        screen: 'welcome',
+      }
     }),
 
   setFloorplan: (width, depth) =>
@@ -219,7 +365,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       // Straight belts keep their own length (the catalog width is the default).
       ...(type.conveyor === 'straight' && { length: at?.length ?? type.width }),
     }
-    set((s) => ({ machines: [...s.machines, machine], selectedId: machine.id }))
+    set((s) => ({ machines: [...s.machines, machine], ...selection([machine.id]) }))
   },
 
   moveMachine: (id, x, y) =>
@@ -254,7 +400,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   removeMachine: (id) =>
     set((s) => ({
       machines: s.machines.filter((m) => m.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
+      ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
   addUtility: (kind, x, y) => {
@@ -268,7 +414,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       ...(info.defaultRadius !== undefined && { radius: info.defaultRadius }),
       ...(info.defaultCapacityKw !== undefined && { capacityKw: info.defaultCapacityKw }),
     }
-    set((s) => ({ utilities: [...s.utilities, utility], selectedId: utility.id }))
+    set((s) => ({ utilities: [...s.utilities, utility], ...selection([utility.id]) }))
   },
 
   moveUtility: (id, x, y) => {
@@ -287,7 +433,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   removeUtility: (id) =>
     set((s) => ({
       utilities: s.utilities.filter((u) => u.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
+      ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
   addPillar: (x, y, size) => {
@@ -299,7 +445,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       width: size?.width ?? DEFAULT_PILLAR_SIZE,
       depth: size?.depth ?? DEFAULT_PILLAR_SIZE,
     }
-    set((s) => ({ pillars: [...s.pillars, pillar], selectedId: pillar.id }))
+    set((s) => ({ pillars: [...s.pillars, pillar], ...selection([pillar.id]) }))
   },
 
   movePillar: (id, x, y) =>
@@ -313,7 +459,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   removePillar: (id) =>
     set((s) => ({
       pillars: s.pillars.filter((p) => p.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
+      ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
   addWall: (start, end) => {
@@ -324,7 +470,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
       end: roundPoint(straightenWall(start, end)),
       thickness: DEFAULT_WALL_THICKNESS,
     }
-    set((s) => ({ walls: [...s.walls, wall], selectedId: wall.id }))
+    set((s) => ({ walls: [...s.walls, wall], ...selection([wall.id]) }))
   },
 
   updateWall: (id, patch) =>
@@ -340,13 +486,50 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   removeWall: (id) =>
     set((s) => ({
       walls: s.walls.filter((w) => w.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
+      ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
   select: (id) =>
-    set((s) => ({ selectedId: id, ...(id !== s.singlePieceId && { singlePieceId: null }) })),
+    set((s) => ({ ...selection(id ? [id] : []), ...(id !== s.singlePieceId && { singlePieceId: null }) })),
 
-  selectSinglePiece: (id) => set({ selectedId: id, singlePieceId: id }),
+  selectMany: (ids, add = false) =>
+    set((s) => ({ ...selection(add ? [...new Set([...s.selectedIds, ...ids])] : ids), singlePieceId: null })),
+
+  toggleSelected: (id) =>
+    set((s) => ({
+      ...selection(s.selectedIds.includes(id) ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id]),
+      singlePieceId: null,
+    })),
+
+  moveItems: (ids, dx, dy) =>
+    set((s) => {
+      const moving = new Set(ids)
+      const by = <T extends { id: string; x: number; y: number }>(item: T) =>
+        moving.has(item.id) ? { ...item, x: Math.round(item.x + dx), y: Math.round(item.y + dy) } : item
+      const shift = (p: Point) => ({ x: Math.round(p.x + dx), y: Math.round(p.y + dy) })
+      return {
+        machines: s.machines.map(by),
+        pillars: s.pillars.map(by),
+        utilities: s.utilities.map((u) =>
+          moving.has(u.id) && s.floorplan ? { ...u, ...placeUtility(u.kind, u.x + dx, u.y + dy, s.floorplan) } : u,
+        ),
+        walls: s.walls.map((w) => (moving.has(w.id) ? { ...w, start: shift(w.start), end: shift(w.end) } : w)),
+      }
+    }),
+
+  removeItems: (ids) =>
+    set((s) => {
+      const gone = new Set(ids)
+      return {
+        machines: s.machines.filter((m) => !gone.has(m.id)),
+        utilities: s.utilities.filter((u) => !gone.has(u.id)),
+        pillars: s.pillars.filter((p) => !gone.has(p.id)),
+        walls: s.walls.filter((w) => !gone.has(w.id)),
+        ...selection(s.selectedIds.filter((x) => !gone.has(x))),
+      }
+    }),
+
+  selectSinglePiece: (id) => set({ ...selection([id]), singlePieceId: id }),
 
   setConveyorLength: (length) =>
     set((s) => ({
@@ -358,17 +541,16 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
   toggleLayer: (id) =>
     set((s) => {
       const layers = { ...s.layers, [id]: !s.layers[id] }
-      // A utility whose icon the layer hides can't stay selected.
-      const selected = s.utilities.find((u) => u.id === s.selectedId)
-      const hide = selected && !utilityVisible(selected.kind, layers)
-      return { layers, ...(hide && { selectedId: null }) }
+      // Utilities whose icons the layer hides can't stay selected.
+      const hidden = new Set(s.utilities.filter((u) => !utilityVisible(u.kind, layers)).map((u) => u.id))
+      return { layers, ...selection(s.selectedIds.filter((x) => !hidden.has(x))) }
     }),
 
   toggleLockStructures: () =>
     set((s) => {
       const lock = !s.lockStructures
-      const structureSelected = [...s.pillars, ...s.walls].some((x) => x.id === s.selectedId)
-      return { lockStructures: lock, ...(lock && structureSelected && { selectedId: null }) }
+      const structures = new Set([...s.pillars, ...s.walls].map((x) => x.id))
+      return { lockStructures: lock, ...(lock && selection(s.selectedIds.filter((x) => !structures.has(x)))) }
     }),
 
   startPlacingMachine: (typeId) =>
@@ -382,7 +564,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
               rotation: 0,
               ...(getMachineType(typeId)?.conveyor === 'straight' && { length: s.conveyorLength }),
             },
-            selectedId: null,
+            ...selection([]),
           },
     ),
 
@@ -392,7 +574,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
         ? { placing: null }
         : {
             placing: { kind: 'utility', utilityKind },
-            selectedId: null,
+            ...selection([]),
             // Placing something its layer hides turns that layer on, so it doesn't vanish.
             ...(!utilityVisible(utilityKind, s.layers) && {
               layers: { ...s.layers, [UTILITY_LAYER[utilityKind]]: true },
@@ -402,14 +584,14 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
 
   startPlacingPillar: () =>
     set((s) =>
-      s.placing?.kind === 'pillar' ? { placing: null } : { placing: { kind: 'pillar' }, selectedId: null },
+      s.placing?.kind === 'pillar' ? { placing: null } : { placing: { kind: 'pillar' }, ...selection([]) },
     ),
 
   startPlacingWall: () =>
     set((s) =>
       s.placing?.kind === 'wall'
         ? { placing: null }
-        : { placing: { kind: 'wall', start: null }, selectedId: null },
+        : { placing: { kind: 'wall', start: null }, ...selection([]) },
     ),
 
   setWallStart: (start) =>
@@ -423,4 +605,7 @@ export const usePlanner = create<PlannerState>()((set, get) => ({
     ),
 
   cancelPlacing: () => set({ placing: null }),
-}))
+})
+
+/** The planner store, autosaved to the browser (see lib/autosave). */
+export const usePlanner = create<PlannerState>()(persist(plannerState, autosave))
