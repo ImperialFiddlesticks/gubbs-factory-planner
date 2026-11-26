@@ -18,6 +18,8 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddScoped<PlacementService>();
+builder.Services.AddScoped<MachineTypeValidationService>();
+builder.Services.AddScoped<UtilityDemandService>();
 
 var app = builder.Build();
 
