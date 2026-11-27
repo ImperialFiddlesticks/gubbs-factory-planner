@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { CommitInput } from '@/components/CommitInput'
 import { PanelHeading } from '@/components/PanelHeading'
 import { UTILITY_ICONS } from '@/components/utilityIcons'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { CATALOG, getMachineType } from '@/data/catalog'
 import { isValidConveyorLength } from '@/data/conveyors'
@@ -18,7 +20,14 @@ const cardClass =
   'w-full rounded-md border bg-card p-3 text-left transition-colors hover:border-accent focus-visible:border-ring focus-visible:outline-none'
 const activeClass = 'border-accent ring-2 ring-accent/40'
 
-export function CatalogPanel() {
+export function CatalogPanel({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  const [query, setQuery] = useState('')
   const categories = usePlanner((s) => s.setup.categories)
   // Machines from the categories picked in the wizard come first; the rest are tucked away.
   // With no categories picked, everything is shown as one list.
@@ -26,45 +35,100 @@ export function CatalogPanel() {
     ? CATALOG.filter((t) => categories.includes(t.category))
     : CATALOG
   const other = CATALOG.filter((t) => !mine.includes(t))
+  const normalizedQuery = query.trim().toLowerCase()
+  const matches = (...terms: string[]) =>
+    !normalizedQuery || terms.some((term) => term.toLowerCase().includes(normalizedQuery))
+  const visibleMine = normalizedQuery ? CATALOG.filter((t) => matches(t.name, t.category, t.id, `${t.width} ${t.depth} ${t.powerKw}`)) : mine
+  const visibleOther = normalizedQuery ? [] : other
+  const visibleUtilities = UTILITY_LIST.filter((info) => matches(info.name, info.kind))
+  const showPillar = matches('pillar', 'structure')
+  const showWall = matches('wall', 'structure')
+
+  if (collapsed) {
+    return (
+      <aside className="theme-dark flex flex-col items-center border-r py-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label="Expand equipment library"
+          title="Expand equipment library"
+          className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <ChevronRight className="size-4" aria-hidden />
+        </button>
+      </aside>
+    )
+  }
 
   return (
     <aside className="theme-dark overflow-y-auto border-r p-4">
-      <PanelHeading>{categories.length ? 'Your equipment' : 'Machines'}</PanelHeading>
+      <div className="flex items-center justify-between gap-2">
+        <PanelHeading>Equipment library</PanelHeading>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label="Collapse equipment library"
+          title="Collapse equipment library"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <ChevronRight className="size-4 rotate-180" aria-hidden />
+        </button>
+      </div>
+      <label className="sr-only" htmlFor="equipment-search">Search equipment</label>
+      <Input
+        id="equipment-search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search equipment…"
+        className="mt-2 mb-3 h-8"
+      />
       <p className="mb-3 text-xs text-muted-foreground">
-        Pick an item, then click the floor to place it.
+        Pick an item, then click the floor. The cursor preview shows its working clearance.
       </p>
-      <MachineList types={mine} />
+      <PanelHeading>{normalizedQuery ? `Machines (${visibleMine.length})` : categories.length ? 'Your machines' : 'Machines'}</PanelHeading>
+      <MachineList types={visibleMine} />
 
-      {other.length > 0 && (
+      {visibleOther.length > 0 && (
         <details className="group mt-4">
           <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-semibold tracking-widest text-muted-foreground uppercase hover:text-foreground [&::-webkit-details-marker]:hidden">
             <ChevronRight className="size-4 transition-transform group-open:rotate-90" aria-hidden />
-            Other equipment ({other.length})
+            Other machines ({visibleOther.length})
           </summary>
           <div className="mt-3">
-            <MachineList types={other} />
+            <MachineList types={visibleOther} />
           </div>
         </details>
       )}
 
-      <Separator className="my-5" />
+      {showPillar || showWall ? <Separator className="my-5" /> : null}
 
-      <PanelHeading>Structures</PanelHeading>
-      <div className="space-y-2">
-        <PillarItem />
-        <WallItem />
-      </div>
+      {(showPillar || showWall) && (
+        <>
+          <PanelHeading>Structures</PanelHeading>
+          <div className="space-y-2">
+            {showPillar && <PillarItem />}
+            {showWall && <WallItem />}
+          </div>
+        </>
+      )}
 
-      <Separator className="my-5" />
+      {visibleUtilities.length > 0 ? <Separator className="my-5" /> : null}
 
-      <PanelHeading>Utilities</PanelHeading>
-      <ul className="space-y-2">
-        {UTILITY_LIST.map((info) => (
-          <li key={info.kind}>
-            <UtilityItem info={info} />
-          </li>
-        ))}
-      </ul>
+      {visibleUtilities.length > 0 && (
+        <>
+          <PanelHeading>Utilities</PanelHeading>
+          <ul className="space-y-2">
+            {visibleUtilities.map((info) => (
+              <li key={info.kind}>
+                <UtilityItem info={info} />
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {visibleMine.length === 0 && visibleOther.length === 0 && !showPillar && !showWall && visibleUtilities.length === 0 && (
+        <p className="text-xs text-muted-foreground">No equipment matches “{query}”.</p>
+      )}
     </aside>
   )
 }
@@ -91,12 +155,19 @@ function MachineItem({ type }: { type: MachineType }) {
     <button
       type="button"
       aria-pressed={active}
+      title={type.name}
       onClick={() => startPlacing(type.id)}
       className={cn(cardClass, active && activeClass)}
     >
-      <div className="text-sm font-medium">{type.name}</div>
-      <div className="mt-1 text-xs text-muted-foreground">
-        {metres(type.width)} × {metres(type.depth)} m · {type.powerKw} kW
+      <div className="flex items-start gap-2">
+        <MachineGlyph typeId={type.id} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">{shortCatalogName(type.id)}</span>
+          <span className="mt-1 block text-xs text-muted-foreground">
+            {metres(type.width)} × {metres(type.depth)} m · {type.powerKw} kW
+          </span>
+          {active && <Badge className="mt-2">Placing</Badge>}
+        </span>
       </div>
       {(type.needsWater || type.needsFireSuppression) && (
         <div className="mt-2 flex gap-1">
@@ -122,13 +193,18 @@ function BeltItem({ type, active }: { type: MachineType; active: boolean }) {
       <button
         type="button"
         aria-pressed={active}
+        title={type.name}
         onClick={() => startPlacing(type.id)}
-        className="block w-full px-3 pt-2 pb-1 text-left"
+        className="flex w-full items-start gap-2 px-3 pt-2 pb-1 text-left"
       >
-        <div className="text-sm font-medium">{type.name}</div>
-        <div className="mt-1 text-xs text-muted-foreground">
-          {metres(type.depth)} m wide · 0.25 kW per m
-        </div>
+        <MachineGlyph typeId={type.id} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">{shortCatalogName(type.id)}</span>
+          <span className="mt-1 block text-xs text-muted-foreground">
+            {metres(type.depth)} m wide · 0.25 kW per m
+          </span>
+          {active && <Badge className="mt-2">Placing</Badge>}
+        </span>
       </button>
       <div className="flex items-center gap-2 px-3 pt-1 pb-2">
         <label htmlFor="belt-length" className="text-xs text-muted-foreground">
@@ -147,6 +223,58 @@ function BeltItem({ type, active }: { type: MachineType; active: boolean }) {
         <span className="text-xs text-muted-foreground">m</span>
       </div>
     </div>
+  )
+}
+
+function shortCatalogName(typeId: string) {
+  const names: Record<string, string> = {
+    'cnc-mill': 'CNC mill',
+    'cnc-lathe': 'CNC lathe',
+    'hydraulic-press': 'Hydraulic press',
+    'conveyor-straight': 'Belt conveyor',
+    'packing-table': 'Packing table',
+    'air-compressor': 'Air compressor',
+  }
+  return names[typeId] ?? typeId
+}
+
+function MachineGlyph({ typeId }: { typeId: string }) {
+  return (
+    <svg viewBox="0 0 32 32" className="size-9 shrink-0" aria-hidden>
+      {typeId.startsWith('conveyor') ? (
+        <>
+          <rect x="2" y="9" width="28" height="14" rx="2" fill="var(--saab-grey-500)" stroke="var(--saab-blue-dark)" />
+          <path d="M5 11h22v10H5z" fill="var(--saab-charcoal-600)" />
+          <path d="M10 12v8M16 12v8M22 12v8" stroke="white" opacity="0.6" />
+        </>
+      ) : (
+        <>
+          <rect x="3" y="3" width="26" height="26" rx="3" fill="var(--saab-blue)" stroke="var(--saab-blue-dark)" />
+          {typeId === 'cnc-mill' || typeId === 'cnc-lathe' ? (
+            <>
+              <circle cx="18" cy="15" r="5" fill="none" stroke="white" strokeWidth="1.5" />
+              <rect x="6" y="7" width="4" height="8" fill="white" opacity="0.8" />
+              <path d="M6 24h20" stroke="white" strokeWidth="1.5" />
+            </>
+          ) : typeId === 'hydraulic-press' ? (
+            <>
+              <path d="M8 9h16M11 9v13h10V9M8 23h16" fill="none" stroke="white" strokeWidth="1.5" />
+            </>
+          ) : typeId === 'air-compressor' ? (
+            <>
+              <circle cx="12" cy="14" r="4" fill="none" stroke="white" strokeWidth="1.5" />
+              <circle cx="21" cy="14" r="4" fill="none" stroke="white" strokeWidth="1.5" />
+              <path d="M8 23h16" stroke="white" strokeWidth="1.5" />
+            </>
+          ) : (
+            <>
+              <rect x="7" y="8" width="18" height="15" fill="none" stroke="white" strokeWidth="1.5" />
+              <path d="M7 18h18" stroke="white" strokeWidth="1.5" />
+            </>
+          )}
+        </>
+      )}
+    </svg>
   )
 }
 
@@ -177,6 +305,7 @@ function PillarItem() {
         <span className="block text-xs text-muted-foreground">
           {size} × {size} m · size editable
         </span>
+        {active && <Badge className="mt-1">Placing</Badge>}
       </span>
     </button>
   )
@@ -202,6 +331,7 @@ function WallItem() {
         <span className="block text-xs text-muted-foreground">
           Click start and end · {metres(DEFAULT_WALL_THICKNESS)} m thick
         </span>
+        {active && <Badge className="mt-1">Drawing</Badge>}
       </span>
     </button>
   )
@@ -240,6 +370,7 @@ function UtilityItem({ info }: { info: UtilityKindInfo }) {
       <span>
         <span className="block text-sm font-medium">{info.name}</span>
         <span className="block text-xs text-muted-foreground">{detail}</span>
+        {active && <Badge className="mt-1">Placing</Badge>}
       </span>
     </button>
   )

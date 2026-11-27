@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { CommitInput } from '@/components/CommitInput'
 import { PanelHeading } from '@/components/PanelHeading'
 import { UTILITY_ICONS } from '@/components/utilityIcons'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { machineTypeFor } from '@/data/catalog'
@@ -13,44 +14,249 @@ import { animateNodeOut } from '@/lib/animations'
 import { conveyorRuns } from '@/lib/conveyors'
 import { footprint, wallLength } from '@/lib/geometry'
 import { cn } from '@/lib/utils'
-import { findLayoutIssues, powerAssignments } from '@/lib/validation'
+import { findLayoutIssues, powerAssignments, type LayoutIssue } from '@/lib/validation'
+import { machineLabelGroup, machineShortName } from '@/lib/machineLabels'
 import { usePlanner } from '@/store'
 import { CANVAS } from '@/theme'
 import type { MachineInstance, Pillar, Utility, Wall } from '@/types'
 
 export function PropertiesPanel() {
+  const machines = usePlanner((s) => s.machines)
+  const utilities = usePlanner((s) => s.utilities)
+  const pillars = usePlanner((s) => s.pillars)
+  const walls = usePlanner((s) => s.walls)
+  const floorplan = usePlanner((s) => s.floorplan)
+  const comments = usePlanner((s) => s.comments)
+  const commentDraft = usePlanner((s) => s.commentDraft)
+  const issues = useMemo(
+    () => (floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls }) : []),
+    [machines, utilities, floorplan, pillars, walls],
+  )
+
   return (
     <aside className="theme-dark flex flex-col overflow-y-auto border-l p-4">
       <section>
         <PanelHeading>Properties</PanelHeading>
-        <Selection />
+        <Selection issues={issues} />
       </section>
 
       <Separator className="my-6" />
 
       <section>
-        <PanelHeading>Warnings</PanelHeading>
-        <WarningsList />
+        <details className="rounded-md border">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+            <span>Discussion{commentDraft ? ' · Pinning comment' : ''}</span>
+            <span className="text-xs text-muted-foreground">
+              {comments.filter((comment) => comment.status === 'open').length} open · {comments.length}
+            </span>
+          </summary>
+          <div className="px-2.5 pb-2.5">
+            <CommentsSection />
+          </div>
+        </details>
+      </section>
+
+      <Separator className="my-6" />
+
+      <section>
+        <div className="flex items-center justify-between gap-2">
+          <PanelHeading>Layout checks</PanelHeading>
+          <span className="text-xs text-muted-foreground">{issues.length}</span>
+        </div>
+        <WarningsList issues={issues} />
+        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+          Checks cover configured layout geometry and utilities; they are not certified safety validation.
+        </p>
       </section>
     </aside>
   )
 }
 
-function Selection() {
+function CommentsSection() {
+  const selectedId = usePlanner((s) => s.selectedId)
+  const selectedCount = usePlanner((s) => s.selectedIds.length)
+  const machines = usePlanner((s) => s.machines)
+  const utilities = usePlanner((s) => s.utilities)
+  const pillars = usePlanner((s) => s.pillars)
+  const walls = usePlanner((s) => s.walls)
+  const comments = usePlanner((s) => s.comments)
+  const selectedCommentId = usePlanner((s) => s.selectedCommentId)
+  const addComment = usePlanner((s) => s.addComment)
+  const startCommentPlacement = usePlanner((s) => s.startCommentPlacement)
+  const selectComment = usePlanner((s) => s.selectComment)
+  const setCommentStatus = usePlanner((s) => s.setCommentStatus)
+  const deleteComment = usePlanner((s) => s.deleteComment)
+  const select = usePlanner((s) => s.select)
+  const [message, setMessage] = useState('')
+  const [author, setAuthor] = useState('You')
+
+  const machine = machines.find((item) => item.id === selectedId)
+  const utility = utilities.find((item) => item.id === selectedId)
+  const pillar = pillars.find((item) => item.id === selectedId)
+  const wall = walls.find((item) => item.id === selectedId)
+  const target = machine ?? utility ?? pillar
+  const targetId = target?.id ?? wall?.id
+  const anchor = target
+    ? { x: target.x, y: target.y }
+    : wall
+      ? { x: (wall.start.x + wall.end.x) / 2, y: (wall.start.y + wall.end.y) / 2 }
+      : null
+  const targetLabel = machine
+    ? machineShortName(machine.typeId, machines.filter((item) => machineLabelGroup(item.typeId) === machineLabelGroup(machine.typeId)).findIndex((item) => item.id === machine.id) + 1)
+    : utility
+      ? UTILITY_KINDS[utility.kind].name
+      : pillar
+        ? 'Pillar'
+        : wall
+          ? 'Wall'
+          : null
+  const visibleComments = selectedId
+    ? comments.filter((comment) => comment.targetId === selectedId)
+    : comments
+
+  function submitComment(e: React.FormEvent) {
+    e.preventDefault()
+    const text = message.trim()
+    if (!text) return
+    if (selectedId && targetId && anchor) {
+      addComment({ message: text, author: author.trim() || 'You', targetId, ...anchor })
+    } else {
+      startCommentPlacement({ message: text, author: author.trim() || 'You' })
+    }
+    setMessage('')
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        Notes are saved with this project in this browser. They are not live shared discussions.
+      </p>
+      <form onSubmit={submitComment} className="space-y-2">
+        <Input
+          aria-label="Comment author"
+          value={author}
+          onChange={(e) => setAuthor(e.target.value)}
+          placeholder="Your name"
+          className="h-8"
+        />
+        <textarea
+          aria-label={targetLabel ? `Comment on ${targetLabel}` : 'Comment at a floor location'}
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          placeholder={targetLabel ? `Discuss ${targetLabel}…` : 'Add a floor note…'}
+          rows={3}
+          className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        />
+        <Button type="submit" size="sm" className="w-full" disabled={!message.trim()}>
+          {targetLabel ? 'Add comment to selection' : 'Pin comment on floor'}
+        </Button>
+      </form>
+
+      {selectedCount > 1 && <p className="text-[11px] text-muted-foreground">Select one item to attach a comment to it.</p>}
+
+      <div className="space-y-2">
+        {visibleComments.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {targetLabel ? 'No comments on this item yet.' : 'No comments yet.'}
+          </p>
+        ) : (
+          visibleComments.map((comment) => (
+            <article
+              key={comment.id}
+              className={cn(
+                'rounded-md border bg-muted/20 p-2.5',
+                selectedCommentId === comment.id && 'border-accent ring-1 ring-accent/40',
+                comment.status === 'resolved' && 'opacity-70',
+              )}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  selectComment(comment.id)
+                  if (comment.targetId) select(comment.targetId)
+                }}
+                className="block w-full text-left"
+              >
+                <span className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="font-medium">{comment.author}</span>
+                  <time dateTime={comment.createdAt} className="text-muted-foreground">
+                    {formatCommentTime(comment.createdAt)}
+                  </time>
+                </span>
+                {comment.targetId && !selectedId && (
+                  <span className="mt-1 block text-[10px] text-muted-foreground">
+                    {commentTargetName(comment.targetId, machines, utilities, pillars, walls)}
+                  </span>
+                )}
+                <span className="mt-1 block whitespace-pre-wrap text-xs">{comment.message}</span>
+              </button>
+              <div className="mt-1.5 flex items-center justify-between">
+                <span className="text-[10px] text-muted-foreground">
+                  {comment.status === 'open' ? 'Open' : 'Resolved'}
+                </span>
+                <span className="flex gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[10px]"
+                    onClick={() => setCommentStatus(comment.id, comment.status === 'open' ? 'resolved' : 'open')}
+                  >
+                    {comment.status === 'open' ? 'Resolve' : 'Reopen'}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[10px] text-muted-foreground hover:text-destructive"
+                    onClick={() => deleteComment(comment.id)}
+                  >
+                    Delete
+                  </Button>
+                </span>
+              </div>
+            </article>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Selection({ issues }: { issues: LayoutIssue[] }) {
   const machine = usePlanner((s) => s.machines.find((m) => m.id === s.selectedId))
   const utility = usePlanner((s) => s.utilities.find((u) => u.id === s.selectedId))
   const pillar = usePlanner((s) => s.pillars.find((p) => p.id === s.selectedId))
   const wall = usePlanner((s) => s.walls.find((w) => w.id === s.selectedId))
   const count = usePlanner((s) => s.selectedIds.length)
+  const floorplan = usePlanner((s) => s.floorplan)
+  const machines = usePlanner((s) => s.machines)
+  const utilities = usePlanner((s) => s.utilities)
+  const pillars = usePlanner((s) => s.pillars)
+  const walls = usePlanner((s) => s.walls)
+  const stationTarget = usePlanner((s) => s.setup.stationTarget)
   if (count > 1) return <MultiProperties />
-  if (machine) return <MachineProperties machine={machine} />
+  if (machine) return <MachineProperties machine={machine} issues={issues.filter((issue) => issue.ids.includes(machine.id))} />
   if (utility) return <UtilityProperties utility={utility} />
   if (pillar) return <PillarProperties pillar={pillar} />
   if (wall) return <WallProperties wall={wall} />
   return (
-    <p className="text-sm text-muted-foreground">
-      Nothing selected. Click an item, or drag on empty floor to select several.
-    </p>
+    <div className="space-y-3">
+      {floorplan && (
+        <div className="rounded-md border bg-muted/30 p-3">
+          <div className="text-sm font-medium">{floorplan.name}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {formatMetres(floorplan.width)} × {formatMetres(floorplan.depth)} m
+          </div>
+          <div className="mt-2 text-xs">
+            {machines.length} / {stationTarget} machines · {utilities.length} utilities · {pillars.length + walls.length} structures
+          </div>
+        </div>
+      )}
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Select an item to inspect it. Drag on empty floor to select several; Shift-click adds or removes items.
+      </p>
+    </div>
   )
 }
 
@@ -91,7 +297,7 @@ function MultiProperties() {
         <Button variant="secondary" className="flex-1" onClick={() => select(null)}>
           Clear
         </Button>
-        <Button variant="destructive" className="flex-1" onClick={() => removeItems(selectedIds)}>
+        <Button variant="ghost" className="flex-1 text-destructive hover:bg-destructive/10" onClick={() => removeItems(selectedIds)}>
           Delete all
         </Button>
       </div>
@@ -99,63 +305,103 @@ function MultiProperties() {
   )
 }
 
-function WarningsList() {
-  const machines = usePlanner((s) => s.machines)
-  const utilities = usePlanner((s) => s.utilities)
-  const pillars = usePlanner((s) => s.pillars)
-  const walls = usePlanner((s) => s.walls)
-  const floorplan = usePlanner((s) => s.floorplan)
-  const selectedId = usePlanner((s) => s.selectedId)
-  const select = usePlanner((s) => s.select)
+type WarningGroupId = 'building' | 'requirements' | 'review'
 
-  const issues = useMemo(
-    () => (floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls }) : []),
-    [machines, utilities, floorplan, pillars, walls],
-  )
+const WARNING_GROUPS: { id: WarningGroupId; title: string }[] = [
+  { id: 'building', title: 'Building and spacing' },
+  { id: 'requirements', title: 'Equipment requirements' },
+  { id: 'review', title: 'Items to review' },
+]
+
+function warningGroup(issue: LayoutIssue): WarningGroupId {
+  if (issue.category === 'space') return 'building'
+  if (issue.ids.length === 0 || issue.key.startsWith('overload:')) return 'review'
+  return 'requirements'
+}
+
+function warningGuidance(issue: LayoutIssue) {
+  if (issue.key.startsWith('overlap:') || issue.key.includes('-on:')) {
+    return 'Move the affected equipment or structure so their footprints no longer overlap.'
+  }
+  if (issue.category === 'space') return 'Move the affected item, or review the required working space around the machine.'
+  if (issue.key.startsWith('overload:')) return 'Reduce connected loads or update the power point capacity.'
+  if (issue.key === 'no-exit') return 'Add an exit to the floor plan.'
+  if (issue.key === 'no-extinguisher') return 'Place a fire extinguisher and check its configured reach.'
+  if (issue.need === 'water') return 'Place or move a water point within reach of this machine.'
+  if (issue.need === 'power') return 'Place or move a power point within reach, and check its capacity.'
+  if (issue.need === 'sprinkler') return 'Place or move a sprinkler so its configured coverage reaches this machine.'
+  if (issue.need === 'exit') return 'Add an exit or review the walking route and configured distance.'
+  if (issue.need === 'extinguisher') return 'Place or move a fire extinguisher, and check the walking route.'
+  return 'Review the affected layout items and their configured requirements.'
+}
+
+function WarningsList({ issues }: { issues: LayoutIssue[] }) {
+  const selectedIds = usePlanner((s) => s.selectedIds)
+  const selectMany = usePlanner((s) => s.selectMany)
 
   if (issues.length === 0) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <span className="size-2 rounded-full" style={{ backgroundColor: CANVAS.valid }} />
-        No problems
+        No detected layout issues
       </p>
     )
   }
 
+  const grouped = WARNING_GROUPS.map((group) => ({
+    ...group,
+    issues: issues.filter((issue) => warningGroup(issue) === group.id),
+  })).filter((group) => group.issues.length > 0)
+
   return (
-    <ul className="space-y-1.5">
-      {issues.map((issue) => {
-        const active = selectedId !== null && issue.ids.includes(selectedId)
-        return (
-          <li key={issue.key}>
-            <button
-              type="button"
-              disabled={issue.ids.length === 0}
-              onClick={() => select(issue.ids[0])}
-              className={cn(
-                'flex w-full items-start gap-2 rounded-md border border-transparent p-2 text-left text-sm transition-colors enabled:hover:border-border',
-                active && 'border-destructive/60 bg-destructive/10',
-              )}
-            >
-              {/* Red: machines clash. Orange: a utility is missing or overloaded. */}
-              <span
-                className="mt-1.5 size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: issue.category === 'space' ? CANVAS.error : CANVAS.warning }}
-              />
-              {issue.message}
-            </button>
-          </li>
-        )
-      })}
-    </ul>
+    <div className="space-y-1.5">
+      {grouped.map((group) => (
+        <details key={group.id} className="group rounded-md border">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-xs font-medium [&::-webkit-details-marker]:hidden">
+            <span>{group.title}</span>
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{group.issues.length}</span>
+          </summary>
+          <ul className="space-y-1 px-1.5 pb-1.5">
+            {group.issues.map((issue) => {
+              const active = issue.ids.some((id) => selectedIds.includes(id))
+              return (
+                <li key={issue.key}>
+                  <button
+                    type="button"
+                    disabled={issue.ids.length === 0}
+                    onClick={() => selectMany(issue.ids)}
+                    className={cn(
+                      'flex w-full items-start gap-2 rounded-md border border-transparent p-2 text-left transition-colors enabled:hover:border-border',
+                      active && 'border-destructive/60 bg-destructive/10',
+                      issue.ids.length === 0 && 'cursor-default',
+                    )}
+                  >
+                    <span
+                      className="mt-1 size-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: issue.category === 'space' ? CANVAS.error : CANVAS.warning }}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-xs">{issue.message}</span>
+                      <span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">{warningGuidance(issue)}</span>
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </details>
+      ))}
+    </div>
   )
 }
 
-function MachineProperties({ machine }: { machine: MachineInstance }) {
+function MachineProperties({ machine, issues }: { machine: MachineInstance; issues: LayoutIssue[] }) {
   const moveMachine = usePlanner((s) => s.moveMachine)
   const rotateMachine = usePlanner((s) => s.rotateMachine)
   const removeMachine = usePlanner((s) => s.removeMachine)
   const setBeltLength = usePlanner((s) => s.setBeltLength)
+  const updateDimensions = usePlanner((s) => s.updateMachineDimensions)
+  const updateClearance = usePlanner((s) => s.updateMachineClearance)
   const machines = usePlanner((s) => s.machines)
   const singlePieceId = usePlanner((s) => s.singlePieceId)
   const run = useMemo(() => conveyorRuns(machines).runOf.get(machine.id), [machines, machine.id])
@@ -163,16 +409,57 @@ function MachineProperties({ machine }: { machine: MachineInstance }) {
   const type = machineTypeFor(machine)
   if (!type) return null
   const size = footprint(type, machine.rotation)
+  const clearance = machine.clearance ?? type.clearance
+  const index = machines.filter((m) => machineLabelGroup(m.typeId) === machineLabelGroup(machine.typeId)).findIndex((m) => m.id === machine.id) + 1
+  const shortName = machineShortName(machine.typeId, index)
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div>
-        <div className="text-sm font-medium">{type.name}</div>
-        <div className="mt-1 text-xs text-muted-foreground">
-          {size.width / 1000} × {size.depth / 1000} m · rotated {machine.rotation}°
-          {!run && ` · ${type.powerKw} kW`}
+        <div className="text-sm font-semibold">{shortName}</div>
+        <div className="text-xs text-muted-foreground">{type.name}</div>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <PropertyValue label="Width × depth" value={`${formatMetres(size.width)} × ${formatMetres(size.depth)} m`} />
+          <PropertyValue label="Height" value={machine.height === undefined ? 'Not specified' : `${formatMetres(machine.height)} m`} />
+          <PropertyValue label="Rotation" value={`${machine.rotation}°`} />
+          <PropertyValue label="Power" value={type.powerKw > 0 ? `${type.powerKw} kW` : 'Not required'} />
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">Water: {type.needsWater ? 'Required' : 'Not required'}</div>
+        {type.needsFireSuppression && <div className="text-xs text-muted-foreground">Sprinkler: Required</div>}
+      </div>
+
+      <div className="rounded-md border bg-muted/20 p-2.5">
+        <div className="mb-2 text-xs font-medium">Working clearance</div>
+        <div className="grid grid-cols-2 gap-2">
+          {(['front', 'back', 'left', 'right'] as const).map((side) => (
+            <Field key={side} id={`clearance-${side}`} label={`${side[0].toUpperCase()}${side.slice(1)} (m)`}>
+              <CommitInput
+                id={`clearance-${side}`}
+                className="h-8"
+                min={0}
+                step={0.1}
+                value={clearance[side] / 1000}
+                isValid={(m) => Number.isFinite(m) && m >= 0}
+                onCommit={(m) => updateClearance(machine.id, { [side]: Math.round(m * 1000) })}
+              />
+            </Field>
+          ))}
         </div>
       </div>
+
+      {issues.length > 0 && (
+        <div className="rounded-md border border-warning/40 bg-warning/5 p-2.5">
+          <div className="mb-1 text-xs font-medium">This machine needs attention</div>
+          <ul className="space-y-1.5">
+            {issues.map((issue) => (
+              <li key={issue.key}>
+                <p className="text-xs">{issue.message}</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{warningGuidance(issue)}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {run && (
         <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs">
@@ -193,40 +480,74 @@ function MachineProperties({ machine }: { machine: MachineInstance }) {
         </div>
       )}
 
-      <PositionFields
-        id={machine.id}
-        x={machine.x}
-        y={machine.y}
-        onMove={(x, y) => moveMachine(machine.id, x, y)}
-      />
-      <p className="text-xs text-muted-foreground">Position is the machine's centre.</p>
-
-      {machine.length !== undefined && (
-        <div className="space-y-1.5">
-          <Field id="belt-length-prop" label="Length (m)">
-            <CommitInput
-              key={machine.id}
-              id="belt-length-prop"
+      <details className="rounded-md border">
+        <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium">Position and dimensions</summary>
+        <div className="space-y-3 px-2.5 pb-2.5">
+          <PositionFields
+            id={machine.id}
+            x={machine.x}
+            y={machine.y}
+            onMove={(x, y) => moveMachine(machine.id, x, y)}
+          />
+          <p className="text-[11px] text-muted-foreground">Position is the machine's centre.</p>
+          {machine.length !== undefined ? (
+            <Field id="belt-length-prop" label="Length (m)">
+              <CommitInput
+                key={machine.id}
+                id="belt-length-prop"
+                className="h-8"
+                min={1}
+                max={30}
+                step={0.5}
+                value={machine.length / 1000}
+                isValid={(m) => isValidConveyorLength(m * 1000)}
+                onCommit={(m) => setBeltLength(machine.id, Math.round(m * 1000))}
+              />
+            </Field>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <Field id="machine-width" label="Base width (m)">
+                <CommitInput
+                  id="machine-width"
+                  className="h-8"
+                  min={0.1}
+                  step={0.1}
+                  value={(machine.width ?? type.width) / 1000}
+                  isValid={(m) => Number.isFinite(m) && m > 0}
+                  onCommit={(m) => updateDimensions(machine.id, { width: Math.round(m * 1000) })}
+                />
+              </Field>
+              <Field id="machine-depth" label="Base depth (m)">
+                <CommitInput
+                  id="machine-depth"
+                  className="h-8"
+                  min={0.1}
+                  step={0.1}
+                  value={(machine.depth ?? type.depth) / 1000}
+                  isValid={(m) => Number.isFinite(m) && m > 0}
+                  onCommit={(m) => updateDimensions(machine.id, { depth: Math.round(m * 1000) })}
+                />
+              </Field>
+            </div>
+          )}
+          <Field id="machine-height" label="Height (m, not used by 2D checks)">
+            <OptionalDimensionInput
+              id="machine-height"
               className="h-8"
-              min={1}
-              max={30}
-              step={0.5}
-              value={machine.length / 1000}
-              isValid={(m) => isValidConveyorLength(m * 1000)}
-              onCommit={(m) => setBeltLength(machine.id, Math.round(m * 1000))}
+              value={machine.height}
+              onCommit={(m) => updateDimensions(machine.id, { height: m === undefined ? undefined : Math.round(m * 1000) })}
             />
           </Field>
-          <p className="text-xs text-muted-foreground">1–30 m. The input end stays put; the belt grows in its flow direction.</p>
         </div>
-      )}
+      </details>
 
       <div className="flex gap-2">
         <Button variant="secondary" className="flex-1" onClick={() => rotateMachine(machine.id)}>
           Rotate 15°
         </Button>
         <Button
-          variant="destructive"
-          className="flex-1"
+          variant="ghost"
+          className="flex-1 text-muted-foreground hover:text-destructive"
           onClick={() => animateNodeOut(machine.id, () => removeMachine(machine.id))}
         >
           Delete
@@ -315,8 +636,8 @@ function UtilityProperties({ utility }: { utility: Utility }) {
       )}
 
       <Button
-        variant="destructive"
-        className="w-full"
+        variant="ghost"
+        className="w-full text-muted-foreground hover:text-destructive"
         onClick={() => animateNodeOut(utility.id, () => removeUtility(utility.id))}
       >
         Delete
@@ -372,8 +693,8 @@ function PillarProperties({ pillar }: { pillar: Pillar }) {
       <p className="text-xs text-muted-foreground">Position is the pillar's centre.</p>
 
       <Button
-        variant="destructive"
-        className="w-full"
+        variant="ghost"
+        className="w-full text-muted-foreground hover:text-destructive"
         onClick={() => animateNodeOut(pillar.id, () => removePillar(pillar.id))}
       >
         Delete
@@ -448,8 +769,8 @@ function WallProperties({ wall }: { wall: Wall }) {
       </div>
 
       <Button
-        variant="destructive"
-        className="w-full"
+        variant="ghost"
+        className="w-full text-muted-foreground hover:text-destructive"
         onClick={() => animateNodeOut(wall.id, () => removeWall(wall.id))}
       >
         Delete
@@ -472,13 +793,57 @@ function PositionFields({
   // key by item so switching selection resets the fields
   return (
     <div key={id} className="grid grid-cols-2 gap-3">
-      <Field id="pos-x" label="X (mm)">
-        <CommitInput id="pos-x" className="h-8" value={x} onCommit={(v) => onMove(Math.round(v), y)} />
+      <Field id="pos-x" label="X (m)">
+        <CommitInput id="pos-x" className="h-8" step={0.01} value={x / 1000} onCommit={(v) => onMove(Math.round(v * 1000), y)} />
       </Field>
-      <Field id="pos-y" label="Y (mm)">
-        <CommitInput id="pos-y" className="h-8" value={y} onCommit={(v) => onMove(x, Math.round(v))} />
+      <Field id="pos-y" label="Y (m)">
+        <CommitInput id="pos-y" className="h-8" step={0.01} value={y / 1000} onCommit={(v) => onMove(x, Math.round(v * 1000))} />
       </Field>
     </div>
+  )
+}
+
+function OptionalDimensionInput({
+  value,
+  onCommit,
+  ...props
+}: Omit<React.ComponentProps<typeof Input>, 'value' | 'onChange'> & {
+  value: number | undefined
+  onCommit: (value: number | undefined) => void
+}) {
+  const [text, setText] = useState(value === undefined ? '' : String(value / 1000))
+  const [lastValue, setLastValue] = useState(value)
+  if (value !== lastValue) {
+    setLastValue(value)
+    setText(value === undefined ? '' : String(value / 1000))
+  }
+
+  function commit() {
+    if (text.trim() === '') {
+      if (value !== undefined) onCommit(undefined)
+      return
+    }
+
+    const next = Number(text)
+    if (Number.isFinite(next) && next > 0) {
+      if (Math.round(next * 1000) !== value) onCommit(next)
+    } else {
+      setText(value === undefined ? '' : String(value / 1000))
+    }
+  }
+
+  return (
+    <Input
+      type="number"
+      min={0.01}
+      step={0.01}
+      placeholder="Not specified"
+      {...props}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+    />
   )
 }
 
@@ -491,4 +856,41 @@ function Field({ id, label, children }: { id: string; label: string; children: R
       {children}
     </div>
   )
+}
+
+function PropertyValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="font-medium">{value}</div>
+    </div>
+  )
+}
+
+function formatMetres(mm: number) {
+  return String(Number((mm / 1000).toFixed(2)))
+}
+
+function formatCommentTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'Unknown time' : date.toLocaleString()
+}
+
+function commentTargetName(
+  id: string,
+  machines: MachineInstance[],
+  utilities: Utility[],
+  pillars: Pillar[],
+  walls: Wall[],
+) {
+  const machine = machines.find((item) => item.id === id)
+  if (machine) {
+    const index = machines.filter((item) => machineLabelGroup(item.typeId) === machineLabelGroup(machine.typeId)).findIndex((item) => item.id === id) + 1
+    return machineShortName(machine.typeId, index)
+  }
+  const utility = utilities.find((item) => item.id === id)
+  if (utility) return UTILITY_KINDS[utility.kind].name
+  if (pillars.some((item) => item.id === id)) return 'Pillar'
+  if (walls.some((item) => item.id === id)) return 'Wall'
+  return 'Floor location'
 }

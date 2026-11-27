@@ -64,6 +64,14 @@ export function PillarNode({
       onMouseEnter={(e) => setCursor(e, 'move')}
       onMouseLeave={(e) => setCursor(e, '')}
     >
+      <Rect
+        x={-Math.max(pillar.width * SCALE, 20 / fit) / 2}
+        y={-Math.max(pillar.depth * SCALE, 20 / fit) / 2}
+        width={Math.max(pillar.width * SCALE, 20 / fit)}
+        height={Math.max(pillar.depth * SCALE, 20 / fit)}
+        fill="#000000"
+        opacity={0.001}
+      />
       <PillarBody
         width={pillar.width}
         depth={pillar.depth}

@@ -11,7 +11,7 @@ import { UTILITY_KINDS } from '@/data/utilities'
 import { autosave } from '@/lib/autosave'
 import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
-import type { Floorplan, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall } from '@/types'
+import type { Floorplan, LayoutComment, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall } from '@/types'
 
 export type NewFloorplanInput = Omit<Floorplan, 'id'>
 
@@ -60,7 +60,13 @@ export interface Project {
   utilities: Utility[]
   pillars: Pillar[]
   walls: Wall[]
+  comments: LayoutComment[]
   setup: SetupAnswers
+}
+
+interface CommentDraft {
+  message: string
+  author: string
 }
 
 export interface PlannerState {
@@ -72,6 +78,10 @@ export interface PlannerState {
   wizard: SetupAnswers
   /** Saved projects other than the open one. */
   projects: Project[]
+  comments: LayoutComment[]
+  /** Current discussion item and a pending floor-pin comment; UI-only. */
+  selectedCommentId: string | null
+  commentDraft: CommentDraft | null
 
   /** Open the wizard with fresh answers. The current project stays open until the wizard finishes. */
   startSetup: () => void
@@ -120,6 +130,8 @@ export interface PlannerState {
   /** Move several machines at once (a conveyor run). */
   moveMachines: (moves: { id: string; x: number; y: number }[]) => void
   rotateMachine: (id: string) => void
+  updateMachineDimensions: (id: string, patch: Partial<Pick<MachineInstance, 'width' | 'depth' | 'height'>>) => void
+  updateMachineClearance: (id: string, patch: Partial<NonNullable<MachineInstance['clearance']>>) => void
   /** Change a straight belt's length, keeping its input end in place. */
   setBeltLength: (id: string, length: number) => void
   removeMachine: (id: string) => void
@@ -175,6 +187,13 @@ export interface PlannerState {
   setConveyorLength: (length: number) => void
   /** Locking also deselects a selected structure. */
   toggleLockStructures: () => void
+  addComment: (comment: Omit<LayoutComment, 'id' | 'createdAt' | 'status'>) => void
+  startCommentPlacement: (draft: CommentDraft) => void
+  addLocationComment: (x: number, y: number) => void
+  cancelCommentPlacement: () => void
+  selectComment: (id: string | null) => void
+  setCommentStatus: (id: string, status: LayoutComment['status']) => void
+  deleteComment: (id: string) => void
 
   /** Pick up a machine type; picking the same one again puts it back. */
   startPlacingMachine: (typeId: string) => void
@@ -205,7 +224,15 @@ function placeUtility(kind: UtilityKind, x: number, y: number, floorplan: Floorp
 /** The open project as a saved project (null when no floor is open). */
 export function currentProject(s: PlannerState): Project | null {
   if (!s.floorplan) return null
-  return { floorplan: s.floorplan, machines: s.machines, utilities: s.utilities, pillars: s.pillars, walls: s.walls, setup: s.setup }
+  return {
+    floorplan: s.floorplan,
+    machines: s.machines,
+    utilities: s.utilities,
+    pillars: s.pillars,
+    walls: s.walls,
+    comments: s.comments,
+    setup: s.setup,
+  }
 }
 
 /** The project list with the open project added, before something else is opened. */
@@ -222,6 +249,9 @@ function opened(p: Project): Partial<PlannerState> {
     utilities: p.utilities,
     pillars: p.pillars,
     walls: p.walls,
+    comments: p.comments ?? [],
+    selectedCommentId: null,
+    commentDraft: null,
     setup: p.setup,
     ...selection([]),
     singlePieceId: null,
@@ -251,6 +281,9 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   utilities: [],
   pillars: [],
   walls: [],
+  comments: [],
+  selectedCommentId: null,
+  commentDraft: null,
   selectedId: null,
   selectedIds: [],
   singlePieceId: null,
@@ -267,6 +300,9 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       utilities: [],
       pillars: pillars.map((p) => ({ id: crypto.randomUUID(), ...p })),
       walls: [],
+      comments: [],
+      selectedCommentId: null,
+      commentDraft: null,
       setup: s.wizard,
       ...selection([]),
       singlePieceId: null,
@@ -326,6 +362,9 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         utilities: [],
         pillars: [],
         walls: [],
+        comments: [],
+        selectedCommentId: null,
+        commentDraft: null,
         setup: DEFAULT_SETUP,
         ...selection([]),
         singlePieceId: null,
@@ -389,6 +428,21 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       machines: s.machines.map((m) =>
         m.id === id ? { ...m, rotation: rotateBy(m.rotation, 15) } : m,
       ),
+    })),
+
+  updateMachineDimensions: (id, patch) =>
+    set((s) => ({
+      machines: s.machines.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+    })),
+
+  updateMachineClearance: (id, patch) =>
+    set((s) => ({
+      machines: s.machines.map((m) => {
+        if (m.id !== id) return m
+        const type = getMachineType(m.typeId)
+        if (!type) return m
+        return { ...m, clearance: { ...type.clearance, ...m.clearance, ...patch } }
+      }),
     })),
 
   setBeltLength: (id, length) =>
@@ -554,6 +608,52 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       const structures = new Set([...s.pillars, ...s.walls].map((x) => x.id))
       return { lockStructures: lock, ...(lock && selection(s.selectedIds.filter((x) => !structures.has(x)))) }
     }),
+
+  addComment: (comment) =>
+    set((s) => {
+      if (!s.floorplan || !comment.message.trim()) return s
+      const created: LayoutComment = {
+        ...comment,
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        status: 'open',
+      }
+      return { comments: [...s.comments, created], selectedCommentId: created.id }
+    }),
+
+  startCommentPlacement: (draft) =>
+    set({ commentDraft: { message: draft.message.trim(), author: draft.author.trim() || 'You' } }),
+
+  addLocationComment: (x, y) =>
+    set((s) => {
+      if (!s.floorplan || !s.commentDraft?.message) return s
+      const created: LayoutComment = {
+        id: crypto.randomUUID(),
+        x: Math.round(x),
+        y: Math.round(y),
+        author: s.commentDraft.author,
+        createdAt: new Date().toISOString(),
+        message: s.commentDraft.message,
+        status: 'open',
+      }
+      return {
+        comments: [...s.comments, created],
+        selectedCommentId: created.id,
+        commentDraft: null,
+      }
+    }),
+
+  cancelCommentPlacement: () => set({ commentDraft: null }),
+  selectComment: (id) => set({ selectedCommentId: id }),
+  setCommentStatus: (id, status) =>
+    set((s) => ({
+      comments: s.comments.map((comment) => (comment.id === id ? { ...comment, status } : comment)),
+    })),
+  deleteComment: (id) =>
+    set((s) => ({
+      comments: s.comments.filter((comment) => comment.id !== id),
+      ...(s.selectedCommentId === id && { selectedCommentId: null }),
+    })),
 
   startPlacingMachine: (typeId) =>
     set((s) =>

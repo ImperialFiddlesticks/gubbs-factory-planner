@@ -115,8 +115,19 @@ export function getMachineType(id: string): CatalogMachine | undefined {
  * The type as it applies to one placed machine: a straight belt takes its own length
  * (as width) and the drive power for that length. Use this whenever sizing a placed machine.
  */
-export function machineTypeFor(m: Pick<MachineInstance, 'typeId' | 'length'>): CatalogMachine | undefined {
+export function machineTypeFor(
+  m: Pick<MachineInstance, 'typeId'> & Partial<Pick<MachineInstance, 'length' | 'width' | 'depth' | 'clearance'>>,
+): CatalogMachine | undefined {
   const type = getMachineType(m.typeId)
-  if (type?.conveyor !== 'straight' || m.length === undefined) return type
-  return { ...type, width: m.length, powerKw: conveyorKw(m.length) }
+  if (!type) return
+  const resolved =
+    type.conveyor === 'straight' && m.length !== undefined
+      ? { ...type, width: m.length, powerKw: conveyorKw(m.length) }
+      : type
+  return {
+    ...resolved,
+    ...(m.width !== undefined && { width: m.width }),
+    ...(m.depth !== undefined && { depth: m.depth }),
+    ...(m.clearance && { clearance: m.clearance }),
+  }
 }
