@@ -1,4 +1,38 @@
-# React + Vite
+# Gubbs Factory Planner
+
+## Run locally
+
+Install the .NET 10 SDK and Node.js, then run the backend and frontend in separate terminals.
+
+Backend:
+
+```powershell
+dotnet run --project backend/backend.csproj --launch-profile http
+```
+
+Frontend:
+
+```powershell
+npm install
+npm run dev
+```
+
+In PowerShell on Windows, use `npm.cmd` if script execution policy blocks `npm`:
+
+```powershell
+npm.cmd install
+npm.cmd run dev
+```
+
+Open `http://localhost:5173` in a browser. The backend listens on `http://localhost:5116`.
+
+## Saved projects
+
+Server saved projects are stored per user in the Documents folder at `Codex/factory-planner-data`. The backend creates this directory on first run. You can override it by setting the `ProjectStore__Directory` environment variable.
+
+The server file store is local to each computer. To move a project to another computer, use **Export file** on the source computer and **Import file** on the destination computer.
+
+## Original template notes
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

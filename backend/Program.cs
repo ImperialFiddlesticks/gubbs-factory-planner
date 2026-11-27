@@ -13,7 +13,8 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins(
             "http://localhost:5173",
-            "http://localhost:5174");
+            "http://localhost:5174",
+            "http://127.0.0.1:5173");
         policy.AllowAnyHeader();
         policy.AllowAnyMethod();
     } );
@@ -27,10 +28,17 @@ builder.Services.AddScoped<UtilityValidationService>();
 builder.Services.AddScoped<LoadingDockValidationService>();
 builder.Services.AddScoped<LoadingBayValidationService>();
 
+var projectStoreDirectory = builder.Configuration["ProjectStore:Directory"];
+if (string.IsNullOrWhiteSpace(projectStoreDirectory))
+{
+    var documentsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    projectStoreDirectory = string.IsNullOrWhiteSpace(documentsDirectory)
+        ? Path.Combine(builder.Environment.ContentRootPath, "App_Data", "projects")
+        : Path.Combine(documentsDirectory, "Codex", "factory-planner-data");
+}
+
 builder.Services.AddSingleton<backend.Services.IProjectRepository>(_ =>
-    new backend.Services.FileProjectRepository(
-        builder.Configuration["ProjectStore:Directory"] ??
-        Path.Combine(builder.Environment.ContentRootPath, "App_Data", "projects")));
+    new backend.Services.FileProjectRepository(projectStoreDirectory));
 
 
 var app = builder.Build();

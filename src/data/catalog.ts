@@ -6,6 +6,7 @@ import {
   type ConveyorPiece,
 } from '@/data/conveyors'
 import type { MachineInstance, MachineType } from '@/types'
+import { z } from 'zod'
 
 /** A catalog machine: the backend MachineType plus a UI-side category. */
 export interface CatalogMachine extends MachineType {
@@ -22,6 +23,36 @@ export interface CatalogMachine extends MachineType {
    */
   station?: false
 }
+
+const CatalogMachineSchema = z.object({
+  id: z.string(),
+  category: z.enum([
+    'machining',
+    'forming',
+    'welding',
+    'material-handling',
+    'assembly-packing',
+    'storage',
+    'support',
+  ]),
+  name: z.string(),
+  shortName: z.string(),
+  width: z.number().positive(),
+  depth: z.number().positive(),
+  clearance: z.object({
+    front: z.number().nonnegative(),
+    back: z.number().nonnegative(),
+    left: z.number().nonnegative(),
+    right: z.number().nonnegative(),
+  }),
+  powerKw: z.number().nonnegative(),
+  needsWater: z.boolean(),
+  needsFireSuppression: z.boolean(),
+  height: z.number().positive().optional(),
+  conveyor: z.enum(['straight', 'corner-left', 'corner-right']).optional(),
+  people: z.number().int().positive().optional(),
+  station: z.literal(false).optional(),
+}) satisfies z.ZodType<CatalogMachine>
 
 /** Drive power for a length of belt, kW (two decimals). */
 export const conveyorKw = (mm: number) => Math.round(CONVEYOR_KW_PER_M * (mm / 1000) * 100) / 100
@@ -383,6 +414,12 @@ export const CATALOG: CatalogMachine[] = [
     people: 1,
   },
 ]
+
+/** Replace the built-in fallback catalog with the validated backend catalog. */
+export function replaceCatalogFromServer(payload: unknown): void {
+  const catalog = z.array(CatalogMachineSchema).parse(payload)
+  CATALOG.splice(0, CATALOG.length, ...catalog)
+}
 
 /** True if a machine type counts as a station towards the goal (not conveyors or storage). */
 export function isStation(typeId: string): boolean {
