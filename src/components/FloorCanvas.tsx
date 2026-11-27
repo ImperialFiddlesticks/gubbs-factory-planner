@@ -9,6 +9,8 @@ import { ClearanceZone, Machine, MachineBody, type Outline } from '@/components/
 import { GHOST_ID, type DragState } from '@/components/canvas/shared'
 import { PillarBody, PillarNode } from '@/components/canvas/PillarNode'
 import { WallBody, WallNode } from '@/components/canvas/WallNode'
+import { LoadingDockGlyph, LoadingDockNode } from '@/components/canvas/LoadingDockNode'
+import { LoadingBayNode } from '@/components/canvas/LoadingBayNode'
 import { ZoneNode, ZoneShape } from '@/components/canvas/ZoneNode'
 import { CoverageCircle, UtilityGlyph, UtilityNode } from '@/components/canvas/UtilityNode'
 import { PowerLoadTags, SupplyLines } from '@/components/canvas/SupplyLines'
@@ -22,6 +24,8 @@ import { MIN_ZONE_SIZE, ZONE_KINDS, zoneArea } from '@/data/zones'
 import { conveyorRuns, snapConveyor, snapMachineToConveyor } from '@/lib/conveyors'
 import { keepOnFloor } from '@/lib/placement'
 import { floorCorners } from '@/lib/floorShapes'
+import { DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockBounds, loadingDockIssue, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
+import { loadingBayBounds, loadingBayCentroid, loadingBayIssue, loadingBayWorldBounds } from '@/lib/loadingBays'
 import {
   bodyBox,
   boxesOverlap,
@@ -36,7 +40,7 @@ import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validatio
 import { useElementSize } from '@/lib/useElementSize'
 import { usePlanner, type Placing } from '@/store'
 import { CANVAS } from '@/theme'
-import type { Floorplan, MachineInstance, Pillar, Point, Utility, Wall, Zone, ZoneKind } from '@/types'
+import type { Floorplan, LoadingBay, LoadingDock, MachineInstance, Pillar, Point, Utility, Wall, Zone, ZoneKind } from '@/types'
 
 interface FloorCanvasProps {
   floorplan: Floorplan | null
@@ -63,6 +67,8 @@ function placingName(p: Placing) {
   if (p.kind === 'pillar') return 'Pillar'
   if (p.kind === 'wall') return 'Wall'
   if (p.kind === 'zone') return ZONE_KINDS[p.zoneKind].name
+  if (p.kind === 'loadingDock') return 'Loading dock'
+  if (p.kind === 'loadingBay') return 'Loading bay'
   return UTILITY_KINDS[p.utilityKind].name
 }
 
@@ -95,6 +101,20 @@ function PlacingHint() {
       </div>
     )
   }
+  if (placing.kind === 'loadingDock') {
+    return (
+      <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+        Placing a <span className="font-semibold">Loading dock</span> · Click the outer boundary · Red preview means it overlaps another dock · Esc to cancel
+      </div>
+    )
+  }
+  if (placing.kind === 'loadingBay') {
+    return (
+      <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+        Drawing a <span className="font-semibold">Loading bay</span> · Click outline corners, then click the first point to finish · Red means invalid · Esc to cancel
+      </div>
+    )
+  }
   return (
     <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
       Placing <span className="font-semibold">{placingName(placing)}</span> · Click to place
@@ -111,6 +131,8 @@ type Active =
   | { kind: 'utility'; item: Utility }
   | { kind: 'pillar'; item: Pillar }
   | { kind: 'wall'; item: Wall }
+  | { kind: 'loadingDock'; item: LoadingDock & Point }
+  | { kind: 'loadingBay'; item: LoadingBay & Point }
 
 function FloorStage({
   floorplan,
@@ -119,15 +141,21 @@ function FloorStage({
   floorplan: Floorplan
   size: { width: number; height: number }
 }) {
-  const floorW = floorplan.width * SCALE
-  const floorH = floorplan.depth * SCALE
+  const loadingBays = usePlanner((s) => s.loadingBays)
+  const placing = usePlanner((s) => s.placing)
+  const draftBays = placing?.kind === 'loadingBay' && placing.outline.length > 0
+    ? [{ id: GHOST_ID, name: 'Loading bay', loadingDockId: placing.loadingDockId, outline: placing.outline }]
+    : []
+  const worldBounds = loadingBayWorldBounds(floorplan, [...loadingBays, ...draftBays])
+  const worldW = (worldBounds.maxX - worldBounds.minX) * SCALE
+  const worldH = (worldBounds.maxY - worldBounds.minY) * SCALE
   // The map toolbar sits at the bottom, so the floor uses the space above it.
   const viewH = size.height - TOOLBAR_SPACE
-  // Floors larger than the work area are shrunk to fit; smaller ones stay at SCALE.
+  // Fit the hall and any exterior bays together without moving their shared world coordinates.
   const baseFit = Math.min(
     1,
-    (size.width - 2 * VIEW_PADDING) / floorW,
-    (viewH - 2 * VIEW_PADDING) / floorH,
+    (size.width - 2 * VIEW_PADDING) / worldW,
+    (viewH - 2 * VIEW_PADDING) / worldH,
   )
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -135,9 +163,9 @@ function FloorStage({
   const panStart = useRef<{ pointer: Point; pan: Point } | null>(null)
   const spacePan = useSpacePan()
   const fit = baseFit * zoom
-  // Keep the plan centred at the current zoom, then apply any user panning.
-  const originX = Math.round((size.width - floorW * fit) / 2 + pan.x)
-  const originY = Math.round((viewH - floorH * fit) / 2 + pan.y)
+  // Keep the full world bounds centred at the current zoom, then apply any user panning.
+  const originX = Math.round((size.width - worldW * fit) / 2 - worldBounds.minX * SCALE * fit + pan.x)
+  const originY = Math.round((viewH - worldH * fit) / 2 - worldBounds.minY * SCALE * fit + pan.y)
 
   // Floor corners in layer px, flat [x0, y0, x1, y1, ...] for Konva.
   const floorPoints = floorCorners(floorplan).flatMap((p) => [p.x * SCALE, p.y * SCALE])
@@ -154,12 +182,12 @@ function FloorStage({
   const pillars = usePlanner((s) => s.pillars)
   const walls = usePlanner((s) => s.walls)
   const zones = usePlanner((s) => s.zones)
+  const loadingDocks = usePlanner((s) => s.loadingDocks)
   const lockStructures = usePlanner((s) => s.lockStructures)
   const selectedId = usePlanner((s) => s.selectedId)
   const selectedIds = usePlanner((s) => s.selectedIds)
   const selectMany = usePlanner((s) => s.selectMany)
   const singlePieceId = usePlanner((s) => s.singlePieceId)
-  const placing = usePlanner((s) => s.placing)
   const layers = usePlanner((s) => s.layers)
   const comments = usePlanner((s) => s.comments)
   const commentDraft = usePlanner((s) => s.commentDraft)
@@ -171,6 +199,9 @@ function FloorStage({
   const setWallStart = usePlanner((s) => s.setWallStart)
   const setZoneStart = usePlanner((s) => s.setZoneStart)
   const addZone = usePlanner((s) => s.addZone)
+  const addLoadingDock = usePlanner((s) => s.addLoadingDock)
+  const addLoadingBay = usePlanner((s) => s.addLoadingBay)
+  const setLoadingBayPoints = usePlanner((s) => s.setLoadingBayPoints)
   const cancelPlacing = usePlanner((s) => s.cancelPlacing)
   const addLocationComment = usePlanner((s) => s.addLocationComment)
   const cancelCommentPlacement = usePlanner((s) => s.cancelCommentPlacement)
@@ -186,12 +217,12 @@ function FloorStage({
     const boundedZoom = Math.max(1, Math.min(4, nextZoom))
     const oldFit = baseFit * zoom
     const nextFit = baseFit * boundedZoom
-    const oldOriginX = (size.width - floorW * oldFit) / 2 + pan.x
-    const oldOriginY = (viewH - floorH * oldFit) / 2 + pan.y
+    const oldOriginX = (size.width - worldW * oldFit) / 2 - worldBounds.minX * SCALE * oldFit + pan.x
+    const oldOriginY = (viewH - worldH * oldFit) / 2 - worldBounds.minY * SCALE * oldFit + pan.y
     const mapX = (anchor.x - oldOriginX) / oldFit
     const mapY = (anchor.y - oldOriginY) / oldFit
-    const nextOriginX = (size.width - floorW * nextFit) / 2
-    const nextOriginY = (viewH - floorH * nextFit) / 2
+    const nextOriginX = (size.width - worldW * nextFit) / 2 - worldBounds.minX * SCALE * nextFit
+    const nextOriginY = (viewH - worldH * nextFit) / 2 - worldBounds.minY * SCALE * nextFit
     setZoom(boundedZoom)
     setPan({
       x: anchor.x - nextOriginX - mapX * nextFit,
@@ -212,12 +243,12 @@ function FloorStage({
   useSelectionKeys()
 
   const active = keepGhostOnFloor(
-    activeItem(placing, pointer, drag, machines, utilities, pillars, walls, floorplan),
+    activeItem(placing, pointer, drag, machines, utilities, pillars, walls, loadingDocks, loadingBays, floorplan),
     floorplan,
   )
 
   // Items moving along with the dragged one (multi-selection, conveyor run), at their live spot.
-  const delta = groupDelta(drag, machines, utilities, pillars, walls, zones)
+  const delta = groupDelta(drag, machines, utilities, pillars, walls, zones, loadingDocks, loadingBays, floorplan)
   const moving = new Set(delta ? drag?.group : [])
   const shiftItems = <T extends { id: string; x: number; y: number }>(list: T[]) =>
     delta ? list.map((i) => (moving.has(i.id) ? { ...i, x: i.x + delta.x, y: i.y + delta.y } : i)) : list
@@ -225,6 +256,23 @@ function FloorStage({
   const shownUtilities = shiftItems(utilities)
   const shownPillars = shiftItems(pillars)
   const shownZones = shiftItems(zones)
+  const shownLoadingDocks = delta
+    ? loadingDocks.map((dock) => {
+        if (!moving.has(dock.id)) return dock
+        const point = loadingDockPointAt(floorplan, dock.boundaryOffsetMm)
+        const next = point && nearestLoadingDockPosition(point.x + delta.x, point.y + delta.y, floorplan)
+        return next ? { ...dock, boundaryOffsetMm: next.offsetMm } : dock
+      })
+    : loadingDocks
+  const liveLoadingDocks = active?.kind === 'loadingDock' && active.item.id !== GHOST_ID
+    ? withItem(shownLoadingDocks, active.item)
+    : shownLoadingDocks
+  const shownLoadingBays = delta
+    ? loadingBays.map((bay) => moving.has(bay.id) ? { ...bay, outline: bay.outline.map(shiftPoint) } : bay)
+    : loadingBays
+  const liveLoadingBays = active?.kind === 'loadingBay'
+    ? withItem(shownLoadingBays, active.item)
+    : shownLoadingBays
   const shownWalls = delta
     ? walls.map((w) => (moving.has(w.id) ? { ...w, start: shiftPoint(w.start), end: shiftPoint(w.end) } : w))
     : walls
@@ -305,6 +353,30 @@ function FloorStage({
         addMachine(placing.typeId, { x: ghost.x, y: ghost.y, rotation, length: placing.length })
       } else if (at && placing.kind === 'utility') {
         addUtility(placing.utilityKind, at.x, at.y)
+      } else if (at && placing.kind === 'loadingDock') {
+        const position = active?.kind === 'loadingDock' && active.item.id === GHOST_ID
+          ? { offsetMm: active.item.boundaryOffsetMm }
+          : nearestLoadingDockPosition(at.x, at.y, floorplan)
+        if (!position) return
+        const candidate: LoadingDock = {
+          id: GHOST_ID,
+          name: 'Loading dock',
+          widthMm: DEFAULT_LOADING_DOCK_WIDTH_MM,
+          boundaryOffsetMm: position.offsetMm,
+          flowDirection: 'two-way',
+        }
+        if (loadingDockIssue(candidate, floorplan, loadingDocks) || !addLoadingDock(position.offsetMm)) return
+        cancelPlacing()
+        return
+      } else if (at && placing.kind === 'loadingBay') {
+        const points = placing.outline
+        if (points.length && Math.hypot(at.x - points[points.length - 1].x, at.y - points[points.length - 1].y) <= 50) return
+        if (points.length >= 3 && Math.hypot(at.x - points[0].x, at.y - points[0].y) <= 500) {
+          if (addLoadingBay(placing.loadingDockId, points)) cancelPlacing()
+          return
+        }
+        setLoadingBayPoints([...points, at])
+        return
       } else if (at && placing.kind === 'pillar') {
         addPillar(at.x, at.y)
       }
@@ -313,7 +385,7 @@ function FloorStage({
     }
     // Pressing empty floor starts a selection box (a plain click clears the selection on release).
     const t = e.target
-    if (['.machine', '.utility', '.pillar', '.wall', '.zone'].some((n) => t.findAncestor(n, true))) return
+    if (['.machine', '.utility', '.pillar', '.wall', '.zone', '.loading-dock', '.loading-bay'].some((n) => t.findAncestor(n, true))) return
     if ('button' in e.evt && e.evt.button !== 0) return
     const at = pointerMm()
     if (at) setBox({ start: at, end: at, add: e.evt.shiftKey })
@@ -369,6 +441,14 @@ function FloorStage({
       // Locked structures can't be selected.
       ...(lockStructures ? [] : pillars.filter((p) => hit(pillarBox(p))).map((p) => p.id)),
       ...(lockStructures ? [] : walls.filter((w) => hit(wallBox(w))).map((w) => w.id)),
+      ...(lockStructures ? [] : loadingDocks.flatMap((dock) => {
+        const bounds = loadingDockBounds(dock, floorplan)
+        return bounds && hit({ ...bounds, width: Math.max(bounds.width, 1), depth: Math.max(bounds.depth, 1) }) ? [dock.id] : []
+      })),
+      ...(lockStructures ? [] : loadingBays.flatMap((bay) => {
+        const bounds = loadingBayBounds(bay)
+        return bounds && hit({ ...bounds, depth: bounds.depth }) ? [bay.id] : []
+      })),
     ]
     selectMany(ids, box.add)
   }
@@ -440,6 +520,31 @@ function FloorStage({
           lineJoin="round"
           listening={false}
         />
+        {liveLoadingBays.map((bay) => (
+          <LoadingBayNode
+            key={bay.id}
+            bay={bay}
+            dock={liveLoadingDocks.find((dock) => dock.id === bay.loadingDockId)}
+            floorplan={floorplan}
+            selected={selected.has(bay.id)}
+            invalid={bay.outline.length < 3 || (bay.id === GHOST_ID && placing?.kind === 'loadingBay' && placing.outline.length < 3) || Boolean(loadingBayIssue(bay, floorplan, liveLoadingDocks, liveLoadingBays))}
+            interactive={bay.id !== GHOST_ID && !placing && !lockStructures && !spacePan && !commentDraft}
+            fit={fit}
+            onDrag={setDrag}
+          />
+        ))}
+        {liveLoadingDocks.map((dock) => (
+          <LoadingDockNode
+            key={dock.id}
+            dock={dock}
+            floorplan={floorplan}
+            fit={fit}
+            selected={selected.has(dock.id)}
+            invalid={Boolean(loadingDockIssue(dock, floorplan, liveLoadingDocks))}
+            interactive={!placing && !lockStructures && !spacePan && !commentDraft}
+            onDrag={setDrag}
+          />
+        ))}
 
         {/* Zones are floor markings: under everything else. Only their name tags are clickable. */}
         {layers.zones &&
@@ -594,7 +699,7 @@ function FloorStage({
           fit={fit}
         />
 
-        {active && active.kind !== 'wall' && active.item.id === GHOST_ID && (
+        {active && active.kind !== 'wall' && active.kind !== 'loadingBay' && active.item.id === GHOST_ID && (
           <Group
             x={active.item.x * SCALE}
             y={active.item.y * SCALE}
@@ -617,6 +722,14 @@ function FloorStage({
                 depth={active.item.depth}
                 fit={fit}
                 outline={outlineFor(GHOST_ID)}
+              />
+            ) : active.kind === 'loadingDock' ? (
+              <LoadingDockGlyph
+                dock={active.item}
+                floorplan={floorplan}
+                fit={fit}
+                center={active.item}
+                invalid={Boolean(loadingDockIssue(active.item, floorplan, loadingDocks))}
               />
             ) : (
               <UtilityGlyph utility={active.item} floorplan={floorplan} fit={fit} selected />
@@ -664,12 +777,21 @@ function groupDelta(
   pillars: Pillar[],
   walls: Wall[],
   zones: Zone[],
+  loadingDocks: LoadingDock[],
+  loadingBays: LoadingBay[],
+  floorplan: Floorplan,
 ): Point | null {
   if (!drag?.group?.length) return null
   // A wall reports its offset from where it started; everything else its position.
   if (walls.some((w) => w.id === drag.id)) return { x: drag.x, y: drag.y }
   const from = [...machines, ...utilities, ...pillars, ...zones].find((i) => i.id === drag.id)
-  return from ? { x: drag.x - from.x, y: drag.y - from.y } : null
+  if (from) return { x: drag.x - from.x, y: drag.y - from.y }
+  const dock = loadingDocks.find((item) => item.id === drag.id)
+  const point = dock && loadingDockPointAt(floorplan, dock.boundaryOffsetMm)
+  if (point) return { x: drag.x - point.x, y: drag.y - point.y }
+  const bay = loadingBays.find((item) => item.id === drag.id)
+  const center = bay && loadingBayCentroid(bay)
+  return center ? { x: drag.x - center.x, y: drag.y - center.y } : null
 }
 
 /** The zone being drawn, with its size in metres. */
@@ -783,6 +905,8 @@ function activeItem(
   utilities: Utility[],
   pillars: Pillar[],
   walls: Wall[],
+  loadingDocks: LoadingDock[],
+  loadingBays: LoadingBay[],
   floorplan: Floorplan,
 ): Active | null {
   if (placing && pointer) {
@@ -818,6 +942,26 @@ function activeItem(
     }
     // A zone being drawn is shown by the canvas itself (see ZoneShape below).
     if (placing.kind === 'zone') return null
+    if (placing.kind === 'loadingBay') {
+      const closing = placing.outline.length >= 3 && Math.hypot(pointer.x - placing.outline[0].x, pointer.y - placing.outline[0].y) <= 500
+      const outline = closing ? placing.outline : [...placing.outline, pointer]
+      return { kind: 'loadingBay', item: { id: GHOST_ID, name: 'Loading bay', loadingDockId: placing.loadingDockId, outline, ...loadingBayCentroid({ outline }) } }
+    }
+    if (placing.kind === 'loadingDock') {
+      const position = nearestLoadingDockPosition(pointer.x, pointer.y, floorplan)
+      if (!position) return null
+      return {
+        kind: 'loadingDock',
+        item: {
+          id: GHOST_ID,
+          name: 'Loading dock',
+          widthMm: DEFAULT_LOADING_DOCK_WIDTH_MM,
+          boundaryOffsetMm: position.offsetMm,
+          flowDirection: 'two-way',
+          ...position.point,
+        },
+      }
+    }
     const info = UTILITY_KINDS[placing.utilityKind]
     const at = placing.utilityKind === 'exit' ? snapToWall(pointer.x, pointer.y, floorplan) : pointer
     return {
@@ -843,6 +987,21 @@ function activeItem(
   if (w) {
     const shift = (q: Point) => ({ x: q.x + drag.x, y: q.y + drag.y })
     return { kind: 'wall', item: { ...w, start: shift(w.start), end: shift(w.end) } }
+  }
+  const bay = loadingBays.find((item) => item.id === drag.id)
+  if (bay) {
+    const center = loadingBayCentroid(bay)
+    const dx = drag.x - center.x
+    const dy = drag.y - center.y
+    return { kind: 'loadingBay', item: { ...bay, outline: bay.outline.map((point) => ({ x: point.x + dx, y: point.y + dy })), x: drag.x, y: drag.y } }
+  }
+  const dock = loadingDocks.find((item) => item.id === drag.id)
+  const dockPosition = nearestLoadingDockPosition(drag.x, drag.y, floorplan)
+  if (dock && dockPosition) {
+    return {
+      kind: 'loadingDock',
+      item: { ...dock, boundaryOffsetMm: dockPosition.offsetMm, ...dockPosition.point },
+    }
   }
   return null
 }

@@ -9,7 +9,7 @@ import { selection, usePlanner, type PlannerState } from '@/store'
  * lasts for the session only (not autosaved).
  */
 
-type Layout = Pick<PlannerState, 'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'zones'>
+type Layout = Pick<PlannerState, 'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'zones' | 'loadingDocks' | 'loadingBays'>
 
 /** Steps kept; older ones are dropped. */
 const LIMIT = 100
@@ -21,6 +21,8 @@ const layoutOf = (s: Layout): Layout => ({
   pillars: s.pillars,
   walls: s.walls,
   zones: s.zones,
+  loadingDocks: s.loadingDocks,
+  loadingBays: s.loadingBays,
 })
 
 /** The store never mutates, so a changed list or floor is a new object. */
@@ -30,7 +32,9 @@ const changed = (a: Layout, b: Layout) =>
   a.utilities !== b.utilities ||
   a.pillars !== b.pillars ||
   a.walls !== b.walls ||
-  a.zones !== b.zones
+  a.zones !== b.zones ||
+  a.loadingDocks !== b.loadingDocks ||
+  a.loadingBays !== b.loadingBays
 
 interface HistoryState {
   /** Earlier layouts, oldest first. */
@@ -57,7 +61,7 @@ usePlanner.subscribe((state, prev) => {
 function restore(layout: Layout) {
   restoring = true
   usePlanner.setState((s) => {
-    const ids = new Set([...layout.machines, ...layout.utilities, ...layout.pillars, ...layout.walls, ...layout.zones].map((x) => x.id))
+    const ids = new Set([...layout.machines, ...layout.utilities, ...layout.pillars, ...layout.walls, ...layout.zones, ...layout.loadingDocks, ...layout.loadingBays].map((x) => x.id))
     return {
       ...layout,
       // Keep the selection where the items still exist; stop placing so the ghost doesn't linger.
