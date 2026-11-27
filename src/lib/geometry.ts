@@ -82,32 +82,152 @@ export function wallBox(w: Pick<Wall, 'start' | 'end' | 'thickness'>): Box {
 //   }
 // }
 
-/** The machine's rectangle grown by its clearances. */
-export function clearanceBox(type: MachineType, p: Placement): Box {
-  const radians = (p.rotation * Math.PI) / 180
-  const cos = Math.cos(radians)
-  const sin = Math.sin(radians)
-  const absCos = Math.abs(cos)
-  const absSin = Math.abs(sin)
+// ---------------------------------------------------------------------------
+// Rotated rectangles: a machine's real shape at any angle. The Box helpers above give the
+// upright box around it, which is bigger than the machine at angles other than 0/90/180/270.
+// ---------------------------------------------------------------------------
 
-  const outerWidth = type.width + type.clearance.left + type.clearance.right
-  const outerDepth = type.depth + type.clearance.front + type.clearance.back
+/** A rectangle that may be turned: centre, size along its own axes (mm) and rotation (degrees, clockwise). */
+export interface Rect {
+  cx: number
+  cy: number
+  width: number
+  depth: number
+  rotation: Rotation
+}
 
-  const localOffsetX = (type.clearance.right - type.clearance.left) / 2
-  const localOffsetY = (type.clearance.front - type.clearance.back) / 2
+/** Overlaps thinner than this don't count, so pieces that touch don't clash through rounding, mm. */
+const OVERLAP_EPS = 1e-6
 
-  const centerX = p.x + cos * localOffsetX - sin * localOffsetY
-  const centerY = p.y + sin * localOffsetX + cos * localOffsetY
+/** The machine's own rectangle, turned with it. */
+export function bodyRect(type: MachineType, p: Placement): Rect {
+  return { cx: p.x, cy: p.y, width: type.width, depth: type.depth, rotation: p.rotation }
+}
 
-  const width = absCos * outerWidth + absSin * outerDepth
-  const depth = absSin * outerWidth + absCos * outerDepth
-
+/** The machine's rectangle grown by its clearances (front faces +y at rotation 0), turned with it. */
+export function clearanceRect(type: MachineType, p: Placement): Rect {
+  const { left, right, front, back } = type.clearance
+  // The grown rectangle's centre moves off the machine's centre when the sides differ.
+  const c = rotateVector({ x: (right - left) / 2, y: (front - back) / 2 }, p.rotation)
   return {
-    x: centerX - width / 2,
-    y: centerY - depth / 2,
-    width,
-    depth,
+    cx: p.x + c.x,
+    cy: p.y + c.y,
+    width: type.width + left + right,
+    depth: type.depth + front + back,
+    rotation: p.rotation,
   }
+}
+
+/** An upright box as a Rect. */
+export function boxToRect(b: Box): Rect {
+  return { cx: b.x + b.width / 2, cy: b.y + b.depth / 2, width: b.width, depth: b.depth, rotation: 0 }
+}
+
+/** Turn a vector clockwise by degrees (y grows down). */
+function rotateVector(p: Point, degrees: number): Point {
+  const r = (degrees * Math.PI) / 180
+  const cos = Math.cos(r)
+  const sin = Math.sin(r)
+  return { x: cos * p.x - sin * p.y, y: sin * p.x + cos * p.y }
+}
+
+/** A rectangle's four corners, in order around it. */
+export function rectCorners(r: Rect): Point[] {
+  const hw = r.width / 2
+  const hd = r.depth / 2
+  return [
+    { x: -hw, y: -hd },
+    { x: hw, y: -hd },
+    { x: hw, y: hd },
+    { x: -hw, y: hd },
+  ].map((p) => {
+    const q = rotateVector(p, r.rotation)
+    return { x: r.cx + q.x, y: r.cy + q.y }
+  })
+}
+
+/** A point in the rectangle's own frame (centre at 0, its axes along x/y). */
+function toLocal(p: Point, r: Rect): Point {
+  return rotateVector({ x: p.x - r.cx, y: p.y - r.cy }, -r.rotation)
+}
+
+/**
+ * True if the rectangles share any area (separating-axis test). Touching edges, or an
+ * overlap thinner than rounding, don't count.
+ */
+export function rectsOverlap(a: Rect, b: Rect): boolean {
+  const ca = rectCorners(a)
+  const cb = rectCorners(b)
+  for (const r of [a, b]) {
+    // Each rectangle's two edge directions are the candidate separating axes.
+    for (const axis of [rotateVector({ x: 1, y: 0 }, r.rotation), rotateVector({ x: 0, y: 1 }, r.rotation)]) {
+      const project = (ps: Point[]) => ps.map((p) => p.x * axis.x + p.y * axis.y)
+      const pa = project(ca)
+      const pb = project(cb)
+      const overlap = Math.min(Math.max(...pa), Math.max(...pb)) - Math.max(Math.min(...pa), Math.min(...pb))
+      if (overlap <= OVERLAP_EPS) return false
+    }
+  }
+  return true
+}
+
+/** Shortest distance from a point to the rectangle (0 if inside), mm. */
+export function distanceToRect(x: number, y: number, r: Rect): number {
+  const p = toLocal({ x, y }, r)
+  const dx = Math.max(Math.abs(p.x) - r.width / 2, 0)
+  const dy = Math.max(Math.abs(p.y) - r.depth / 2, 0)
+  return Math.hypot(dx, dy)
+}
+
+/** True if the point is strictly inside the rectangle (not on its edge). */
+function pointStrictlyInRect(p: Point, r: Rect): boolean {
+  const q = toLocal(p, r)
+  return Math.abs(q.x) < r.width / 2 - OVERLAP_EPS && Math.abs(q.y) < r.depth / 2 - OVERLAP_EPS
+}
+
+/** The upright box around a rectangle. */
+export function rectBounds(r: Rect): Box {
+  const cs = rectCorners(r)
+  const xs = cs.map((p) => p.x)
+  const ys = cs.map((p) => p.y)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  return { x, y, width: Math.max(...xs) - x, depth: Math.max(...ys) - y }
+}
+
+/**
+ * True if the whole rectangle lies on the floor: every corner is on the floor and no floor
+ * corner pokes into it. At 0/90/180/270 this is the same test as boxInsideFloor.
+ */
+export function rectInsideFloor(r: Rect, floorplan: FloorBounds): boolean {
+  if (r.rotation % 90 === 0) return boxInsideFloor(rectBounds(r), floorplan)
+  if (!rectCorners(r).every((c) => pointInFloor(c, floorplan))) return false
+  return !floorCorners(floorplan).some((v) => pointStrictlyInRect(v, r))
+}
+
+/**
+ * Points of a rectangle to test reach against: the point nearest to `from`, the corners and
+ * the edge midpoints.
+ */
+export function rectSamplePoints(r: Rect, from: Point): Point[] {
+  const p = toLocal(from, r)
+  const hw = r.width / 2
+  const hd = r.depth / 2
+  const local = [
+    { x: Math.min(Math.max(p.x, -hw), hw), y: Math.min(Math.max(p.y, -hd), hd) },
+    { x: -hw, y: -hd },
+    { x: hw, y: -hd },
+    { x: hw, y: hd },
+    { x: -hw, y: hd },
+    { x: 0, y: -hd },
+    { x: hw, y: 0 },
+    { x: 0, y: hd },
+    { x: -hw, y: 0 },
+  ]
+  return local.map((q) => {
+    const w = rotateVector(q, r.rotation)
+    return { x: r.cx + w.x, y: r.cy + w.y }
+  })
 }
 
 /** True if the boxes share any area. Touching edges do not count. */
@@ -251,26 +371,6 @@ export function segmentEntersBox(a: Point, b: Point, box: Box, inset = 1): numbe
 /** True if no wall stands between the two points. */
 export function clearLine(a: Point, b: Point, walls: Wall[]): boolean {
   return !walls.some((w) => segmentEntersBox(a, b, wallBox(w)) !== null)
-}
-
-/** Points on a box used for line-of-sight checks: nearest point to `from`, corners, edge midpoints. */
-export function samplePoints(box: Box, from: Point): Point[] {
-  const { x, y, width: w, depth: d } = box
-  const nearest = {
-    x: Math.min(Math.max(from.x, x), x + w),
-    y: Math.min(Math.max(from.y, y), y + d),
-  }
-  return [
-    nearest,
-    { x, y },
-    { x: x + w, y },
-    { x: x + w, y: y + d },
-    { x, y: y + d },
-    { x: x + w / 2, y },
-    { x: x + w, y: y + d / 2 },
-    { x: x + w / 2, y: y + d },
-    { x, y: y + d / 2 },
-  ]
 }
 
 /** Rays cast for a coverage shape; enough for a smooth outline at planner zoom levels. */

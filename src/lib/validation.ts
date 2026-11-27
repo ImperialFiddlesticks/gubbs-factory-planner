@@ -2,17 +2,21 @@ import { machineTypeFor } from '@/data/catalog'
 import { EXIT_MAX_DISTANCE, utilityRadius } from '@/data/utilities'
 import {
   bodyBox,
-  boxesOverlap,
+  bodyRect,
   boxInsideFloor,
-  clearanceBox,
+  boxToRect,
+  clearanceRect,
   clearLine,
-  distanceToBox,
+  distanceToRect,
   pillarBox,
-  samplePoints,
+  rectInsideFloor,
+  rectSamplePoints,
+  rectsOverlap,
   segmentEntersBox,
   wallBox,
   type Box,
   type FloorBounds,
+  type Rect,
 } from '@/lib/geometry'
 import { conveyorMachineLinks, conveyorRuns, type ConveyorRun } from '@/lib/conveyors'
 import { walkingRoutes, type WalkingRoute } from '@/lib/walking'
@@ -41,15 +45,27 @@ export interface LayoutIssue {
 interface Resolved {
   machine: MachineInstance
   type: MachineType
+  /** The machine's real shape, turned with it: used for clashes, the floor edge and reach. */
+  shape: Rect
+  /** Its clearance zone, turned with it. */
+  clearance: Rect
+  /** The upright box around the shape: used for routing (walking routes, supply lines). */
   body: Box
-  clearance: Box
 }
 
 function resolve(machines: MachineInstance[]): Resolved[] {
   const out: Resolved[] = []
   for (const machine of machines) {
     const type = machineTypeFor(machine)
-    if (type) out.push({ machine, type, body: bodyBox(type, machine), clearance: clearanceBox(type, machine) })
+    if (type) {
+      out.push({
+        machine,
+        type,
+        shape: bodyRect(type, machine),
+        clearance: clearanceRect(type, machine),
+        body: bodyBox(type, machine),
+      })
+    }
   }
   return out
 }
@@ -64,9 +80,9 @@ function inReach(r: Resolved, utilities: Utility[], kind: Utility['kind'], walls
   for (const u of utilities) {
     if (u.kind !== kind) continue
     const radius = utilityRadius(u)
-    if (distanceToBox(u.x, u.y, r.body) > radius) continue
+    if (distanceToRect(u.x, u.y, r.shape) > radius) continue
     // The nearest point comes first; with no walls it is always reachable.
-    const reachable = samplePoints(r.body, u)
+    const reachable = rectSamplePoints(r.shape, u)
       .map((p) => ({ p, d: Math.hypot(p.x - u.x, p.y - u.y) }))
       .filter(({ p, d }) => d <= radius && (walls.length === 0 || clearLine(u, p, walls)))
       .sort((a, b) => a.d - b.d)[0]
@@ -250,12 +266,13 @@ function structureIssues(resolved: Resolved[], structures: StructureBox[], floor
     if (!boxInsideFloor(s.box, floorplan)) {
       issues.push({ key: `${s.noun}-out:${s.id}`, category: 'space', ids: [s.id], message: `A ${s.noun} is outside the floor.` })
     }
+    const structure = boxToRect(s.box)
     for (const r of resolved) {
       const ids = [r.machine.id, s.id]
       const key = ids.join('|')
-      if (boxesOverlap(r.body, s.box)) {
+      if (rectsOverlap(r.shape, structure)) {
         issues.push({ key: `${s.noun}-on:${key}`, category: 'space', ids, message: `${r.type.name} stands on a ${s.noun}.` })
-      } else if (boxesOverlap(r.clearance, s.box)) {
+      } else if (rectsOverlap(r.clearance, structure)) {
         issues.push({ key: `${s.noun}-clear:${key}`, category: 'space', ids, message: `A ${s.noun} blocks the clearance of ${r.type.name}.` })
       }
     }
@@ -272,9 +289,9 @@ function spaceIssues(
   const issues: LayoutIssue[] = []
   for (const r of resolved) {
     const id = r.machine.id
-    if (!boxInsideFloor(r.body, floorplan)) {
+    if (!rectInsideFloor(r.shape, floorplan)) {
       issues.push({ key: `out:${id}`, category: 'space', ids: [id], message: `${r.type.name} is outside the floor.` })
-    } else if (!boxInsideFloor(r.clearance, floorplan)) {
+    } else if (!rectInsideFloor(r.clearance, floorplan)) {
       issues.push({ key: `edge:${id}`, category: 'space', ids: [id], message: `${r.type.name} needs more space from the wall.` })
     }
   }
@@ -290,13 +307,13 @@ function spaceIssues(
       const noClash =
         (runOf.has(a.machine.id) && runOf.get(a.machine.id) === runOf.get(b.machine.id)) ||
         linked(a.machine.id, b.machine.id)
-      if (boxesOverlap(a.body, b.body)) {
+      if (rectsOverlap(a.shape, b.shape)) {
         issues.push({ key: `overlap:${key}`, category: 'space', ids, message: `${a.type.name} overlaps ${b.type.name}.` })
       } else if (noClash) {
         continue
-      } else if (boxesOverlap(a.body, b.clearance)) {
+      } else if (rectsOverlap(a.shape, b.clearance)) {
         issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${a.type.name} blocks the clearance of ${b.type.name}.` })
-      } else if (boxesOverlap(b.body, a.clearance)) {
+      } else if (rectsOverlap(b.shape, a.clearance)) {
         issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${b.type.name} blocks the clearance of ${a.type.name}.` })
       }
     }

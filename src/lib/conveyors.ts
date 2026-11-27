@@ -51,7 +51,11 @@ export function conveyorPorts(m: Pick<MachineInstance, 'typeId' | 'length' | 'x'
     return { in: place(local.in), out: place(local.out) }
 }
 
-const sameDir = (a: Point, b: Point) => a.x === b.x && a.y === b.y
+/**
+ * True if two flow directions (unit vectors) point the same way. Compared with a tolerance:
+ * directions come from cos/sin of the rotation, so 90° gives x = 6e-17 rather than exactly 0.
+ */
+const sameDir = (a: Point, b: Point) => Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6
 const gap = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y)
 
 /** True if an output and an input meet end to end with goods flowing the same way. */

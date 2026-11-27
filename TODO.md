@@ -99,7 +99,7 @@ Decided: the floor name in the header is the project switcher (no new header but
 - [x] 42. Export / import a project as a JSON file (in the switcher menu), for sharing until the backend can sync.
 
 ### Fixes after the merge of PR #19 (free rotation)
-- [ ] Conveyor joins compare flow directions exactly, but rotation now uses cos/sin (cos 90° = 6e-17, not 0). Result: a corner no longer joins a belt turned 90°/270°, and a belt flowing up (270°) doesn't snap into a machine front. Fix: compare directions with a small tolerance (or round them).
+- [x] Conveyor joins compare flow directions exactly, but rotation now uses cos/sin (cos 90° = 6e-17, not 0). Result: a corner no longer joins a belt turned 90°/270°, and a belt flowing up (270°) doesn't snap into a machine front. Fix: compare directions with a small tolerance (or round them).
 
 ### Production flow (kickoff: "flow between jigs") — paused for now
 - Process order: give stations a step number (in the properties panel, or by clicking stations one after another in a "flow" mode). Several products/flows can come later.
@@ -139,7 +139,7 @@ Decided: the floor name in the header is the project switcher (no new header but
 ### Free rotation
 - [x] `rotation` is any angle in degrees (0–359) in types and schema; R and the "Rotate 15°" button turn in 15° steps; machines are drawn at their angle — on master (PR #19).
 - [x] Clash checks, clearance, reach and walking routes work with a rotated machine's enclosing upright box — on master (PR #19).
-- [ ] Limitation: the enclosing box is bigger than the machine at angles other than 0/90/180/270 (≈ 40 % wider at 45°), so angled machines get false "overlaps" / "blocks the clearance" warnings near their corners. Proper fix: rotated-rectangle checks (separating-axis test), ~0.5–1 day.
+- [x] Fixed (rotated-rectangle checks for clashes, clearance, floor edge and reach; walking routes, supply lines and box select still use the enclosing box). Was: the enclosing box is bigger than the machine at angles other than 0/90/180/270 (≈ 40 % wider at 45°), so angled machines get false "overlaps" / "blocks the clearance" warnings near their corners. Proper fix: rotated-rectangle checks (separating-axis test), ~0.5–1 day.
 - [ ] Angle field in the properties panel (type any angle) and/or a rotate handle on the selected machine; R could stay at 90° with 15° on Shift+R.
 
 ### Ease of use
