@@ -16,6 +16,7 @@ import { EXIT_MAX_DISTANCE, UTILITY_KINDS, utilityRadius } from '@/data/utilitie
 import { animateNodeOut } from '@/lib/animations'
 import { conveyorRuns } from '@/lib/conveyors'
 import { footprint, wallLength } from '@/lib/geometry'
+import { checkPlacement } from '@/lib/api/placementChecks'
 import { cn } from '@/lib/utils'
 import { loadingDockIssue, loadingDockPointAt } from '@/lib/loadingDocks'
 import { loadingBayIssue } from '@/lib/loadingBays'
@@ -574,11 +575,67 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
   const updateClearance = usePlanner((s) => s.updateMachineClearance)
   const updateDetails = usePlanner((s) => s.updateMachineDetails)
   const machines = usePlanner((s) => s.machines)
+  const floorplan = usePlanner((s) => s.floorplan)
   const singlePieceId = usePlanner((s) => s.singlePieceId)
   const run = useMemo(() => conveyorRuns(machines).runOf.get(machine.id), [machines, machine.id])
+  const [serverCheck, setServerCheck] = useState<{
+    state: 'checking' | 'passed' | 'blocked' | 'error'
+    message: string
+    snapshotKey: string
+  } | null>(null)
+  const snapshotKey = JSON.stringify({ floorplan, machines, selectedMachineId: machine.id })
+  const visibleServerCheck = serverCheck?.snapshotKey === snapshotKey ? serverCheck : null
 
   const type = machineTypeFor(machine)
   if (!type) return null
+
+  async function checkWithBackend() {
+    if (!floorplan) return
+    const checkedSnapshotKey = snapshotKey
+    setServerCheck({
+      state: 'checking',
+      message: 'Checking this placement with the backend…',
+      snapshotKey: checkedSnapshotKey,
+    })
+    try {
+      const otherMachines = machines.flatMap((other) => {
+        if (other.id === machine.id) return []
+        const otherType = machineTypeFor(other)
+        return otherType ? [{ machine: other, machineType: otherType }] : []
+      })
+      const result = await checkPlacement(floorplan, machine, type!, otherMachines)
+      if (result.canPlace) {
+        setServerCheck({
+          state: 'passed',
+          message: 'Backend check passed: this machine fits.',
+          snapshotKey: checkedSnapshotKey,
+        })
+        return
+      }
+
+      const reasons: Record<string, string> = {
+        OUTSIDE_HALL: 'The machine footprint is outside the hall.',
+        OUTSIDE_CLEARANCE: 'The required working clearance is outside the hall.',
+        MACHINE_OVERLAP: 'The machine overlaps another machine.',
+        CLEARANCE_BLOCKED: 'The machine or its working clearance conflicts with another machine.',
+        INVALID_INPUT: 'The backend could not validate this layout data.',
+      }
+      setServerCheck({
+        state: 'blocked',
+        message: reasons[result.code ?? ''] ?? `Backend check found a placement issue${result.code ? ` (${result.code})` : ''}.`,
+        snapshotKey: checkedSnapshotKey,
+      })
+    } catch (error) {
+      setServerCheck({
+        state: 'error',
+        message: error instanceof TypeError
+          ? 'Could not reach the backend. Make sure it is running, then try again.'
+          : error instanceof Error ? error.message : 'The backend placement check failed.',
+        snapshotKey: checkedSnapshotKey,
+      })
+    }
+  }
+
   const size = footprint(type, machine.rotation)
   const clearance = machine.clearance ?? type.clearance
   const height = machineHeight(machine)
@@ -625,6 +682,28 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
             </Field>
           ))}
         </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Button variant="outline" className="w-full" onClick={checkWithBackend} disabled={!floorplan || visibleServerCheck?.state === 'checking'}>
+          {visibleServerCheck?.state === 'checking' ? 'Checking with backend…' : 'Check placement with backend'}
+        </Button>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Checks the selected machine against the hall and other machines using the backend placement endpoint.
+        </p>
+        {visibleServerCheck && visibleServerCheck.state !== 'checking' && (
+          <p
+            role="status"
+            className={cn(
+              'rounded-md border p-2 text-xs',
+              visibleServerCheck.state === 'passed' && 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300',
+              visibleServerCheck.state === 'blocked' && 'border-warning/40 bg-warning/5 text-foreground',
+              visibleServerCheck.state === 'error' && 'border-destructive/40 bg-destructive/10 text-destructive',
+            )}
+          >
+            {visibleServerCheck.message}
+          </p>
+        )}
       </div>
 
       {issues.length > 0 && (
