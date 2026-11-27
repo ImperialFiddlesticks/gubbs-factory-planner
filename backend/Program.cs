@@ -23,6 +23,8 @@ builder.Services.AddScoped<PlacementService>();
 builder.Services.AddScoped<MachineTypeValidationService>();
 builder.Services.AddScoped<UtilityDemandService>();
 builder.Services.AddScoped<UtilityValidationService>();
+builder.Services.AddScoped<LoadingDockValidationService>();
+builder.Services.AddScoped<LoadingBayValidationService>();
 
 var app = builder.Build();
 

@@ -13,7 +13,9 @@ import { UTILITY_KINDS } from '@/data/utilities'
 import { autosave } from '@/lib/autosave'
 import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
-import type { Floorplan, LayoutComment, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall, Zone, ZoneKind } from '@/types'
+import type { Floorplan, LayoutComment, LoadingBay, LoadingDock, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall, Zone, ZoneKind } from '@/types'
+import { DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockIssue, loadingDockPerimeter, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
+import { loadingBayIssue } from '@/lib/loadingBays'
 
 export type NewFloorplanInput = Omit<Floorplan, 'id'>
 
@@ -26,6 +28,8 @@ export type Placing =
   | { kind: 'zone'; zoneKind: ZoneKind; start: Point | null }
   /** Drawing a wall: `start` is null until the first click. */
   | { kind: 'wall'; start: Point | null }
+  | { kind: 'loadingDock' }
+  | { kind: 'loadingBay'; loadingDockId: string; outline: Point[] }
 
 /** Which full-page screen is showing. */
 export type Screen = 'welcome' | 'wizard' | 'planner' | 'compare'
@@ -66,6 +70,10 @@ export interface Project {
   walls: Wall[]
   /** Missing in projects saved before zones existed. */
   zones?: Zone[]
+  /** Missing in projects saved before loading docks existed. */
+  loadingDocks?: LoadingDock[]
+  /** Missing in projects saved before loading bays existed. */
+  loadingBays?: LoadingBay[]
   comments: LayoutComment[]
   setup: SetupAnswers
 }
@@ -102,7 +110,9 @@ export interface PlannerState {
   pillars: Pillar[]
   walls: Wall[]
   zones: Zone[]
-  /** The selected item (machine, utility, pillar, wall or zone) when exactly one is selected, else null. */
+  loadingDocks: LoadingDock[]
+  loadingBays: LoadingBay[]
+  /** The selected item (machine, utility, pillar, wall, zone, loading dock or bay) when exactly one is selected, else null. */
   selectedId: string | null
   /** Everything selected (one item, or several from box select / Shift-click). */
   selectedIds: string[]
@@ -117,7 +127,7 @@ export interface PlannerState {
   conveyorLength: number
   /** Which canvas overlays are switched on; UI-only, autosaved as a preference. */
   layers: Record<LayerId, boolean>
-  /** Pillars and walls can't be selected or dragged; UI-only, not saved. */
+  /** Pillars, walls, and loading docks can't be selected or dragged; UI-only, not saved. */
   lockStructures: boolean
 
   /**
@@ -162,6 +172,16 @@ export interface PlannerState {
   /** Move or reshape a wall; the result is kept horizontal/vertical. */
   updateWall: (id: string, patch: Partial<Pick<Wall, 'start' | 'end' | 'thickness'>>) => void
   removeWall: (id: string) => void
+
+  addLoadingDock: (boundaryOffsetMm: number) => boolean
+  startPlacingLoadingDock: () => void
+  moveLoadingDock: (id: string, x: number, y: number) => void
+  updateLoadingDock: (id: string, patch: Partial<Pick<LoadingDock, 'name' | 'widthMm' | 'boundaryOffsetMm' | 'flowDirection'>>) => void
+  removeLoadingDock: (id: string) => void
+  addLoadingBay: (loadingDockId: string, outline: Point[]) => boolean
+  startPlacingLoadingBay: (loadingDockId: string) => void
+  setLoadingBayPoints: (outline: Point[]) => void
+  updateLoadingBay: (id: string, patch: Partial<Pick<LoadingBay, 'name' | 'loadingDockId' | 'outline'>>) => void
 
   /** Open a saved project; the one that was open is kept in `projects`. */
   openProject: (id: string) => void
@@ -254,6 +274,8 @@ export function currentProject(s: PlannerState): Project | null {
     pillars: s.pillars,
     walls: s.walls,
     zones: s.zones,
+    loadingDocks: s.loadingDocks,
+    loadingBays: s.loadingBays,
     comments: s.comments,
     setup: s.setup,
   }
@@ -274,6 +296,8 @@ function opened(p: Project): Partial<PlannerState> {
     pillars: p.pillars,
     walls: p.walls,
     zones: p.zones ?? [],
+    loadingDocks: p.loadingDocks ?? [],
+    loadingBays: p.loadingBays ?? [],
     comments: p.comments ?? [],
     selectedCommentId: null,
     commentDraft: null,
@@ -307,6 +331,8 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   pillars: [],
   walls: [],
   zones: [],
+  loadingDocks: [],
+  loadingBays: [],
   comments: [],
   selectedCommentId: null,
   commentDraft: null,
@@ -327,6 +353,8 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       pillars: pillars.map((p) => ({ id: crypto.randomUUID(), ...p })),
       walls: [],
       zones: [],
+      loadingDocks: [],
+      loadingBays: [],
       comments: [],
       selectedCommentId: null,
       commentDraft: null,
@@ -396,6 +424,8 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         pillars: [],
         walls: [],
         zones: [],
+        loadingDocks: [],
+        loadingBays: [],
         comments: [],
         selectedCommentId: null,
         commentDraft: null,
@@ -417,8 +447,21 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         y: Math.round((p.y * depth) / oldD),
       }))
       const floorplan = { ...s.floorplan, width, depth, ...(scaled && { outline: scaled }) }
+      const loadingBays = s.loadingBays.map((bay) => ({
+        ...bay,
+        outline: bay.outline.map((point) => ({
+          x: Math.round((point.x * width) / oldW),
+          y: Math.round((point.y * depth) / oldD),
+        })),
+      }))
+      const oldPerimeter = loadingDockPerimeter(s.floorplan)
+      const newPerimeter = loadingDockPerimeter(floorplan)
       return {
         floorplan,
+        loadingDocks: oldPerimeter > 0
+          ? s.loadingDocks.map((dock) => ({ ...dock, boundaryOffsetMm: dock.boundaryOffsetMm * newPerimeter / oldPerimeter }))
+          : s.loadingDocks,
+        loadingBays,
         // The walls moved, so keep exits on them.
         utilities: s.utilities.map((u) =>
           u.kind === 'exit' ? { ...u, ...placeUtility(u.kind, u.x, u.y, floorplan) } : u,
@@ -595,6 +638,81 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
+  addLoadingDock: (boundaryOffsetMm) => {
+    const s = get()
+    if (!s.floorplan) return false
+    const dock: LoadingDock = {
+      id: crypto.randomUUID(),
+      name: `Loading dock ${s.loadingDocks.length + 1}`,
+      widthMm: DEFAULT_LOADING_DOCK_WIDTH_MM,
+      boundaryOffsetMm,
+      flowDirection: 'two-way',
+    }
+    if (loadingDockIssue(dock, s.floorplan, s.loadingDocks)) return false
+    set({ loadingDocks: [...s.loadingDocks, dock], ...selection([dock.id]) })
+    return true
+  },
+
+  moveLoadingDock: (id, x, y) =>
+    set((s) => {
+      if (!s.floorplan) return s
+      const dock = s.loadingDocks.find((item) => item.id === id)
+      const position = nearestLoadingDockPosition(x, y, s.floorplan)
+      if (!dock || !position) return s
+      const moved = { ...dock, boundaryOffsetMm: position.offsetMm }
+      if (loadingDockIssue(moved, s.floorplan, s.loadingDocks)) return s
+      return { loadingDocks: s.loadingDocks.map((item) => item.id === id ? moved : item) }
+    }),
+
+  updateLoadingDock: (id, patch) =>
+    set((s) => {
+      if (!s.floorplan) return s
+      const dock = s.loadingDocks.find((item) => item.id === id)
+      if (!dock) return s
+      const updated = { ...dock, ...patch, name: patch.name?.trim() ?? dock.name }
+      if (loadingDockIssue(updated, s.floorplan, s.loadingDocks)) return s
+      return { loadingDocks: s.loadingDocks.map((item) => item.id === id ? updated : item) }
+    }),
+
+  removeLoadingDock: (id) =>
+    set((s) => {
+      const removedBays = new Set(s.loadingBays.filter((bay) => bay.loadingDockId === id).map((bay) => bay.id))
+      return {
+        loadingDocks: s.loadingDocks.filter((dock) => dock.id !== id),
+        loadingBays: s.loadingBays.filter((bay) => bay.loadingDockId !== id),
+        ...selection(s.selectedIds.filter((selected) => selected !== id && !removedBays.has(selected))),
+      }
+    }),
+
+  addLoadingBay: (loadingDockId, outline) => {
+    const s = get()
+    if (!s.floorplan) return false
+    const bay: LoadingBay = {
+      id: crypto.randomUUID(),
+      name: `Loading bay ${s.loadingBays.length + 1}`,
+      loadingDockId,
+      outline: outline.map(roundPoint),
+    }
+    if (loadingBayIssue(bay, s.floorplan, s.loadingDocks, s.loadingBays)) return false
+    set((state) => ({ loadingBays: [...state.loadingBays, bay], ...selection([bay.id]) }))
+    return true
+  },
+
+  updateLoadingBay: (id, patch) =>
+    set((s) => {
+      if (!s.floorplan) return s
+      const bay = s.loadingBays.find((item) => item.id === id)
+      if (!bay) return s
+      const updated = {
+        ...bay,
+        ...patch,
+        ...(patch.name !== undefined && { name: patch.name.trim() }),
+        ...(patch.outline && { outline: patch.outline.map(roundPoint) }),
+      }
+      if (loadingBayIssue(updated, s.floorplan, s.loadingDocks, s.loadingBays)) return s
+      return { loadingBays: s.loadingBays.map((item) => item.id === id ? updated : item) }
+    }),
+
   addZone: (kind, a, b) =>
     set((s) => {
       const info = ZONE_KINDS[kind]
@@ -654,12 +772,28 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       const by = <T extends { id: string; x: number; y: number }>(item: T) =>
         moving.has(item.id) ? { ...item, x: Math.round(item.x + dx), y: Math.round(item.y + dy) } : item
       const shift = (p: Point) => ({ x: Math.round(p.x + dx), y: Math.round(p.y + dy) })
+      const floorplan = s.floorplan
+      const loadingDocks = floorplan
+        ? s.loadingDocks.map((dock) => {
+            if (!moving.has(dock.id)) return dock
+            const point = loadingDockPointAt(floorplan, dock.boundaryOffsetMm)
+            const next = point && nearestLoadingDockPosition(point.x + dx, point.y + dy, floorplan)
+            return next ? { ...dock, boundaryOffsetMm: next.offsetMm } : dock
+          })
+        : s.loadingDocks
+      const loadingBays = s.loadingBays.map((bay) => moving.has(bay.id)
+        ? { ...bay, outline: bay.outline.map(shift) }
+        : bay)
+      if (floorplan && loadingDocks.some((dock) => moving.has(dock.id) && loadingDockIssue(dock, floorplan, loadingDocks))) return s
+      if (floorplan && loadingBays.some((bay) => moving.has(bay.id) && loadingBayIssue(bay, floorplan, loadingDocks, loadingBays))) return s
       return {
         machines: s.machines.map(by),
         pillars: s.pillars.map(by),
         utilities: s.utilities.map((u) =>
           moving.has(u.id) && s.floorplan ? { ...u, ...placeUtility(u.kind, u.x + dx, u.y + dy, s.floorplan) } : u,
         ),
+        loadingDocks,
+        loadingBays,
         walls: s.walls.map((w) => (moving.has(w.id) ? { ...w, start: shift(w.start), end: shift(w.end) } : w)),
         zones: s.zones.map(by),
       }
@@ -668,13 +802,16 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   removeItems: (ids) =>
     set((s) => {
       const gone = new Set(ids)
+      const removedBays = new Set(s.loadingBays.filter((bay) => gone.has(bay.id) || gone.has(bay.loadingDockId)).map((bay) => bay.id))
       return {
         machines: s.machines.filter((m) => !gone.has(m.id)),
         utilities: s.utilities.filter((u) => !gone.has(u.id)),
         pillars: s.pillars.filter((p) => !gone.has(p.id)),
         walls: s.walls.filter((w) => !gone.has(w.id)),
         zones: s.zones.filter((z) => !gone.has(z.id)),
-        ...selection(s.selectedIds.filter((x) => !gone.has(x))),
+        loadingDocks: s.loadingDocks.filter((dock) => !gone.has(dock.id)),
+        loadingBays: s.loadingBays.filter((bay) => !removedBays.has(bay.id)),
+        ...selection(s.selectedIds.filter((x) => !gone.has(x) && !removedBays.has(x))),
       }
     }),
 
@@ -698,7 +835,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   toggleLockStructures: () =>
     set((s) => {
       const lock = !s.lockStructures
-      const structures = new Set([...s.pillars, ...s.walls].map((x) => x.id))
+      const structures = new Set([...s.pillars, ...s.walls, ...s.loadingDocks, ...s.loadingBays].map((x) => x.id))
       return { lockStructures: lock, ...(lock && selection(s.selectedIds.filter((x) => !structures.has(x)))) }
     }),
 
@@ -788,6 +925,23 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         ? { placing: null }
         : { placing: { kind: 'wall', start: null }, ...selection([]) },
     ),
+
+  startPlacingLoadingDock: () =>
+    set((s) =>
+      s.placing?.kind === 'loadingDock'
+        ? { placing: null }
+        : { placing: { kind: 'loadingDock' }, ...selection([]) },
+    ),
+
+  startPlacingLoadingBay: (loadingDockId) =>
+    set((s) =>
+      s.placing?.kind === 'loadingBay' && s.placing.loadingDockId === loadingDockId
+        ? { placing: null }
+        : { placing: { kind: 'loadingBay', loadingDockId, outline: [] }, ...selection([]) },
+    ),
+
+  setLoadingBayPoints: (outline) =>
+    set((s) => s.placing?.kind === 'loadingBay' ? { placing: { ...s.placing, outline: outline.map(roundPoint) } } : s),
 
   startPlacingZone: (zoneKind) =>
     set((s) =>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Truck } from 'lucide-react'
 import { CommitInput } from '@/components/CommitInput'
 import { PanelHeading } from '@/components/PanelHeading'
 import { UTILITY_ICONS } from '@/components/utilityIcons'
@@ -10,6 +10,7 @@ import { CATALOG, getMachineType } from '@/data/catalog'
 import { EQUIPMENT_CATEGORIES, type EquipmentCategoryId } from '@/data/categories'
 import { isValidConveyorLength } from '@/data/conveyors'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
+import { DEFAULT_LOADING_DOCK_WIDTH_MM } from '@/lib/loadingDocks'
 import { ZONE_KIND_LIST, type ZoneKindInfo } from '@/data/zones'
 import { EXIT_MAX_DISTANCE, UTILITY_LIST, type UtilityKindInfo } from '@/data/utilities'
 import { cn } from '@/lib/utils'
@@ -55,8 +56,10 @@ export function CatalogPanel({
   const visibleUtilities = UTILITY_LIST.filter((info) => matches(info.name, info.kind))
   const showPillar = matches('pillar', 'structure')
   const showWall = matches('wall', 'structure')
+  const showLoadingDock = matches('loading dock', 'dock', 'structure')
+  const showLoadingBay = matches('loading bay', 'bay', 'staging area', 'structure')
   const visibleZones = ZONE_KIND_LIST.filter((info) => matches(info.name, 'zone', 'area', info.description))
-  const showStructures = showPillar || showWall || visibleZones.length > 0
+  const showStructures = showPillar || showWall || showLoadingDock || showLoadingBay || visibleZones.length > 0
 
   if (collapsed) {
     return (
@@ -137,6 +140,8 @@ export function CatalogPanel({
           <div className="space-y-2">
             {showPillar && <PillarItem />}
             {showWall && <WallItem />}
+            {showLoadingDock && <LoadingDockItem />}
+            {showLoadingBay && <LoadingBayItem />}
             {visibleZones.map((info) => (
               <ZoneItem key={info.kind} info={info} />
             ))}
@@ -360,6 +365,67 @@ function WallItem() {
         {active && <Badge className="mt-1">Drawing</Badge>}
       </span>
     </button>
+  )
+}
+
+/** A loading dock tool, placed by clicking near the outer boundary. */
+function LoadingDockItem() {
+  const startPlacing = usePlanner((s) => s.startPlacingLoadingDock)
+  const active = usePlanner((s) => s.placing?.kind === 'loadingDock')
+
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={startPlacing}
+      className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}
+    >
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-sm border-y-2 border-emerald-500 bg-background" aria-hidden>
+        <Truck className="size-4 text-emerald-600" />
+      </span>
+      <span>
+        <span className="block text-sm font-medium">Loading dock</span>
+        <span className="block text-xs text-muted-foreground">Outer boundary · {metres(DEFAULT_LOADING_DOCK_WIDTH_MM)} m opening</span>
+        {active && <Badge className="mt-1">Placing</Badge>}
+      </span>
+    </button>
+  )
+}
+
+function LoadingBayItem() {
+  const docks = usePlanner((s) => s.loadingDocks)
+  const placing = usePlanner((s) => s.placing)
+  const startPlacing = usePlanner((s) => s.startPlacingLoadingBay)
+  const [dockId, setDockId] = useState(docks[0]?.id ?? '')
+  const selectedDockId = docks.some((dock) => dock.id === dockId) ? dockId : (docks[0]?.id ?? '')
+  const active = placing?.kind === 'loadingBay' && placing.loadingDockId === selectedDockId
+
+  return (
+    <div className={cn(cardClass, 'space-y-2', active && activeClass)}>
+      <div className="flex items-center gap-2">
+        <Truck className="size-5 shrink-0 text-emerald-600" aria-hidden />
+        <span className="text-sm font-medium">Loading bay</span>
+      </div>
+      {docks.length === 0 ? (
+        <p className="text-xs text-muted-foreground">Add a loading dock before creating its outdoor bay.</p>
+      ) : (
+        <>
+          <label className="sr-only" htmlFor="loading-bay-dock">Connected loading dock</label>
+          <select
+            id="loading-bay-dock"
+            value={selectedDockId}
+            onChange={(event) => setDockId(event.target.value)}
+            className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+          >
+            {docks.map((dock) => <option key={dock.id} value={dock.id}>{dock.name}</option>)}
+          </select>
+          <button type="button" aria-pressed={active} onClick={() => startPlacing(selectedDockId)} className={cn(cardClass, 'py-2')}>
+            <span className="block text-xs text-muted-foreground">Click outline vertices; click the first point to finish.</span>
+            {active && <Badge className="mt-1">Drawing bay</Badge>}
+          </button>
+        </>
+      )}
+    </div>
   )
 }
 

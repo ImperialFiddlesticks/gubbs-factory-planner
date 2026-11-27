@@ -17,11 +17,13 @@ import { animateNodeOut } from '@/lib/animations'
 import { conveyorRuns } from '@/lib/conveyors'
 import { footprint, wallLength } from '@/lib/geometry'
 import { cn } from '@/lib/utils'
+import { loadingDockIssue, loadingDockPointAt } from '@/lib/loadingDocks'
+import { loadingBayIssue } from '@/lib/loadingBays'
 import { findLayoutIssues, powerAssignments, type LayoutIssue } from '@/lib/validation'
 import { machineAutoName, machineName } from '@/lib/machineLabels'
 import { usePlanner } from '@/store'
 import { CANVAS } from '@/theme'
-import type { MachineInstance, Pillar, Utility, Wall, Zone, ZoneKind } from '@/types'
+import type { LoadingBay, LoadingDock, MachineInstance, Pillar, Utility, Wall, Zone, ZoneKind } from '@/types'
 
 export function PropertiesPanel() {
   const machines = usePlanner((s) => s.machines)
@@ -233,19 +235,26 @@ function Selection({ issues }: { issues: LayoutIssue[] }) {
   const pillar = usePlanner((s) => s.pillars.find((p) => p.id === s.selectedId))
   const wall = usePlanner((s) => s.walls.find((w) => w.id === s.selectedId))
   const zone = usePlanner((s) => s.zones.find((z) => z.id === s.selectedId))
+  const loadingDock = usePlanner((s) => s.loadingDocks.find((dock) => dock.id === s.selectedId))
+  const loadingBay = usePlanner((s) => s.loadingBays.find((bay) => bay.id === s.selectedId))
   const count = usePlanner((s) => s.selectedIds.length)
   const floorplan = usePlanner((s) => s.floorplan)
   const machines = usePlanner((s) => s.machines)
   const utilities = usePlanner((s) => s.utilities)
   const pillars = usePlanner((s) => s.pillars)
   const walls = usePlanner((s) => s.walls)
+  const loadingBays = usePlanner((s) => s.loadingBays)
   const stationTarget = usePlanner((s) => s.setup.stationTarget)
+  const loadingDockCount = usePlanner((s) => s.loadingDocks.length)
+  const loadingBayCount = loadingBays.length
   if (count > 1) return <MultiProperties />
   if (machine) return <MachineProperties machine={machine} issues={issues.filter((issue) => issue.ids.includes(machine.id))} />
   if (utility) return <UtilityProperties utility={utility} />
   if (pillar) return <PillarProperties pillar={pillar} />
   if (wall) return <WallProperties wall={wall} />
   if (zone) return <ZoneProperties key={zone.id} zone={zone} />
+  if (loadingDock) return <LoadingDockProperties key={loadingDock.id} dock={loadingDock} />
+  if (loadingBay) return <LoadingBayProperties key={loadingBay.id} bay={loadingBay} />
   return (
     <div className="space-y-3">
       {floorplan && (
@@ -255,7 +264,7 @@ function Selection({ issues }: { issues: LayoutIssue[] }) {
             {formatMetres(floorplan.width)} × {formatMetres(floorplan.depth)} m
           </div>
           <div className="mt-2 text-xs">
-            {machines.length} / {stationTarget} machines · {utilities.length} utilities · {pillars.length + walls.length} structures
+            {machines.length} / {stationTarget} machines · {utilities.length} utilities · {pillars.length + walls.length} structures · {loadingDockCount} loading docks · {loadingBayCount} loading bays
           </div>
         </div>
       )}
@@ -273,6 +282,8 @@ function MultiProperties() {
   const utilities = usePlanner((s) => s.utilities)
   const pillars = usePlanner((s) => s.pillars)
   const walls = usePlanner((s) => s.walls)
+  const loadingDocks = usePlanner((s) => s.loadingDocks)
+  const loadingBays = usePlanner((s) => s.loadingBays)
   const removeItems = usePlanner((s) => s.removeItems)
   const select = usePlanner((s) => s.select)
 
@@ -283,6 +294,8 @@ function MultiProperties() {
     [count(utilities), 'utility', 'utilities'],
     [count(pillars), 'pillar', 'pillars'],
     [count(walls), 'wall', 'walls'],
+    [count(loadingDocks), 'loading dock', 'loading docks'],
+    [count(loadingBays), 'loading bay', 'loading bays'],
   ] as const
 
   return (
@@ -399,6 +412,155 @@ function WarningsList({ issues }: { issues: LayoutIssue[] }) {
           </ul>
         </details>
       ))}
+    </div>
+  )
+}
+
+function LoadingDockProperties({ dock }: { dock: LoadingDock }) {
+  const floorplan = usePlanner((s) => s.floorplan)
+  const docks = usePlanner((s) => s.loadingDocks)
+  const update = usePlanner((s) => s.updateLoadingDock)
+  const remove = usePlanner((s) => s.removeLoadingDock)
+  if (!floorplan) return null
+
+  const point = loadingDockPointAt(floorplan, dock.boundaryOffsetMm)
+  const issue = loadingDockIssue(dock, floorplan, docks)
+  const candidateIsValid = (patch: Partial<LoadingDock>) =>
+    loadingDockIssue({ ...dock, ...patch }, floorplan, docks) === null
+  const directions = [
+    { value: 'inbound', label: 'Inbound' },
+    { value: 'outbound', label: 'Outbound' },
+    { value: 'two-way', label: 'Two-way' },
+  ] as const
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-sm font-semibold">{dock.name}</div>
+        <div className="text-xs text-muted-foreground">
+          Outer boundary · {point ? `${formatMetres(point.x)}, ${formatMetres(point.y)} m` : 'position invalid'}
+        </div>
+      </div>
+      <Field id="loading-dock-name" label="Name">
+        <CommitText id="loading-dock-name" className="h-8" value={dock.name} onCommit={(name) => update(dock.id, { name: name.trim() || dock.name })} />
+      </Field>
+      <Field id="loading-dock-width" label="Opening width (m)">
+        <CommitInput
+          id="loading-dock-width"
+          className="h-8"
+          min={0.001}
+          step={0.1}
+          value={dock.widthMm / 1000}
+          isValid={(metres) => candidateIsValid({ widthMm: Math.round(metres * 1000) })}
+          onCommit={(metres) => update(dock.id, { widthMm: Math.round(metres * 1000) })}
+        />
+        <p className="mt-1 text-[11px] text-muted-foreground">The full opening must fit on the boundary without overlapping another dock.</p>
+      </Field>
+      <Field id="loading-dock-offset" label="Boundary offset (m)">
+        <CommitInput
+          id="loading-dock-offset"
+          className="h-8"
+          min={0}
+          step={0.1}
+          value={dock.boundaryOffsetMm / 1000}
+          isValid={(metres) => candidateIsValid({ boundaryOffsetMm: Math.round(metres * 1000) })}
+          onCommit={(metres) => update(dock.id, { boundaryOffsetMm: Math.round(metres * 1000) })}
+        />
+        <p className="mt-1 text-[11px] text-muted-foreground">Measured along the ordered outer outline from its first corner.</p>
+      </Field>
+      <div className="space-y-1.5">
+        <span className="text-xs text-muted-foreground">Material flow</span>
+        <div className="grid grid-cols-3 gap-1" role="radiogroup" aria-label="Material flow direction">
+          {directions.map((direction) => (
+            <button
+              key={direction.value}
+              type="button"
+              role="radio"
+              aria-checked={dock.flowDirection === direction.value}
+              onClick={() => update(dock.id, { flowDirection: direction.value })}
+              className={cn(
+                'rounded-md border px-1.5 py-1 text-xs transition-colors hover:bg-muted',
+                dock.flowDirection === direction.value && 'border-accent bg-accent/15 font-medium',
+              )}
+            >
+              {direction.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {issue && <p className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{issue}</p>}
+      <Button variant="ghost" className="w-full text-muted-foreground hover:text-destructive" onClick={() => remove(dock.id)}>
+        Delete loading dock
+      </Button>
+    </div>
+  )
+}
+
+function LoadingBayProperties({ bay }: { bay: LoadingBay }) {
+  const floorplan = usePlanner((s) => s.floorplan)
+  const docks = usePlanner((s) => s.loadingDocks)
+  const bays = usePlanner((s) => s.loadingBays)
+  const update = usePlanner((s) => s.updateLoadingBay)
+  const remove = usePlanner((s) => s.removeItems)
+  if (!floorplan) return null
+
+  const issue = loadingBayIssue(bay, floorplan, docks, bays)
+  const candidateIsValid = (outline: LoadingBay['outline']) =>
+    loadingBayIssue({ ...bay, outline }, floorplan, docks, bays) === null
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-sm font-semibold">{bay.name}</div>
+        <div className="text-xs text-muted-foreground">Outdoor vehicle staging area</div>
+      </div>
+      <Field id="loading-bay-name" label="Name">
+        <CommitText id="loading-bay-name" className="h-8" value={bay.name} onCommit={(name) => update(bay.id, { name: name.trim() || bay.name })} />
+      </Field>
+      <Field id="loading-bay-dock" label="Connected loading dock">
+        <select
+          id="loading-bay-dock"
+          value={bay.loadingDockId}
+          onChange={(event) => update(bay.id, { loadingDockId: event.target.value })}
+          className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
+        >
+          {docks.map((dock) => <option key={dock.id} value={dock.id}>{dock.name}</option>)}
+        </select>
+      </Field>
+      <div className="space-y-2">
+        <span className="text-xs text-muted-foreground">Outline points (m)</span>
+        {bay.outline.map((point, index) => (
+          <div key={index} className="grid grid-cols-2 gap-2">
+            {(['x', 'y'] as const).map((axis) => (
+              <Field key={axis} id={`loading-bay-${index}-${axis}`} label={`P${index + 1} ${axis.toUpperCase()}`}>
+                <CommitInput
+                  id={`loading-bay-${index}-${axis}`}
+                  className="h-8"
+                  step={0.1}
+                  value={point[axis] / 1000}
+                  isValid={(metres) => {
+                    const outline = bay.outline.map((item, itemIndex) => itemIndex === index
+                      ? { ...item, [axis]: Math.round(metres * 1000) }
+                      : item)
+                    return candidateIsValid(outline)
+                  }}
+                  onCommit={(metres) => {
+                    const outline = bay.outline.map((item, itemIndex) => itemIndex === index
+                      ? { ...item, [axis]: Math.round(metres * 1000) }
+                      : item)
+                    update(bay.id, { outline })
+                  }}
+                />
+              </Field>
+            ))}
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] text-muted-foreground">Bay outlines may extend outside the hall. Drag to move; edit vertices to resize.</p>
+      {issue && <p className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{issue}</p>}
+      <Button variant="ghost" className="w-full text-muted-foreground hover:text-destructive" onClick={() => remove([bay.id])}>
+        Delete loading bay
+      </Button>
     </div>
   )
 }
