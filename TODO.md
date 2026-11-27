@@ -98,16 +98,20 @@ Decided: the floor name in the header is the project switcher (no new header but
 - [x] 41. Compare screen: pick two projects; both floors drawn side by side at the same scale (view only); a table of key figures (stations, warnings, floor area used, longest walk to an exit, total power, conveyor length) with the better value highlighted; an "Open" button under each.
 - [x] 42. Export / import a project as a JSON file (in the switcher menu), for sharing until the backend can sync.
 
+### Fixes after the merge of PR #19 (free rotation)
+- [ ] Conveyor joins compare flow directions exactly, but rotation now uses cos/sin (cos 90° = 6e-17, not 0). Result: a corner no longer joins a belt turned 90°/270°, and a belt flowing up (270°) doesn't snap into a machine front. Fix: compare directions with a small tolerance (or round them).
+
 ### Production flow (kickoff: "flow between jigs") — paused for now
 - Process order: give stations a step number (in the properties panel, or by clicking stations one after another in a "flow" mode). Several products/flows can come later.
 - Flow view: arrows from station to station in process order, drawn along the walking routes (around walls and machines), with each leg's distance and the total travel distance. Conveyor runs between stations count as part of the flow. A static view, not a simulation — shown as its own layer.
 - Figures: total flow distance (also in the compare table), and the longest leg highlighted, so a tangled layout is easy to spot.
 
 ### Object details (kickoff: "work performed in each jig", "colour, text, dimensions")
-- Name/label per placed item (e.g. "M1", "Jig 3 – wing spar"), shown on the canvas instead of the type name; auto-numbered by type when placed ("CNC 01", "Bench 02").
-- Work description per item (free text) and number of people working there; shown in the properties panel and as a tooltip on hover.
-- Editable size: width/depth (and height) per placed item, starting from the catalog values.
-- Colour per item (a small palette), e.g. to mark which product line it belongs to.
+- [x] Auto-numbered short names by type on the canvas ("CNC 01", "BELT 02") — on master (PR #19, `machineLabels.ts`).
+- [x] Editable size per placed item: width, depth, height (height not used by 2D checks yet) and clearance per side — on master (PR #19).
+- [ ] Own name/label per item (e.g. "M1", "Jig 3 – wing spar"), replacing the auto name when set.
+- [ ] Work description per item (free text) and number of people working there; shown in the properties panel and as a tooltip on hover.
+- [ ] Colour per item (a small palette), e.g. to mark which product line it belongs to.
 
 ### Zones (kickoff: "mark floor areas with colours and text"; replaces keep-clear aisles and height limits)
 - Draw a zone as a rectangle (click-drag), with a name, colour and type; the label is drawn in the zone (like "Zon 2: Svets & plåt" in the example layout).
@@ -133,8 +137,10 @@ Decided: the floor name in the header is the project switcher (no new header but
 - Export the floor as a PNG and/or PDF, with a title block (name, size, date), scale bar and a legend of items.
 
 ### Free rotation
-- Machines can stand at any angle: a rotate handle on the selected machine and an angle field in the properties panel; snaps every 15° (stronger at 0/90/180/270), Shift for any angle; R / Rotate button still turn 90°. Conveyors stay at 90° steps for now.
-- Needs: `rotation` becomes any angle in degrees (backend contract change — tell the backend team); clashes, clearance, inside-floor, utility reach, walking routes, supply lines, machine fronts and box select all work with rotated rectangles instead of upright boxes. Estimate ~1–1.5 days.
+- [x] `rotation` is any angle in degrees (0–359) in types and schema; R and the "Rotate 15°" button turn in 15° steps; machines are drawn at their angle — on master (PR #19).
+- [x] Clash checks, clearance, reach and walking routes work with a rotated machine's enclosing upright box — on master (PR #19).
+- [ ] Limitation: the enclosing box is bigger than the machine at angles other than 0/90/180/270 (≈ 40 % wider at 45°), so angled machines get false "overlaps" / "blocks the clearance" warnings near their corners. Proper fix: rotated-rectangle checks (separating-axis test), ~0.5–1 day.
+- [ ] Angle field in the properties panel (type any angle) and/or a rotate handle on the selected machine; R could stay at 90° with 15° on Shift+R.
 
 ### Ease of use
 - Alignment guides: while dragging, dashed guide lines appear when a machine lines up with another's edge or centre, and it snaps gently onto them; a distance label (e.g. "1.2 m") shows the gap to the nearest neighbour.
@@ -145,10 +151,8 @@ Decided: the floor name in the header is the project switcher (no new header but
 - Wizard "Edit an existing layout": open a saved project or import a project file.
 
 ### Comments (working together)
-- Add a comment to anything on the plan: a machine, utility, structure, zone, or a spot on the empty floor.
-- On the canvas a comment shows only as a small chat-bubble icon next to what it's about; clicking it opens the full comment.
-- An "All comments" panel lists every comment, so the whole plan's discussion can be reviewed in one place; clicking one selects and shows its item.
-- To decide when planning: author name on each comment, replies (threads), marking a comment resolved, and how comments are shared between people (needs the backend to sync; local-only until then).
+- [x] Comments on an item or pinned to a spot on the floor, with author, time and open/resolved status; markers on the canvas; a "Discussion" section listing them; saved with the project in the browser — on master (PR #19).
+- [ ] Sharing between people (needs the backend to sync plans); replies/threads if wanted.
 
 ### Open floor shapes
 - A floor side can be marked open (no wall) where the hall continues into an adjoining area, e.g. a corridor or another hall. Drawn as a dashed edge; machines may not cross it, but walking routes can leave through it (counts like a wide exit), and exits don't snap to it. Chosen per side in the wizard's floor step and editable in the planner.
