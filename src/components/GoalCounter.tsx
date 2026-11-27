@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { CircleCheck, TriangleAlert } from 'lucide-react'
-import { getMachineType } from '@/data/catalog'
+import { isStation } from '@/data/catalog'
 import { findLayoutIssues } from '@/lib/validation'
 import { cn } from '@/lib/utils'
 import { usePlanner } from '@/store'
@@ -19,8 +19,8 @@ export function GoalCounter() {
   const zones = usePlanner((s) => s.zones)
   const target = usePlanner((s) => s.setup.stationTarget)
 
-  // Conveyor pieces link stations; they don't count as stations themselves.
-  const placed = machines.filter((m) => !getMachineType(m.typeId)?.conveyor).length
+  // Conveyor pieces and storage (cabinets, shelves, pallets) aren't stations themselves.
+  const placed = machines.filter((m) => isStation(m.typeId)).length
   const warnings = floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls, zones }).length : 0
   const reached = placed >= target && warnings === 0
 

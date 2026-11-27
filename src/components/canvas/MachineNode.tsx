@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import Konva from 'konva'
-import { Circle, Group, Label, Rect, Tag, Text } from 'react-konva'
+import { Circle, Group, Label, Line, Rect, Tag, Text } from 'react-konva'
 import { ConveyorBody } from '@/components/canvas/ConveyorBody'
 import { UtilityIcon } from '@/components/canvas/UtilityNode'
 import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
-import { getMachineType, machineTypeFor } from '@/data/catalog'
+import { getMachineType, machinePeople, machineTypeFor } from '@/data/catalog'
 import { snapShift } from '@/lib/conveyors'
 import { clearanceRect, footprint } from '@/lib/geometry'
 import { machineName, machineShortName } from '@/lib/machineLabels'
@@ -206,7 +206,106 @@ function MachineMark({ typeId, w, h }: { typeId: string; w: number; h: number })
         return <Rect x={-w * 0.3} y={-h * 0.18} width={w * 0.6} height={h * 0.36} stroke="white" strokeWidth={1} opacity={0.7} listening={false} />
     }
 
-    return null
+    return <EquipmentMark typeId={typeId} w={w} h={h} />
+}
+
+/**
+ * Faint white line marks for the assembly, welding and storage equipment, so types can be told
+ * apart at a glance. Drawn in the item's own frame (centred, front at the bottom), behind the label.
+ */
+function EquipmentMark({ typeId, w, h }: { typeId: string; w: number; h: number }) {
+    const line = { stroke: 'white', strokeWidth: 1, strokeScaleEnabled: false, opacity: 0.55, listening: false } as const
+    switch (typeId) {
+        // Jig: an inner frame with cross members, where the part is held.
+        case 'assembly-jig-large':
+        case 'assembly-jig-small':
+            return (
+                <Group listening={false}>
+                    <Rect x={-w * 0.4} y={-h * 0.36} width={w * 0.8} height={h * 0.72} {...line} />
+                    {[-0.2, 0, 0.2].map((t) => (
+                        <Line key={t} points={[w * t, -h * 0.36, w * t, h * 0.36]} {...line} />
+                    ))}
+                </Group>
+            )
+        // Bench: a vice at the front-left corner.
+        case 'work-bench':
+            return <Rect x={-w * 0.44} y={h * 0.05} width={w * 0.12} height={h * 0.3} fill="white" opacity={0.6} listening={false} />
+        // Table: a dashed inner edge (worked from all round).
+        case 'assembly-table':
+        case 'quality-table':
+            return <Rect x={-w * 0.42} y={-h * 0.36} width={w * 0.84} height={h * 0.72} dash={[4, 3]} {...line} />
+        // Drill: the spindle, seen from above.
+        case 'pillar-drill':
+            return <Circle radius={Math.min(w, h) * 0.22} {...line} />
+        // Saw: the blade along the length.
+        case 'band-saw':
+            return <Line points={[-w * 0.42, 0, w * 0.42, 0]} {...line} strokeWidth={2} />
+        // Welding table: the grid of fixture holes.
+        case 'welding-table':
+            return (
+                <Group listening={false}>
+                    {[-0.3, 0, 0.3].flatMap((x) =>
+                        [-0.2, 0.2].map((y) => <Circle key={`${x}${y}`} x={w * x} y={h * y} radius={Math.max(1.5, h * 0.06)} fill="white" opacity={0.55} />),
+                    )}
+                </Group>
+            )
+        // Grinding bench: two wheels.
+        case 'grinding-bench':
+            return (
+                <Group listening={false}>
+                    <Circle x={-w * 0.2} radius={h * 0.22} {...line} />
+                    <Circle x={w * 0.2} radius={h * 0.22} {...line} />
+                </Group>
+            )
+        // Press brake: the long upper beam and the die at the front.
+        case 'press-brake':
+            return (
+                <Group listening={false}>
+                    <Rect x={-w * 0.44} y={-h * 0.25} width={w * 0.88} height={h * 0.12} fill="white" opacity={0.5} />
+                    <Line points={[-w * 0.44, h * 0.15, w * 0.44, h * 0.15]} {...line} strokeWidth={2} />
+                </Group>
+            )
+        // Small press: the ram over the bed (like the big press).
+        case 'hydraulic-press-30t':
+            return <Rect x={-w * 0.15} y={-h * 0.2} width={w * 0.3} height={h * 0.3} {...line} />
+        // Cabinet / trolley: drawer lines.
+        case 'tool-cabinet':
+        case 'tool-trolley':
+            return (
+                <Group listening={false}>
+                    {[-0.15, 0.05, 0.25].map((y) => (
+                        <Line key={y} points={[-w * 0.4, h * y, w * 0.4, h * y]} {...line} />
+                    ))}
+                </Group>
+            )
+        // Shelf: the bays between uprights.
+        case 'storage-shelf':
+            return (
+                <Group listening={false}>
+                    {[-1 / 6, 1 / 6].map((x) => (
+                        <Line key={x} points={[w * x, -h * 0.45, w * x, h * 0.45]} {...line} />
+                    ))}
+                </Group>
+            )
+        // Pallet spot: the classic crossed box.
+        case 'eur-pallet':
+            return (
+                <Group listening={false}>
+                    <Line points={[-w * 0.45, -h * 0.45, w * 0.45, h * 0.45]} {...line} />
+                    <Line points={[-w * 0.45, h * 0.45, w * 0.45, -h * 0.45]} {...line} />
+                </Group>
+            )
+        // Chemicals: a hazard triangle.
+        case 'chemicals-cabinet': {
+            const r = Math.min(w, h) * 0.3
+            return <Line points={[0, -r, r * 0.9, r * 0.6, -r * 0.9, r * 0.6]} closed {...line} />
+        }
+        // Washer: the basin.
+        case 'parts-washer':
+            return <Rect x={-w * 0.3} y={-h * 0.3} width={w * 0.6} height={h * 0.45} cornerRadius={3} {...line} />
+        default:
+            return null
+    }
 }
 
 /** Tooltip above a hovered machine: its name and type, and the work done there if set. */
@@ -214,10 +313,12 @@ function MachineHoverLabel({ machine, name, fit }: { machine: MachineInstance; n
     const type = machineTypeFor(machine)
     if (!type) return null
     const height = footprint(type, machine.rotation).depth * SCALE
+    // Its own number, or the typical number for its type (e.g. 3 at a large jig).
+    const people = machinePeople(machine)
     const lines = [
         name === type.name ? name : `${name} · ${type.name}`,
         machine.work,
-        machine.people !== undefined && `${machine.people} ${machine.people === 1 ? 'person' : 'people'}`,
+        people !== undefined && `${people} ${people === 1 ? 'person' : 'people'}`,
     ].filter(Boolean)
     return (
         <Group y={-height / 2} scaleX={1 / fit} scaleY={1 / fit} listening={false}>

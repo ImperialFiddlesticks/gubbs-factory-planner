@@ -124,8 +124,10 @@ Decided: a zone is selected and moved by its name tag (dragging elsewhere inside
 - [x] 47. Rules: a machine body in a keep-clear aisle → "CNC 01 stands in the keep-clear aisle "Main aisle"."; a machine taller than a height limit it stands under → "CNC 01 (3.2 m) is taller than the 3.0 m height limit "Mezzanine"."
 
 ### Equipment library (assembly first)
-- Assembly-shop equipment, the hardest case for Saab: assembly jig (large, 2–3 people, clearance all round), work bench, tool cabinet/trolley, storage shelf, EUR-pallet spot, chemicals cabinet, quality-control table, parts washer, welding table, press brake, compressor — sizes from the example layout's legend.
-- Machines get a height (for height-limit zones). Catalog search once the list is long.
+- [x] Machines have a typical height (done with zones). Catalog search is on master (teammates).
+- [x] 48. New equipment (sizes from the example layout's legend) in seven categories, two new — Welding & sheet metal, Storage & logistics: assembly jig large (6 × 3 m) and small (3 × 2 m), heavy work bench, assembly table, quality-control table; pillar drill, metal band saw; welding table, grinding bench, press brake; hydraulic press 30 t; tool cabinet, tool trolley, storage shelf / pallet rack, EUR-pallet spot, chemicals cabinet; parts washer. Each with size, clearance, power, water/fire needs and height.
+- [x] 49. Typical people per station (jigs 2–3, benches 1), used when the station has no own number. Storage items (cabinets, trolleys, shelves, pallets) don't count as stations in the goal counter or compare table, like conveyors.
+- [x] 50. Canvas: short names for the new types ("JIG 01", "BENCH 02", "SHELF 01") and a simple mark on each so types are told apart at a glance (jig frame, bench vice, pallet cross, shelf stripes, …).
 
 ### View and measure (kickoff: "pan, zoom", "measure between points")
 - Zoom (scroll, +/− in the map toolbar, zoom level, fit-to-screen) and pan (drag with Space held or the middle mouse button).

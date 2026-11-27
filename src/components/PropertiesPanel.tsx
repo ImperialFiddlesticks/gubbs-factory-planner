@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { machineHeight, machineTypeFor } from '@/data/catalog'
+import { machineHeight, machinePeople, machineTypeFor } from '@/data/catalog'
 import { MACHINE_COLOURS } from '@/data/machineColours'
 import { MIN_ZONE_SIZE, ZONE_KIND_LIST, ZONE_KINDS, machinesInZone, zoneArea } from '@/data/zones'
 import { isValidConveyorLength } from '@/data/conveyors'
@@ -610,9 +610,9 @@ function StationDetails({
             className="h-8"
             min={0}
             step={1}
-            value={machine.people ?? 0}
+            value={machinePeople(machine) ?? 0}
             isValid={(n) => Number.isInteger(n) && n >= 0 && n <= 99}
-            onCommit={(n) => onChange({ people: n === 0 ? undefined : n })}
+            onCommit={(n) => onChange({ people: n })}
           />
         </Field>
         <ColourSwatches

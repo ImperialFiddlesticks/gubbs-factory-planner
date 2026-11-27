@@ -9,6 +9,23 @@ const MACHINE_GROUPS: Record<string, string> = {
   'conveyor-corner-right': 'BELT',
   'packing-table': 'PACK',
   'air-compressor': 'COMP',
+  'assembly-jig-large': 'JIG',
+  'assembly-jig-small': 'JIG',
+  'work-bench': 'BENCH',
+  'assembly-table': 'TABLE',
+  'quality-table': 'QC',
+  'pillar-drill': 'DRILL',
+  'band-saw': 'SAW',
+  'welding-table': 'WELD',
+  'grinding-bench': 'GRIND',
+  'press-brake': 'BRAKE',
+  'hydraulic-press-30t': 'PRESS',
+  'tool-cabinet': 'TOOL',
+  'tool-trolley': 'TOOL',
+  'storage-shelf': 'SHELF',
+  'eur-pallet': 'PALLET',
+  'chemicals-cabinet': 'CHEM',
+  'parts-washer': 'WASH',
 }
 
 export function machineLabelGroup(typeId: string) {

@@ -1,4 +1,4 @@
-import { getMachineType, machineTypeFor } from '@/data/catalog'
+import { isStation, machineTypeFor } from '@/data/catalog'
 import { conveyorRuns } from '@/lib/conveyors'
 import { floorCorners, polygonArea } from '@/lib/floorShapes'
 import { bodyBox } from '@/lib/geometry'
@@ -8,7 +8,7 @@ import type { Project } from '@/store'
 
 /** Key figures of a project, for comparing layouts side by side. */
 export interface ProjectFigures {
-  /** Placed stations (conveyor pieces don't count) and the wizard's target. */
+  /** Placed stations (conveyor pieces and storage don't count) and the wizard's target. */
   stations: number
   stationTarget: number
   warnings: number
@@ -35,7 +35,7 @@ export function projectFigures(p: Project): ProjectFigures {
   const walks = [...walkingRoutes(p.floorplan, exits, bodies, p.walls).values()].map((r) => r.distance)
 
   return {
-    stations: p.machines.filter((m) => !getMachineType(m.typeId)?.conveyor).length,
+    stations: p.machines.filter((m) => isStation(m.typeId)).length,
     stationTarget: p.setup.stationTarget,
     warnings: findLayoutIssues(p.machines, p.utilities, p.floorplan, { pillars: p.pillars, walls: p.walls, zones: p.zones ?? [] }).length,
     floorArea: floorArea / 1e6,
