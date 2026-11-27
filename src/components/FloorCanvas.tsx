@@ -4,6 +4,7 @@ import type { KonvaEventObject } from 'konva/lib/Node'
 import { Group, Layer, Line, Rect, Shape, Stage } from 'react-konva'
 import { MapToolbar } from '@/components/MapToolbar'
 import { ConveyorEnds } from '@/components/canvas/ConveyorBody'
+import { CommentMarkers } from '@/components/canvas/CommentMarkers'
 import { ClearanceZone, Machine, MachineBody, type Outline } from '@/components/canvas/MachineNode'
 import { GHOST_ID, type DragState } from '@/components/canvas/shared'
 import { PillarBody, PillarNode } from '@/components/canvas/PillarNode'
@@ -48,9 +49,8 @@ export function FloorCanvas({ floorplan }: FloorCanvasProps) {
       className="relative overflow-hidden"
       style={{ backgroundColor: CANVAS.background }}
     >
-      {floorplan && size.width > 0 && <FloorStage floorplan={floorplan} size={size} />}
+      {floorplan && size.width > 0 && <FloorStage key={floorplan.id} floorplan={floorplan} size={size} />}
       <PlacingHint />
-      {floorplan && <MapToolbar />}
     </main>
   )
 }
@@ -65,6 +65,14 @@ function placingName(p: Placing) {
 /** Instruction strip shown at the top of the work area while placing. */
 function PlacingHint() {
   const placing = usePlanner((s) => s.placing)
+  const commentDraft = usePlanner((s) => s.commentDraft)
+  if (commentDraft) {
+    return (
+      <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+        Pin comment on the floor · Click a location · Esc to cancel
+      </div>
+    )
+  }
   if (!placing) return null
   if (placing.kind === 'wall') {
     return (
@@ -104,14 +112,20 @@ function FloorStage({
   // The map toolbar sits at the bottom, so the floor uses the space above it.
   const viewH = size.height - TOOLBAR_SPACE
   // Floors larger than the work area are shrunk to fit; smaller ones stay at SCALE.
-  const fit = Math.min(
+  const baseFit = Math.min(
     1,
     (size.width - 2 * VIEW_PADDING) / floorW,
     (viewH - 2 * VIEW_PADDING) / floorH,
   )
-  // Centre the floorplan in the work area above the toolbar.
-  const originX = Math.round((size.width - floorW * fit) / 2)
-  const originY = Math.round((viewH - floorH * fit) / 2)
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [panActive, setPanActive] = useState(false)
+  const panStart = useRef<{ pointer: Point; pan: Point } | null>(null)
+  const spacePan = useSpacePan()
+  const fit = baseFit * zoom
+  // Keep the plan centred at the current zoom, then apply any user panning.
+  const originX = Math.round((size.width - floorW * fit) / 2 + pan.x)
+  const originY = Math.round((viewH - floorH * fit) / 2 + pan.y)
 
   // Floor corners in layer px, flat [x0, y0, x1, y1, ...] for Konva.
   const floorPoints = floorCorners(floorplan).flatMap((p) => [p.x * SCALE, p.y * SCALE])
@@ -134,6 +148,8 @@ function FloorStage({
   const singlePieceId = usePlanner((s) => s.singlePieceId)
   const placing = usePlanner((s) => s.placing)
   const layers = usePlanner((s) => s.layers)
+  const comments = usePlanner((s) => s.comments)
+  const commentDraft = usePlanner((s) => s.commentDraft)
   const select = usePlanner((s) => s.select)
   const addMachine = usePlanner((s) => s.addMachine)
   const addUtility = usePlanner((s) => s.addUtility)
@@ -141,6 +157,8 @@ function FloorStage({
   const addWall = usePlanner((s) => s.addWall)
   const setWallStart = usePlanner((s) => s.setWallStart)
   const cancelPlacing = usePlanner((s) => s.cancelPlacing)
+  const addLocationComment = usePlanner((s) => s.addLocationComment)
+  const cancelCommentPlacement = usePlanner((s) => s.cancelCommentPlacement)
 
   const layerRef = useRef<Konva.Layer>(null)
   /** Cursor position on the floor in mm, while it is over the canvas. */
@@ -148,6 +166,32 @@ function FloorStage({
   const [drag, setDrag] = useState<DragState | null>(null)
   /** Selection box being dragged out on empty floor, in mm; `add` when Shift was held. */
   const [box, setBox] = useState<{ start: Point; end: Point; add: boolean } | null>(null)
+
+  function zoomAround(nextZoom: number, anchor: Point) {
+    const boundedZoom = Math.max(1, Math.min(4, nextZoom))
+    const oldFit = baseFit * zoom
+    const nextFit = baseFit * boundedZoom
+    const oldOriginX = (size.width - floorW * oldFit) / 2 + pan.x
+    const oldOriginY = (viewH - floorH * oldFit) / 2 + pan.y
+    const mapX = (anchor.x - oldOriginX) / oldFit
+    const mapY = (anchor.y - oldOriginY) / oldFit
+    const nextOriginX = (size.width - floorW * nextFit) / 2
+    const nextOriginY = (viewH - floorH * nextFit) / 2
+    setZoom(boundedZoom)
+    setPan({
+      x: anchor.x - nextOriginX - mapX * nextFit,
+      y: anchor.y - nextOriginY - mapY * nextFit,
+    })
+  }
+
+  function zoomAtCenter(nextZoom: number) {
+    zoomAround(nextZoom, { x: size.width / 2, y: viewH / 2 })
+  }
+
+  function fitToView() {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }
 
   usePlacingKeys()
   useSelectionKeys()
@@ -196,6 +240,20 @@ function FloorStage({
   }
 
   function handlePointerDown(e: KonvaEventObject<MouseEvent | TouchEvent>) {
+    if (commentDraft) {
+      if ('button' in e.evt && e.evt.button !== 0) return
+      const at = pointerMm()
+      if (at) addLocationComment(at.x, at.y)
+      return
+    }
+    if (spacePan && !placing && 'button' in e.evt && e.evt.button === 0) {
+      const pointer = e.target.getStage()?.getPointerPosition()
+      if (pointer) {
+        panStart.current = { pointer, pan }
+        setPanActive(true)
+      }
+      return
+    }
     if (placing) {
       // Left click (or touch) drops the ghost where it is; right click is handled below.
       if ('button' in e.evt && e.evt.button !== 0) return
@@ -229,7 +287,15 @@ function FloorStage({
     if (at) setBox({ start: at, end: at, add: e.evt.shiftKey })
   }
 
-  function handlePointerMove() {
+  function handlePointerMove(e: KonvaEventObject<MouseEvent | TouchEvent>) {
+    const screenPointer = e.target.getStage()?.getPointerPosition()
+    if (panStart.current && screenPointer) {
+      setPan({
+        x: panStart.current.pan.x + screenPointer.x - panStart.current.pointer.x,
+        y: panStart.current.pan.y + screenPointer.y - panStart.current.pointer.y,
+      })
+      return
+    }
     const at = pointerMm()
     setPointer(at)
     if (box && at) setBox({ ...box, end: at })
@@ -277,23 +343,37 @@ function FloorStage({
   }
 
   return (
+    <>
     <Stage
       width={size.width}
       height={size.height}
-      style={{ cursor: placing ? 'crosshair' : undefined }}
+      style={{ cursor: placing ? 'crosshair' : panActive ? 'grabbing' : spacePan ? 'grab' : undefined }}
       onMouseDown={handlePointerDown}
       onTouchStart={handlePointerDown}
       onMouseMove={handlePointerMove}
       onTouchMove={handlePointerMove}
-      onMouseUp={finishBox}
+      onMouseUp={() => {
+        panStart.current = null
+        setPanActive(false)
+        finishBox()
+      }}
       onTouchEnd={finishBox}
       onMouseLeave={() => {
         setPointer(null)
+        panStart.current = null
+        setPanActive(false)
         finishBox()
+      }}
+      onWheel={(e) => {
+        const pointer = e.target.getStage()?.getPointerPosition()
+        if (!pointer) return
+        e.evt.preventDefault()
+        zoomAround(zoom * (e.evt.deltaY > 0 ? 1 / 1.1 : 1.1), pointer)
       }}
       onContextMenu={(e) => {
         e.evt.preventDefault()
-        cancelPlacing()
+        if (commentDraft) cancelCommentPlacement()
+        else cancelPlacing()
       }}
     >
       <Layer ref={layerRef} x={originX} y={originY} scaleX={fit} scaleY={fit}>
@@ -330,7 +410,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(w.id)}
             invalid={spaceBad.has(w.id)}
-            interactive={!placing && !lockStructures}
+            interactive={!placing && !lockStructures && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -341,7 +421,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(p.id)}
             invalid={spaceBad.has(p.id)}
-            interactive={!placing && !lockStructures}
+            interactive={!placing && !lockStructures && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -362,7 +442,7 @@ function FloorStage({
               outline={outlineFor(m.id)}
               needs={needs.get(m.id) ?? []}
               fit={fit}
-              interactive={!placing}
+              interactive={!placing && !spacePan && !commentDraft}
               onDrag={setDrag}
             />
           ))}
@@ -424,7 +504,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(u.id)}
             invalid={utilityBad.has(u.id)}
-            interactive={!placing}
+            interactive={!placing && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -435,6 +515,15 @@ function FloorStage({
           machines={liveMachines}
           utilities={liveUtilities}
           walls={liveWalls}
+          fit={fit}
+        />
+
+        <CommentMarkers
+          comments={comments}
+          machines={liveMachines}
+          utilities={shownUtilities}
+          pillars={shownPillars}
+          walls={shownWalls}
           fit={fit}
         />
 
@@ -478,6 +567,13 @@ function FloorStage({
         {box && <SelectionBox rect={boxRect(box.start, box.end)} />}
       </Layer>
     </Stage>
+      <MapToolbar
+        zoom={zoom}
+        onZoomIn={() => zoomAtCenter(zoom * 1.2)}
+        onZoomOut={() => zoomAtCenter(zoom / 1.2)}
+        onFit={fitToView}
+      />
+    </>
   )
 }
 
@@ -522,6 +618,10 @@ function useSelectionKeys() {
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
       const s = usePlanner.getState()
+      if (s.commentDraft) {
+        s.cancelCommentPlacement()
+        return
+      }
       if (s.placing || s.selectedIds.length === 0) return
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
@@ -533,6 +633,42 @@ function useSelectionKeys() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+}
+
+/** Hold Space and drag to pan without changing the existing empty-floor box-select gesture. */
+function useSpacePan() {
+  const [active, setActive] = useState(false)
+
+  useEffect(() => {
+    function isTyping(target: EventTarget | null) {
+      return target instanceof HTMLElement && !!target.closest('input, textarea, [contenteditable="true"]')
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== 'Space' || isTyping(e.target)) return
+      e.preventDefault()
+      setActive(true)
+    }
+
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code === 'Space') setActive(false)
+    }
+
+    function onBlur() {
+      setActive(false)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
+
+  return active
 }
 
 /** The ghost under the cursor, or the item being dragged, at its live position. */

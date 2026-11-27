@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { CatalogPanel } from '@/components/CatalogPanel'
 import { ComparePage } from '@/components/compare/ComparePage'
 import { FloorCanvas } from '@/components/FloorCanvas'
@@ -19,11 +20,15 @@ function App() {
 function Planner() {
   const floorplan = usePlanner((s) => s.floorplan)
   const startSetup = usePlanner((s) => s.startSetup)
+  const [catalogCollapsed, setCatalogCollapsed] = useState(false)
 
   return (
-    <div className="grid h-screen grid-cols-[256px_1fr_288px] grid-rows-[56px_1fr]">
+    <div
+      className="grid h-screen grid-rows-[56px_1fr]"
+      style={{ gridTemplateColumns: `${catalogCollapsed ? 48 : 256}px minmax(0, 1fr) 288px` }}
+    >
       <TopBar onNewFloor={startSetup} />
-      <CatalogPanel />
+      <CatalogPanel collapsed={catalogCollapsed} onToggle={() => setCatalogCollapsed((collapsed) => !collapsed)} />
       <FloorCanvas floorplan={floorplan} />
       <PropertiesPanel />
     </div>

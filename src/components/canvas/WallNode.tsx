@@ -116,6 +116,7 @@ export function WallBody({
         stroke={stroke}
         strokeWidth={outline === 'none' ? 1 : 3}
         strokeScaleEnabled={false}
+        hitStrokeWidth={12 / fit}
       />
       {showLength && (
         <Group

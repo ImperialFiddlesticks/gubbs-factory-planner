@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Layers as LayersIcon, Lock, LockOpen, Redo2, Undo2 } from 'lucide-react'
+import { Layers as LayersIcon, Lock, LockOpen, Maximize, Redo2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
@@ -13,7 +13,17 @@ import { usePlanner } from '@/store'
  * Floating control bar at the bottom of the map: undo/redo, lock structures and layers.
  * Keeps the map's own controls next to the map instead of in the crowded header.
  */
-export function MapToolbar() {
+export function MapToolbar({
+  zoom,
+  onZoomIn,
+  onZoomOut,
+  onFit,
+}: {
+  zoom: number
+  onZoomIn: () => void
+  onZoomOut: () => void
+  onFit: () => void
+}) {
   return (
     <TooltipProvider>
       <div
@@ -22,6 +32,17 @@ export function MapToolbar() {
         className="theme-dark absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border bg-background/95 px-2 py-1 text-foreground shadow-lg backdrop-blur"
       >
         <UndoRedo />
+        <Divider />
+        <ToolButton label="Zoom out" onClick={onZoomOut} disabled={zoom <= 1}>
+          <ZoomOut />
+        </ToolButton>
+        <span className="min-w-10 text-center text-[10px] tabular-nums text-muted-foreground">{Math.round(zoom * 100)}%</span>
+        <ToolButton label="Zoom in" onClick={onZoomIn} disabled={zoom >= 4}>
+          <ZoomIn />
+        </ToolButton>
+        <ToolButton label="Fit to view" onClick={onFit}>
+          <Maximize />
+        </ToolButton>
         <Divider />
         <LockToggle />
         <LayersMenu />

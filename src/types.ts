@@ -64,6 +64,13 @@ export interface MachineInstance {
   id: string
   /** References MachineType.id. */
   typeId: string
+  /** Optional per-instance footprint overrides, mm. */
+  width?: number
+  depth?: number
+  /** Optional equipment height, mm; retained for reference but not used by 2D checks. */
+  height?: number
+  /** Optional per-instance working-space overrides, mm. */
+  clearance?: Clearance
   /** Centre of the machine on the floorplan, mm. */
   x: number
   /** Centre of the machine on the floorplan, mm. */
@@ -116,6 +123,18 @@ export interface Wall {
   thickness: number
 }
 
+/** A local discussion note anchored to a layout item or a floor location. */
+export interface LayoutComment {
+  id: string
+  x: number
+  y: number
+  targetId?: string
+  author: string
+  createdAt: string
+  message: string
+  status: 'open' | 'resolved'
+}
+
 // ---------------------------------------------------------------------------
 // Zod schemas (runtime validation). `satisfies` makes the compiler fail if a
 // schema drifts from its interface above.
@@ -162,6 +181,10 @@ export const RotationSchema = z
 export const MachineInstanceSchema = z.object({
   id: z.string(),
   typeId: z.string(),
+  width: z.number().positive().optional(),
+  depth: z.number().positive().optional(),
+  height: z.number().positive().optional(),
+  clearance: ClearanceSchema.optional(),
   x: z.number(),
   y: z.number(),
   rotation: RotationSchema,
@@ -203,3 +226,14 @@ export const WallSchema = z
   .refine((w) => w.start.x === w.end.x || w.start.y === w.end.y, {
     message: 'Walls must be horizontal or vertical.',
   }) satisfies z.ZodType<Wall>
+
+export const LayoutCommentSchema = z.object({
+  id: z.string(),
+  x: z.number(),
+  y: z.number(),
+  targetId: z.string().optional(),
+  author: z.string(),
+  createdAt: z.string(),
+  message: z.string(),
+  status: z.enum(['open', 'resolved']),
+}) satisfies z.ZodType<LayoutComment>

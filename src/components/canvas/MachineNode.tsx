@@ -1,13 +1,14 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Konva from 'konva'
-import { Group, Rect, Text } from 'react-konva'
+import { Circle, Group, Label, Rect, Tag, Text } from 'react-konva'
 import { ConveyorBody } from '@/components/canvas/ConveyorBody'
 import { UtilityIcon } from '@/components/canvas/UtilityNode'
 import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { getMachineType, machineTypeFor } from '@/data/catalog'
 import { snapShift } from '@/lib/conveyors'
-import { clearanceBox } from '@/lib/geometry'
+import { clearanceBox, footprint } from '@/lib/geometry'
+import { machineLabelGroup, machineShortName } from '@/lib/machineLabels'
 import type { Need } from '@/lib/validation'
 import { usePlanner } from '@/store'
 import { CANVAS, COLORS } from '@/theme'
@@ -35,8 +36,13 @@ export function Machine({
 }) {
     const moveItems = usePlanner((s) => s.moveItems)
     const selectSinglePiece = usePlanner((s) => s.selectSinglePiece)
+    const machines = usePlanner((s) => s.machines)
     const isConveyor = !!getMachineType(machine.typeId)?.conveyor
     const groupRef = useRef<Konva.Group>(null)
+    const [hovered, setHovered] = useState(false)
+    const labelIndex = machines
+        .filter((m) => machineLabelGroup(m.typeId) === machineLabelGroup(machine.typeId))
+        .findIndex((m) => m.id === machine.id) + 1
 
     // Juice: pop in when placed.
     useEffect(() => {
@@ -134,17 +140,78 @@ export function Machine({
                 e.target.scale({ x: 1.06, y: 1.06 })
                 e.target.to({ scaleX: 1, scaleY: 1, duration: 0.2, easing: Konva.Easings.EaseOut })
             }}
-            onMouseEnter={(e) => setCursor(e, 'move')}
-            onMouseLeave={(e) => setCursor(e, '')}
+            onMouseEnter={(e) => {
+                setHovered(true)
+                setCursor(e, 'move')
+            }}
+            onMouseLeave={(e) => {
+                setHovered(false)
+                setCursor(e, '')
+            }}
         >
             <MachineBody
                 typeId={machine.typeId}
                 length={machine.length}
+                label={machineShortName(machine.typeId, labelIndex)}
                 rotation={machine.rotation}
                 outline={outline}
                 needs={needs}
                 fit={fit}
             />
+            {hovered && <MachineHoverLabel machine={machine} fit={fit} />}
+        </Group>
+    )
+}
+
+function MachineMark({ typeId, w, h }: { typeId: string; w: number; h: number }) {
+    const r = Math.max(2, Math.min(w, h) * 0.1)
+    const controlWidth = Math.max(4, Math.min(w * 0.16, 10))
+    const controlHeight = Math.max(5, Math.min(h * 0.36, 16))
+
+    if (typeId === 'cnc-mill' || typeId === 'cnc-lathe') {
+        return (
+            <Group listening={false}>
+                <Circle x={w * 0.24} y={-h * 0.12} radius={r} stroke="white" strokeWidth={1} opacity={0.75} />
+                <Rect x={-w * 0.38} y={-h * 0.29} width={controlWidth} height={controlHeight} fill="white" opacity={0.7} />
+            </Group>
+        )
+    }
+
+    if (typeId === 'hydraulic-press') {
+        return (
+            <Group listening={false} opacity={0.75}>
+                <Rect x={-w * 0.24} y={-h * 0.23} width={w * 0.48} height={h * 0.08} fill="white" />
+                <Rect x={-w * 0.12} y={-h * 0.15} width={w * 0.24} height={h * 0.2} stroke="white" strokeWidth={1} />
+            </Group>
+        )
+    }
+
+    if (typeId === 'air-compressor') {
+        return (
+            <Group listening={false}>
+                <Circle x={-w * 0.18} y={-h * 0.12} radius={r} stroke="white" strokeWidth={1} opacity={0.75} />
+                <Circle x={w * 0.16} y={-h * 0.12} radius={r} stroke="white" strokeWidth={1} opacity={0.75} />
+            </Group>
+        )
+    }
+
+    if (typeId === 'packing-table') {
+        return <Rect x={-w * 0.3} y={-h * 0.18} width={w * 0.6} height={h * 0.36} stroke="white" strokeWidth={1} opacity={0.7} listening={false} />
+    }
+
+    return null
+}
+
+function MachineHoverLabel({ machine, fit }: { machine: MachineInstance; fit: number }) {
+    const type = machineTypeFor(machine)
+    if (!type) return null
+    const height = footprint(type, machine.rotation).depth * SCALE
+    return (
+        <Group y={-height / 2} scaleX={1 / fit} scaleY={1 / fit} listening={false}>
+            <Label y={-8}>
+                <Tag fill={CANVAS.machineStroke} cornerRadius={3} pointerDirection="down" pointerWidth={8} pointerHeight={5} />
+                <Text text={type.name} fontSize={12} padding={4} fill="white" />
+            </Label>
         </Group>
     )
 }
@@ -160,6 +227,7 @@ const OUTLINE_STYLE: Record<Outline, { stroke: string; width: number }> = {
 export function MachineBody({
     typeId,
     length,
+    label,
     rotation,
     outline,
     needs,
@@ -167,6 +235,7 @@ export function MachineBody({
     dashed = false,
 }: {
     typeId: string
+    label?: string
     /** Straight conveyor length, mm. */
     length?: number
     rotation: Rotation
@@ -212,11 +281,13 @@ export function MachineBody({
                     stroke={style.stroke}
                     strokeWidth={style.width}
                     strokeScaleEnabled={false}
+                    hitStrokeWidth={12 / fit}
                     dash={dashed ? [6, 4] : undefined}
                     shadowColor="black"
                     shadowOpacity={outline === 'selected' ? 0.3 : 0}
                     shadowBlur={6}
                 />
+                <MachineMark typeId={typeId} w={w} h={h} />
                 <FrontMarker w={w} h={h} />
                 <Text
                     x={-w / 2}
@@ -224,7 +295,7 @@ export function MachineBody({
                     width={w}
                     height={h}
                     padding={4}
-                    text={type.name}
+                    text={label ?? machineShortName(typeId, 1)}
                     fontSize={10}
                     fontFamily="Arial, Helvetica, sans-serif"
                     fill={CANVAS.machineLabel}
