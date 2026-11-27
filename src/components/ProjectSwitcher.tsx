@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Check, ChevronDown, Columns2, Copy, Download, Factory, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { Check, ChevronDown, CloudUpload, Columns2, Copy, Download, Factory, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
