@@ -9,6 +9,8 @@ export interface DragState {
   y: number
   /** Other machines moving with it by the same amount (the rest of a conveyor run). */
   group?: string[]
+  /** A machine turned while dragging (snapped onto a conveyor end), degrees. */
+  rotation?: number
 }
 
 /** ID used for the ghost when it is checked against the layout rules. */

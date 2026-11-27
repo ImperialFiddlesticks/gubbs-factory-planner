@@ -19,7 +19,8 @@ import { UTILITY_LAYER, utilityVisible } from '@/data/layers'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS, MIN_WALL_LENGTH } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
 import { MIN_ZONE_SIZE, ZONE_KINDS, zoneArea } from '@/data/zones'
-import { conveyorRuns, snapConveyor } from '@/lib/conveyors'
+import { conveyorRuns, snapConveyor, snapMachineToConveyor } from '@/lib/conveyors'
+import { keepOnFloor } from '@/lib/placement'
 import { floorCorners } from '@/lib/floorShapes'
 import {
   bodyBox,
@@ -210,7 +211,10 @@ function FloorStage({
   usePlacingKeys()
   useSelectionKeys()
 
-  const active = activeItem(placing, pointer, drag, machines, utilities, pillars, walls, floorplan)
+  const active = keepGhostOnFloor(
+    activeItem(placing, pointer, drag, machines, utilities, pillars, walls, floorplan),
+    floorplan,
+  )
 
   // Items moving along with the dragged one (multi-selection, conveyor run), at their live spot.
   const delta = groupDelta(drag, machines, utilities, pillars, walls, zones)
@@ -292,9 +296,13 @@ function FloorStage({
         return
       }
       if (at && placing.kind === 'machine') {
-        // Where the ghost is drawn, which includes conveyor snapping.
+        // Where the ghost is drawn, which includes conveyor snapping and staying on the floor.
         const ghost = active?.kind === 'machine' ? active.item : at
-        addMachine(placing.typeId, { x: ghost.x, y: ghost.y, rotation: placing.rotation, length: placing.length })
+        // In the cut-out corner of a shaped floor it can't go: wait for a click where it fits.
+        if (active?.kind === 'machine' && !keepOnFloor([active.item], { x: 0, y: 0 }, floorplan)) return
+        // The ghost's rotation: a machine snapped onto a belt end is turned to face it.
+        const rotation = active?.kind === 'machine' ? active.item.rotation : placing.rotation
+        addMachine(placing.typeId, { x: ghost.x, y: ghost.y, rotation, length: placing.length })
       } else if (at && placing.kind === 'utility') {
         addUtility(placing.utilityKind, at.x, at.y)
       } else if (at && placing.kind === 'pillar') {
@@ -636,6 +644,18 @@ function FloorStage({
   )
 }
 
+/**
+ * A machine being placed (the ghost) slides along the outer walls instead of going past them.
+ * On a shaped floor, where it can't fit (the cut-out corner) it stays under the cursor, drawn as
+ * a clash, and a click there doesn't place it.
+ */
+function keepGhostOnFloor(active: Active | null, floorplan: Floorplan): Active | null {
+  if (active?.kind !== 'machine' || active.item.id !== GHOST_ID) return active
+  const kept = keepOnFloor([active.item], { x: 0, y: 0 }, floorplan)
+  if (!kept || (kept.x === 0 && kept.y === 0)) return active
+  return { kind: 'machine', item: { ...active.item, x: active.item.x + kept.x, y: active.item.y + kept.y } }
+}
+
 /** How far the dragged item has moved, when other items move along with it (else null). */
 function groupDelta(
   drag: DragState | null,
@@ -774,8 +794,8 @@ function activeItem(
         length: placing.length,
         ...pointer,
       }
-      // Conveyor pieces snap onto a nearby free end.
-      return { kind: 'machine', item: { ...item, ...snapConveyor(item, machines) } }
+      // Conveyor pieces snap onto a nearby free end; other machines onto the end of a belt.
+      return { kind: 'machine', item: { ...item, ...snapConveyor(item, machines), ...snapMachineToConveyor(item, machines) } }
     }
     if (placing.kind === 'pillar') {
       return {
@@ -813,7 +833,7 @@ function activeItem(
   }
   if (!drag) return null
   const m = machines.find((m) => m.id === drag.id)
-  if (m) return { kind: 'machine', item: { ...m, x: drag.x, y: drag.y } }
+  if (m) return { kind: 'machine', item: { ...m, x: drag.x, y: drag.y, ...(drag.rotation !== undefined && { rotation: drag.rotation }) } }
   const u = utilities.find((u) => u.id === drag.id)
   if (u) return { kind: 'utility', item: { ...u, x: drag.x, y: drag.y } }
   const p = pillars.find((p) => p.id === drag.id)
