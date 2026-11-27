@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { machineTypeFor } from '@/data/catalog'
+import { machineHeight, machineTypeFor } from '@/data/catalog'
 import { MACHINE_COLOURS } from '@/data/machineColours'
+import { MIN_ZONE_SIZE, ZONE_KIND_LIST, ZONE_KINDS, machinesInZone, zoneArea } from '@/data/zones'
 import { isValidConveyorLength } from '@/data/conveyors'
 import { MIN_WALL_LENGTH } from '@/data/structures'
 import { EXIT_MAX_DISTANCE, UTILITY_KINDS, utilityRadius } from '@/data/utilities'
@@ -20,19 +21,20 @@ import { findLayoutIssues, powerAssignments, type LayoutIssue } from '@/lib/vali
 import { machineAutoName, machineName } from '@/lib/machineLabels'
 import { usePlanner } from '@/store'
 import { CANVAS } from '@/theme'
-import type { MachineInstance, Pillar, Utility, Wall } from '@/types'
+import type { MachineInstance, Pillar, Utility, Wall, Zone, ZoneKind } from '@/types'
 
 export function PropertiesPanel() {
   const machines = usePlanner((s) => s.machines)
   const utilities = usePlanner((s) => s.utilities)
   const pillars = usePlanner((s) => s.pillars)
   const walls = usePlanner((s) => s.walls)
+  const zones = usePlanner((s) => s.zones)
   const floorplan = usePlanner((s) => s.floorplan)
   const comments = usePlanner((s) => s.comments)
   const commentDraft = usePlanner((s) => s.commentDraft)
   const issues = useMemo(
-    () => (floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls }) : []),
-    [machines, utilities, floorplan, pillars, walls],
+    () => (floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls, zones }) : []),
+    [machines, utilities, floorplan, pillars, walls, zones],
   )
 
   return (
@@ -230,6 +232,7 @@ function Selection({ issues }: { issues: LayoutIssue[] }) {
   const utility = usePlanner((s) => s.utilities.find((u) => u.id === s.selectedId))
   const pillar = usePlanner((s) => s.pillars.find((p) => p.id === s.selectedId))
   const wall = usePlanner((s) => s.walls.find((w) => w.id === s.selectedId))
+  const zone = usePlanner((s) => s.zones.find((z) => z.id === s.selectedId))
   const count = usePlanner((s) => s.selectedIds.length)
   const floorplan = usePlanner((s) => s.floorplan)
   const machines = usePlanner((s) => s.machines)
@@ -242,6 +245,7 @@ function Selection({ issues }: { issues: LayoutIssue[] }) {
   if (utility) return <UtilityProperties utility={utility} />
   if (pillar) return <PillarProperties pillar={pillar} />
   if (wall) return <WallProperties wall={wall} />
+  if (zone) return <ZoneProperties key={zone.id} zone={zone} />
   return (
     <div className="space-y-3">
       {floorplan && (
@@ -322,6 +326,8 @@ function warningGroup(issue: LayoutIssue): WarningGroupId {
 }
 
 function warningGuidance(issue: LayoutIssue) {
+  if (issue.key.startsWith('aisle:')) return 'Move the machine out of the aisle, or move or shrink the aisle.'
+  if (issue.key.startsWith('height:')) return 'Move the machine out from under the height limit, or check its height.'
   if (issue.key.startsWith('overlap:') || issue.key.includes('-on:')) {
     return 'Move the affected equipment or structure so their footprints no longer overlap.'
   }
@@ -413,6 +419,7 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
   if (!type) return null
   const size = footprint(type, machine.rotation)
   const clearance = machine.clearance ?? type.clearance
+  const height = machineHeight(machine)
   const shortName = machineAutoName(machine, machines)
 
   return (
@@ -422,7 +429,7 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
         <div className="text-xs text-muted-foreground">{type.name}</div>
         <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
           <PropertyValue label="Width × depth" value={`${formatMetres(size.width)} × ${formatMetres(size.depth)} m`} />
-          <PropertyValue label="Height" value={machine.height === undefined ? 'Not specified' : `${formatMetres(machine.height)} m`} />
+          <PropertyValue label="Height" value={height === undefined ? 'Not specified' : `${formatMetres(height)} m`} />
           <PropertyValue label="Rotation" value={`${machine.rotation}°`} />
           <PropertyValue label="Power" value={type.powerKw > 0 ? `${type.powerKw} kW` : 'Not required'} />
         </div>
@@ -541,10 +548,11 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
               </Field>
             </div>
           )}
-          <Field id="machine-height" label="Height (m, not used by 2D checks)">
+          <Field id="machine-height" label="Height (m, checked under height limits)">
             <OptionalDimensionInput
               id="machine-height"
               className="h-8"
+              placeholder={type.height === undefined ? 'Not specified' : `${formatMetres(type.height)} (typical)`}
               value={machine.height}
               onCommit={(m) => updateDimensions(machine.id, { height: m === undefined ? undefined : Math.round(m * 1000) })}
             />
@@ -607,28 +615,152 @@ function StationDetails({
             onCommit={(n) => onChange({ people: n === 0 ? undefined : n })}
           />
         </Field>
-        <div className="space-y-1.5">
-          <span className="text-xs text-muted-foreground">Colour</span>
-          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Colour">
-            {MACHINE_COLOURS.map((c, i) => (
-              <button
-                key={c.hex}
-                type="button"
-                role="radio"
-                aria-checked={current === c.hex}
-                title={c.name}
-                aria-label={c.name}
-                onClick={() => onChange({ colour: i === 0 ? undefined : c.hex })}
-                className={cn(
-                  'size-5 rounded-full border border-white/30 transition-transform hover:scale-110',
-                  current === c.hex && 'ring-2 ring-accent ring-offset-1 ring-offset-background',
-                )}
-                style={{ backgroundColor: c.hex }}
-              />
-            ))}
-          </div>
+        <ColourSwatches
+          value={current}
+          onChange={(hex) => onChange({ colour: hex === MACHINE_COLOURS[0].hex ? undefined : hex })}
+        />
+      </div>
+    </div>
+  )
+}
+
+/** A row of colour swatches to pick from (MACHINE_COLOURS). */
+function ColourSwatches({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
+  return (
+    <div className="space-y-1.5">
+      <span className="text-xs text-muted-foreground">Colour</span>
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Colour">
+        {MACHINE_COLOURS.map((c) => (
+          <button
+            key={c.hex}
+            type="button"
+            role="radio"
+            aria-checked={value === c.hex}
+            title={c.name}
+            aria-label={c.name}
+            onClick={() => onChange(c.hex)}
+            className={cn(
+              'size-5 rounded-full border border-white/30 transition-transform hover:scale-110',
+              value === c.hex && 'ring-2 ring-accent ring-offset-1 ring-offset-background',
+            )}
+            style={{ backgroundColor: c.hex }}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** A zone: name, type, colour, max height (height limits), position, size and what stands in it. */
+function ZoneProperties({ zone }: { zone: Zone }) {
+  const updateZone = usePlanner((s) => s.updateZone)
+  const removeZone = usePlanner((s) => s.removeZone)
+  const machines = usePlanner((s) => s.machines)
+  const inside = useMemo(() => machinesInZone(zone, machines), [zone, machines])
+  const info = ZONE_KINDS[zone.kind]
+
+  function setKind(kind: ZoneKind) {
+    // A zone still in its type's default colour takes the new type's colour.
+    const colour = zone.colour === info.colour ? ZONE_KINDS[kind].colour : zone.colour
+    updateZone(zone.id, { kind, colour })
+  }
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-sm font-semibold">{zone.name}</div>
+        <div className="text-xs text-muted-foreground">
+          {info.name === 'Area' ? 'Zone' : info.name} · {formatMetres(zone.width)} × {formatMetres(zone.depth)} m ·{' '}
+          {zoneArea(zone)} m²
         </div>
       </div>
+
+      <Field id="zone-name" label="Name">
+        <CommitText id="zone-name" className="h-8" value={zone.name} placeholder={info.name} onCommit={(name) => name.trim() && updateZone(zone.id, { name: name.trim() })} />
+      </Field>
+
+      <div className="space-y-1.5">
+        <span className="text-xs text-muted-foreground">Type</span>
+        <div className="grid grid-cols-3 gap-1" role="radiogroup" aria-label="Zone type">
+          {ZONE_KIND_LIST.map((k) => (
+            <button
+              key={k.kind}
+              type="button"
+              role="radio"
+              aria-checked={zone.kind === k.kind}
+              onClick={() => setKind(k.kind)}
+              title={k.description}
+              className={cn(
+                'rounded-md border px-1.5 py-1 text-xs transition-colors hover:bg-muted',
+                zone.kind === k.kind && 'border-accent bg-accent/15 font-medium',
+              )}
+            >
+              {k.kind === 'area' ? 'Zone' : k.name}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          {zone.kind === 'area' && 'A labelled area; no rules.'}
+          {zone.kind === 'aisle' && 'Keep clear: a machine standing in it gets a warning.'}
+          {zone.kind === 'height' && 'Machines under it may be no taller than its max height.'}
+        </p>
+      </div>
+
+      {zone.kind === 'height' && (
+        <Field id="zone-max-height" label="Max height (m)">
+          <CommitInput
+            id="zone-max-height"
+            className="h-8"
+            min={0.5}
+            step={0.1}
+            value={(zone.maxHeight ?? 0) / 1000}
+            isValid={(m) => m > 0}
+            onCommit={(m) => updateZone(zone.id, { maxHeight: Math.round(m * 1000) })}
+          />
+        </Field>
+      )}
+
+      <ColourSwatches value={zone.colour} onChange={(colour) => updateZone(zone.id, { colour })} />
+
+      <div className="grid grid-cols-2 gap-2">
+        <Field id="zone-width" label="Width (m)">
+          <CommitInput
+            id="zone-width"
+            className="h-8"
+            min={MIN_ZONE_SIZE / 1000}
+            step={0.5}
+            value={zone.width / 1000}
+            isValid={(m) => m * 1000 >= MIN_ZONE_SIZE}
+            onCommit={(m) => updateZone(zone.id, { width: Math.round(m * 1000) })}
+          />
+        </Field>
+        <Field id="zone-depth" label="Depth (m)">
+          <CommitInput
+            id="zone-depth"
+            className="h-8"
+            min={MIN_ZONE_SIZE / 1000}
+            step={0.5}
+            value={zone.depth / 1000}
+            isValid={(m) => m * 1000 >= MIN_ZONE_SIZE}
+            onCommit={(m) => updateZone(zone.id, { depth: Math.round(m * 1000) })}
+          />
+        </Field>
+      </div>
+      <PositionFields id={zone.id} x={zone.x} y={zone.y} onMove={(x, y) => updateZone(zone.id, { x, y })} />
+      <p className="text-[11px] text-muted-foreground">
+        Position is the zone's centre. Drag the name tag to move it, or a corner to resize it.
+      </p>
+
+      <div className="rounded-md border bg-muted/20 p-2.5 text-xs">
+        <div className="font-medium">In this zone</div>
+        <div className="mt-0.5 text-muted-foreground">
+          {inside.length === 0 ? 'No machines' : inside.map((m) => machineName(m, machines)).join(', ')}
+        </div>
+      </div>
+
+      <Button variant="ghost" className="w-full text-muted-foreground hover:text-destructive" onClick={() => removeZone(zone.id)}>
+        Delete
+      </Button>
     </div>
   )
 }

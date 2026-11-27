@@ -28,6 +28,7 @@ const cornerPiece = (side: 'left' | 'right'): CatalogMachine => ({
   powerKw: conveyorKw(CONVEYOR_WIDTH),
   needsWater: false,
   needsFireSuppression: false,
+  height: 900,
 })
 
 /**
@@ -45,6 +46,7 @@ export const CATALOG: CatalogMachine[] = [
     powerKw: 22,
     needsWater: true, // coolant
     needsFireSuppression: false,
+    height: 2800,
   },
   {
     id: 'cnc-lathe',
@@ -56,6 +58,7 @@ export const CATALOG: CatalogMachine[] = [
     powerKw: 18,
     needsWater: true,
     needsFireSuppression: false,
+    height: 2100,
   },
   {
     id: 'hydraulic-press',
@@ -67,6 +70,7 @@ export const CATALOG: CatalogMachine[] = [
     powerKw: 15,
     needsWater: false,
     needsFireSuppression: true,
+    height: 3200,
   },
   {
     id: 'conveyor-straight',
@@ -80,6 +84,7 @@ export const CATALOG: CatalogMachine[] = [
     powerKw: conveyorKw(DEFAULT_CONVEYOR_LENGTH),
     needsWater: false,
     needsFireSuppression: false,
+    height: 900,
   },
   cornerPiece('left'),
   cornerPiece('right'),
@@ -93,6 +98,7 @@ export const CATALOG: CatalogMachine[] = [
     powerKw: 0,
     needsWater: false,
     needsFireSuppression: false,
+    height: 900,
   },
   {
     id: 'air-compressor',
@@ -104,8 +110,14 @@ export const CATALOG: CatalogMachine[] = [
     powerKw: 37,
     needsWater: true, // cooling
     needsFireSuppression: true,
+    height: 1700,
   },
 ]
+
+/** How tall a placed machine is, mm: its own height if set, else its type's typical height. */
+export function machineHeight(m: Pick<MachineInstance, 'typeId' | 'height'>): number | undefined {
+  return m.height ?? getMachineType(m.typeId)?.height
+}
 
 export function getMachineType(id: string): CatalogMachine | undefined {
   return CATALOG.find((t) => t.id === id)
