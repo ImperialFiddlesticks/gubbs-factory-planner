@@ -19,7 +19,9 @@ import { footprint, wallLength } from '@/lib/geometry'
 import { cn } from '@/lib/utils'
 import { loadingDockIssue, loadingDockPointAt } from '@/lib/loadingDocks'
 import { loadingBayIssue } from '@/lib/loadingBays'
+import { TruckLogisticsProperties } from '@/components/canvas/TruckLogisticsProperties'
 import { findLayoutIssues, powerAssignments, type LayoutIssue } from '@/lib/validation'
+import { findTruckLogisticsIssues } from '@/lib/truckLogistics'
 import { machineAutoName, machineName } from '@/lib/machineLabels'
 import { usePlanner } from '@/store'
 import { CANVAS } from '@/theme'
@@ -34,9 +36,18 @@ export function PropertiesPanel() {
   const floorplan = usePlanner((s) => s.floorplan)
   const comments = usePlanner((s) => s.comments)
   const commentDraft = usePlanner((s) => s.commentDraft)
+  const truckTypes = usePlanner((s) => s.truckTypes)
+  const parkingSpots = usePlanner((s) => s.truckParkingSpots)
+  const serviceStations = usePlanner((s) => s.truckServiceStations)
+  const truckRoutes = usePlanner((s) => s.truckRoutes)
+  const pedestrianRoutes = usePlanner((s) => s.pedestrianRoutes)
+  const pedestrianCrossings = usePlanner((s) => s.pedestrianCrossings)
+  const safetyBarriers = usePlanner((s) => s.safetyBarriers)
+  const loadingBays = usePlanner((s) => s.loadingBays)
+  const logisticsIssues = useMemo(() => findTruckLogisticsIssues({ truckTypes, utilities, parkingSpots, serviceStations, truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines, pillars, walls, loadingBays, floorplan }), [truckTypes, utilities, parkingSpots, serviceStations, truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines, pillars, walls, loadingBays, floorplan])
   const issues = useMemo(
-    () => (floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls, zones }) : []),
-    [machines, utilities, floorplan, pillars, walls, zones],
+    () => (floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls, zones }, serviceStations, truckTypes) : []),
+    [machines, utilities, floorplan, pillars, walls, zones, serviceStations, truckTypes],
   )
 
   return (
@@ -70,6 +81,10 @@ export function PropertiesPanel() {
           <span className="text-xs text-muted-foreground">{issues.length}</span>
         </div>
         <WarningsList issues={issues} />
+        <div className="mt-3 space-y-1">
+          <div className="text-xs font-medium">Forklift and pedestrian checks · {logisticsIssues.length}</div>
+          {logisticsIssues.map((issue) => <button key={issue.key} type="button" onClick={() => usePlanner.getState().selectMany(issue.ids)} className="block w-full rounded-sm px-1.5 py-1 text-left text-xs text-amber-700 hover:bg-amber-50">{issue.message}</button>)}
+        </div>
         <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
           Checks cover configured layout geometry and utilities; they are not certified safety validation.
         </p>
@@ -237,6 +252,10 @@ function Selection({ issues }: { issues: LayoutIssue[] }) {
   const zone = usePlanner((s) => s.zones.find((z) => z.id === s.selectedId))
   const loadingDock = usePlanner((s) => s.loadingDocks.find((dock) => dock.id === s.selectedId))
   const loadingBay = usePlanner((s) => s.loadingBays.find((bay) => bay.id === s.selectedId))
+  const logisticsSelectedId = usePlanner((s) => {
+    const id = s.selectedId
+    return id && [...s.truckTypes, ...s.forkliftInstances, ...s.truckParkingSpots, ...s.truckServiceStations, ...s.truckRoutes, ...s.pedestrianRoutes, ...s.pedestrianCrossings, ...s.safetyBarriers].some((item) => item.id === id) ? id : null
+  })
   const count = usePlanner((s) => s.selectedIds.length)
   const floorplan = usePlanner((s) => s.floorplan)
   const machines = usePlanner((s) => s.machines)
@@ -255,6 +274,7 @@ function Selection({ issues }: { issues: LayoutIssue[] }) {
   if (zone) return <ZoneProperties key={zone.id} zone={zone} />
   if (loadingDock) return <LoadingDockProperties key={loadingDock.id} dock={loadingDock} />
   if (loadingBay) return <LoadingBayProperties key={loadingBay.id} bay={loadingBay} />
+  if (logisticsSelectedId) return <TruckLogisticsProperties key={logisticsSelectedId} id={logisticsSelectedId} />
   return (
     <div className="space-y-3">
       {floorplan && (
@@ -934,15 +954,16 @@ function UtilityProperties({ utility }: { utility: Utility }) {
   const machines = usePlanner((s) => s.machines)
   const utilities = usePlanner((s) => s.utilities)
   const walls = usePlanner((s) => s.walls)
+  const serviceStations = usePlanner((s) => s.truckServiceStations)
 
   const info = UTILITY_KINDS[utility.kind]
   const Icon = UTILITY_ICONS[utility.kind]
   const load = useMemo(
     () =>
       utility.kind === 'power'
-        ? (powerAssignments(machines, utilities, walls).loads.get(utility.id) ?? 0)
+        ? (powerAssignments(machines, utilities, walls, serviceStations).loads.get(utility.id) ?? 0)
         : 0,
-    [utility.kind, utility.id, machines, utilities, walls],
+    [utility.kind, utility.id, machines, utilities, walls, serviceStations],
   )
   const overloaded = utility.capacityKw !== undefined && load > utility.capacityKw
 

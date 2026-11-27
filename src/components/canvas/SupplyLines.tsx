@@ -3,11 +3,11 @@ import { SCALE } from '@/constants'
 import { UTILITY_KINDS } from '@/data/utilities'
 import { powerAssignments, supplyLines } from '@/lib/validation'
 import { CANVAS } from '@/theme'
-import type { MachineInstance, Utility, Wall } from '@/types'
+import type { MachineInstance, TruckServiceStation, TruckType, Utility, Wall } from '@/types'
 
 /**
- * Solid horizontal/vertical runs from each utility of a kind to the machines it feeds (water pipes, power wires).
- * With `all` off, only the lines touching `focusId` (a machine or the utility) are drawn.
+ * Solid horizontal/vertical runs from utilities to the machines and service stations they feed.
+ * With `all` off, only the lines touching `focusId` (an item or utility) are drawn.
  */
 export function SupplyLines({
   kind,
@@ -16,6 +16,8 @@ export function SupplyLines({
   machines,
   utilities,
   walls,
+  serviceStations,
+  truckTypes,
   fit,
 }: {
   kind: 'water' | 'power'
@@ -24,10 +26,12 @@ export function SupplyLines({
   machines: MachineInstance[]
   utilities: Utility[]
   walls: Wall[]
+  serviceStations: TruckServiceStation[]
+  truckTypes: TruckType[]
   fit: number
 }) {
   if (!all && !focusId) return null
-  const lines = supplyLines(machines, utilities, kind, walls).filter(
+  const lines = supplyLines(machines, utilities, kind, walls, serviceStations, truckTypes).filter(
     (l) => all || l.utilityId === focusId || (focusId !== null && l.servedIds.includes(focusId)),
   )
   if (lines.length === 0) return null
@@ -47,7 +51,7 @@ export function SupplyLines({
               lineCap="round"
               lineJoin="round"
             />
-            {/* Connection dot where the line meets the machine. */}
+            {/* Connection dot where the line meets the machine or station. */}
             <Circle
               x={l.to.x * SCALE}
               y={l.to.y * SCALE}
@@ -74,6 +78,7 @@ export function PowerLoadTags({
   machines,
   utilities,
   walls,
+  serviceStations,
   fit,
 }: {
   all: boolean
@@ -81,11 +86,12 @@ export function PowerLoadTags({
   machines: MachineInstance[]
   utilities: Utility[]
   walls: Wall[]
+  serviceStations: TruckServiceStation[]
   fit: number
 }) {
   const points = utilities.filter((u) => u.kind === 'power' && (all || u.id === focusId))
   if (points.length === 0) return null
-  const { loads } = powerAssignments(machines, utilities, walls)
+  const { loads } = powerAssignments(machines, utilities, walls, serviceStations)
 
   return (
     <Group listening={false}>

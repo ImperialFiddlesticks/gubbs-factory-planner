@@ -13,7 +13,8 @@ import { UTILITY_KINDS } from '@/data/utilities'
 import { autosave } from '@/lib/autosave'
 import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
-import type { Floorplan, LayoutComment, LoadingBay, LoadingDock, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall, Zone, ZoneKind } from '@/types'
+import type { Floorplan, ForkliftInstance, LayoutComment, LoadingBay, LoadingDock, MachineInstance, PedestrianCrossing, PedestrianRoute, Pillar, Point, Rotation, SafetyBarrier, TruckParkingSpot, TruckRoute, TruckServiceKind, TruckServiceStation, TruckType, Utility, UtilityKind, Wall, Zone, ZoneKind } from '@/types'
+import { DEFAULT_BARRIER_THICKNESS_MM, DEFAULT_FORKLIFT_ROUTE_WIDTH_MM, DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM, GENERATED_BARRIER_CLEARANCE_MM, crossingPlacementAt, distanceAlongPath, parallelRoutePoints } from '@/lib/truckLogistics'
 import { DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockIssue, loadingDockPerimeter, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
 import { loadingBayIssue } from '@/lib/loadingBays'
 
@@ -22,6 +23,7 @@ export type NewFloorplanInput = Omit<Floorplan, 'id'>
 /** Something picked from the left panel that is following the cursor (the "ghost"). */
 export type Placing =
   | { kind: 'machine'; typeId: string; rotation: Rotation; length?: number }
+  | { kind: 'forklift'; typeId: string; rotation: Rotation; preset?: Omit<TruckType, 'id'> }
   | { kind: 'utility'; utilityKind: UtilityKind }
   | { kind: 'pillar' }
   /** Drawing a zone: `start` is set while the mouse is held down, dragging out the rectangle. */
@@ -30,6 +32,10 @@ export type Placing =
   | { kind: 'wall'; start: Point | null }
   | { kind: 'loadingDock' }
   | { kind: 'loadingBay'; loadingDockId: string; outline: Point[] }
+  | { kind: 'logistics-rectangle'; logisticsKind: 'parking'; start: Point | null }
+  | { kind: 'logistics-path'; logisticsKind: 'truck-route' | 'pedestrian-route' | 'barrier'; points: Point[] }
+  | { kind: 'logistics-point'; logisticsKind: 'charging' | 'battery-watering' | 'crossing' }
+  | { kind: 'barrier-clearance'; barrierId: string; outline: Point[] }
 
 /** Which full-page screen is showing. */
 export type Screen = 'welcome' | 'wizard' | 'planner' | 'compare'
@@ -74,6 +80,14 @@ export interface Project {
   loadingDocks?: LoadingDock[]
   /** Missing in projects saved before loading bays existed. */
   loadingBays?: LoadingBay[]
+  truckTypes?: TruckType[]
+  forkliftInstances?: ForkliftInstance[]
+  truckParkingSpots?: TruckParkingSpot[]
+  truckServiceStations?: TruckServiceStation[]
+  truckRoutes?: TruckRoute[]
+  pedestrianRoutes?: PedestrianRoute[]
+  pedestrianCrossings?: PedestrianCrossing[]
+  safetyBarriers?: SafetyBarrier[]
   comments: LayoutComment[]
   setup: SetupAnswers
 }
@@ -112,7 +126,15 @@ export interface PlannerState {
   zones: Zone[]
   loadingDocks: LoadingDock[]
   loadingBays: LoadingBay[]
-  /** The selected item (machine, utility, pillar, wall, zone, loading dock or bay) when exactly one is selected, else null. */
+  truckTypes: TruckType[]
+  forkliftInstances: ForkliftInstance[]
+  truckParkingSpots: TruckParkingSpot[]
+  truckServiceStations: TruckServiceStation[]
+  truckRoutes: TruckRoute[]
+  pedestrianRoutes: PedestrianRoute[]
+  pedestrianCrossings: PedestrianCrossing[]
+  safetyBarriers: SafetyBarrier[]
+  /** The selected item when exactly one is selected, else null. */
   selectedId: string | null
   /** Everything selected (one item, or several from box select / Shift-click). */
   selectedIds: string[]
@@ -182,6 +204,27 @@ export interface PlannerState {
   startPlacingLoadingBay: (loadingDockId: string) => void
   setLoadingBayPoints: (outline: Point[]) => void
   updateLoadingBay: (id: string, patch: Partial<Pick<LoadingBay, 'name' | 'loadingDockId' | 'outline'>>) => void
+  addTruckType: (preset?: Omit<TruckType, 'id'>) => void
+  startPlacingForklift: (typeId: string, preset?: Omit<TruckType, 'id'>) => void
+  addForkliftInstance: (typeId: string, at: Point, rotation: Rotation) => boolean
+  rotateForkliftInstance: (id: string) => void
+  updateTruckType: (id: string, patch: Partial<Omit<TruckType, 'id'>>) => void
+  removeTruckType: (id: string) => void
+  startPlacingLogistics: (kind: 'parking' | 'truck-route' | 'pedestrian-route' | 'barrier' | TruckServiceKind | 'crossing') => void
+  setLogisticsRectangleStart: (start: Point | null) => void
+  addLogisticsRectangle: (start: Point, end: Point) => boolean
+  setLogisticsPoints: (points: Point[]) => void
+  addLogisticsPath: (kind: 'truck-route' | 'pedestrian-route' | 'barrier', points: Point[]) => boolean
+  addLogisticsPoint: (kind: TruckServiceKind | 'crossing', point: Point, truckRouteId?: string) => boolean
+  addParallelPedestrianRoute: (truckRouteId: string, side: 'left' | 'right' | 'both', offsetMm: number, usableWidthMm: number) => boolean
+  startPlacingBarrierKeepClear: (barrierId: string) => void
+  setBarrierKeepClearPoints: (outline: Point[]) => void
+  updateTruckParkingSpot: (id: string, patch: Partial<Omit<TruckParkingSpot, 'id'>>) => void
+  updateTruckServiceStation: (id: string, patch: Partial<Omit<TruckServiceStation, 'id'>>) => void
+  updateTruckRoute: (id: string, patch: Partial<Omit<TruckRoute, 'id'>>) => void
+  updatePedestrianRoute: (id: string, patch: Partial<Omit<PedestrianRoute, 'id'>>) => void
+  updatePedestrianCrossing: (id: string, patch: Partial<Omit<PedestrianCrossing, 'id'>>) => void
+  updateSafetyBarrier: (id: string, patch: Partial<Omit<SafetyBarrier, 'id'>>) => void
 
   /** Open a saved project; the one that was open is kept in `projects`. */
   openProject: (id: string) => void
@@ -276,6 +319,14 @@ export function currentProject(s: PlannerState): Project | null {
     zones: s.zones,
     loadingDocks: s.loadingDocks,
     loadingBays: s.loadingBays,
+    truckTypes: s.truckTypes,
+    forkliftInstances: s.forkliftInstances,
+    truckParkingSpots: s.truckParkingSpots,
+    truckServiceStations: s.truckServiceStations,
+    truckRoutes: s.truckRoutes,
+    pedestrianRoutes: s.pedestrianRoutes,
+    pedestrianCrossings: s.pedestrianCrossings,
+    safetyBarriers: s.safetyBarriers,
     comments: s.comments,
     setup: s.setup,
   }
@@ -298,6 +349,14 @@ function opened(p: Project): Partial<PlannerState> {
     zones: p.zones ?? [],
     loadingDocks: p.loadingDocks ?? [],
     loadingBays: p.loadingBays ?? [],
+    truckTypes: p.truckTypes ?? [],
+    forkliftInstances: p.forkliftInstances ?? [],
+    truckParkingSpots: p.truckParkingSpots ?? [],
+    truckServiceStations: p.truckServiceStations ?? [],
+    truckRoutes: p.truckRoutes ?? [],
+    pedestrianRoutes: p.pedestrianRoutes ?? [],
+    pedestrianCrossings: p.pedestrianCrossings ?? [],
+    safetyBarriers: p.safetyBarriers ?? [],
     comments: p.comments ?? [],
     selectedCommentId: null,
     commentDraft: null,
@@ -333,6 +392,14 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   zones: [],
   loadingDocks: [],
   loadingBays: [],
+  truckTypes: [],
+  forkliftInstances: [],
+  truckParkingSpots: [],
+  truckServiceStations: [],
+  truckRoutes: [],
+  pedestrianRoutes: [],
+  pedestrianCrossings: [],
+  safetyBarriers: [],
   comments: [],
   selectedCommentId: null,
   commentDraft: null,
@@ -355,6 +422,14 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       zones: [],
       loadingDocks: [],
       loadingBays: [],
+      truckTypes: [],
+      forkliftInstances: [],
+      truckParkingSpots: [],
+      truckServiceStations: [],
+      truckRoutes: [],
+      pedestrianRoutes: [],
+      pedestrianCrossings: [],
+      safetyBarriers: [],
       comments: [],
       selectedCommentId: null,
       commentDraft: null,
@@ -426,6 +501,14 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         zones: [],
         loadingDocks: [],
         loadingBays: [],
+        truckTypes: [],
+        forkliftInstances: [],
+        truckParkingSpots: [],
+        truckServiceStations: [],
+        truckRoutes: [],
+        pedestrianRoutes: [],
+        pedestrianCrossings: [],
+        safetyBarriers: [],
         comments: [],
         selectedCommentId: null,
         commentDraft: null,
@@ -713,6 +796,219 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       return { loadingBays: s.loadingBays.map((item) => item.id === id ? updated : item) }
     }),
 
+  addTruckType: (preset) => set((s) => {
+    const truck: TruckType = preset
+      ? { ...preset, id: crypto.randomUUID() }
+      : { id: crypto.randomUUID(), name: `Custom forklift ${s.truckTypes.length + 1}`, widthMm: null, lengthMm: null, turningRadiusMm: null, minimumAisleWidthMm: null, loadCapacityKg: null, energyType: 'electric', compatibleChargerTypes: [] }
+    return { truckTypes: [...s.truckTypes, truck], ...selection([truck.id]) }
+  }),
+  startPlacingForklift: (typeId, preset) => set((s) => {
+    const existingPreset = preset && s.truckTypes.find((item) => item.sourceUrl === preset.sourceUrl && item.model === preset.model)
+    const resolvedId = existingPreset?.id ?? typeId
+    return s.placing?.kind === 'forklift' && s.placing.typeId === resolvedId
+      ? { placing: null }
+      : { placing: { kind: 'forklift', typeId: resolvedId, rotation: 0, ...(!existingPreset && preset && { preset }) }, ...selection([]) }
+  }),
+  addForkliftInstance: (typeId, at, rotation) => {
+    if (![at.x, at.y, rotation].every(Number.isFinite)) return false
+    const state = get()
+    const placingPreset = state.placing?.kind === 'forklift' && state.placing.typeId === typeId ? state.placing.preset : undefined
+    const existingType = state.truckTypes.find((item) => item.id === typeId)
+    const type = existingType ?? (placingPreset ? { ...placingPreset, id: typeId } : undefined)
+    if (!type || type.widthMm === null || type.widthMm <= 0 || type.lengthMm === null || type.lengthMm <= 0) return false
+    const instance: ForkliftInstance = { id: crypto.randomUUID(), typeId, x: Math.round(at.x), y: Math.round(at.y), rotation }
+    set((s) => ({
+      truckTypes: s.truckTypes.some((item) => item.id === typeId) ? s.truckTypes : [...s.truckTypes, type],
+      forkliftInstances: [...s.forkliftInstances, instance],
+      ...selection([instance.id]),
+    }))
+    return true
+  },
+  rotateForkliftInstance: (id) => set((s) => ({
+    forkliftInstances: s.forkliftInstances.map((instance) => instance.id === id ? { ...instance, rotation: rotateBy(instance.rotation, 15) } : instance),
+  })),
+  updateTruckType: (id, patch) => set((s) => ({ truckTypes: s.truckTypes.map((truck) => truck.id === id ? { ...truck, ...patch } : truck) })),
+  removeTruckType: (id) => set((s) => {
+    const removedInstances = new Set(s.forkliftInstances.filter((instance) => instance.typeId === id).map((instance) => instance.id))
+    return {
+      truckTypes: s.truckTypes.filter((truck) => truck.id !== id),
+      forkliftInstances: s.forkliftInstances.filter((instance) => instance.typeId !== id),
+      truckParkingSpots: s.truckParkingSpots.map((item) => ({ ...item, compatibleTruckTypeIds: item.compatibleTruckTypeIds.filter((typeId) => typeId !== id) })),
+      truckServiceStations: s.truckServiceStations.map((item) => ({ ...item, compatibleTruckTypeIds: item.compatibleTruckTypeIds.filter((typeId) => typeId !== id) })),
+      truckRoutes: s.truckRoutes.map((item) => ({ ...item, allowedTruckTypeIds: item.allowedTruckTypeIds.filter((typeId) => typeId !== id) })),
+      ...selection(s.selectedIds.filter((selected) => selected !== id && !removedInstances.has(selected))),
+    }
+  }),
+  startPlacingLogistics: (kind) => set((s) => s.placing?.kind === 'logistics-rectangle' && s.placing.logisticsKind === kind || s.placing?.kind === 'logistics-path' && s.placing.logisticsKind === kind || s.placing?.kind === 'logistics-point' && s.placing.logisticsKind === kind
+    ? { placing: null }
+    : { placing: kind === 'parking'
+      ? { kind: 'logistics-rectangle', logisticsKind: 'parking', start: null }
+      : kind === 'truck-route' || kind === 'pedestrian-route' || kind === 'barrier'
+        ? { kind: 'logistics-path', logisticsKind: kind, points: [] }
+        : { kind: 'logistics-point', logisticsKind: kind }, ...selection([]) }),
+  setLogisticsRectangleStart: (start) => set((s) => s.placing?.kind === 'logistics-rectangle' ? { placing: { ...s.placing, start: start ? roundPoint(start) : null } } : s),
+  addLogisticsRectangle: (start, end) => {
+    if (![start.x, start.y, end.x, end.y].every(Number.isFinite)) return false
+    const x0 = Math.min(start.x, end.x)
+    const y0 = Math.min(start.y, end.y)
+    const x1 = Math.max(start.x, end.x)
+    const y1 = Math.max(start.y, end.y)
+    if (x1 - x0 <= 0 || y1 - y0 <= 0) return false
+    const id = crypto.randomUUID()
+    set((s) => {
+      const item: TruckParkingSpot = {
+        id,
+        name: `Forklift parking ${s.truckParkingSpots.length + 1}`,
+        outline: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }].map(roundPoint),
+        compatibleTruckTypeIds: [],
+      }
+      return { truckParkingSpots: [...s.truckParkingSpots, item], ...selection([id]), placing: null }
+    })
+    return true
+  },
+  setLogisticsPoints: (points) => set((s) => s.placing?.kind === 'logistics-path' ? { placing: { ...s.placing, points: points.map(roundPoint) } } : s),
+  addLogisticsPath: (kind, points) => {
+    if (points.length < 2 || points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return false
+    const id = crypto.randomUUID()
+    set((s) => {
+      if (kind === 'truck-route') {
+        const item: TruckRoute = { id, name: `Forklift route ${s.truckRoutes.length + 1}`, points: points.map(roundPoint), usableWidthMm: DEFAULT_FORKLIFT_ROUTE_WIDTH_MM, allowedTruckTypeIds: [], direction: 'two-way' }
+        return { truckRoutes: [...s.truckRoutes, item], ...selection([id]), placing: null }
+      }
+      if (kind === 'pedestrian-route') {
+        const item: PedestrianRoute = { id, name: `Pedestrian route ${s.pedestrianRoutes.length + 1}`, points: points.map(roundPoint), usableWidthMm: DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM }
+        return { pedestrianRoutes: [...s.pedestrianRoutes, item], ...selection([id]), placing: null }
+      }
+      const item: SafetyBarrier = { id, name: `Safety barrier ${s.safetyBarriers.length + 1}`, points: points.map(roundPoint), thicknessMm: DEFAULT_BARRIER_THICKNESS_MM, purpose: 'pedestrian-separation' }
+      return { safetyBarriers: [...s.safetyBarriers, item], ...selection([id]), placing: null }
+    })
+    return true
+  },
+  addLogisticsPoint: (kind, point, truckRouteId) => {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return false
+    const state = get()
+    const crossingMatch = kind === 'crossing' ? crossingPlacementAt(point, state.truckRoutes, state.pedestrianRoutes, truckRouteId) : null
+    if (kind === 'crossing' && !crossingMatch) return false
+    set((s) => {
+      const id = crypto.randomUUID()
+      const x = Math.round(point.x)
+      const y = Math.round(point.y)
+      if (kind === 'charging' || kind === 'battery-watering') {
+        const item: TruckServiceStation = { id, name: `${kind === 'charging' ? 'Charging' : 'Battery-watering'} station ${s.truckServiceStations.length + 1}`, x, y, kind, serviceCapacity: 1, compatibleTruckTypeIds: [], compatibleBatteryTypes: [] }
+        return { truckServiceStations: [...s.truckServiceStations, item], ...selection([id]), placing: null }
+      }
+      if (!crossingMatch) return s
+      const item: PedestrianCrossing = {
+        id, name: `Pedestrian crossing ${s.pedestrianCrossings.length + 1}`,
+        x: Math.round(crossingMatch.point.x), y: Math.round(crossingMatch.point.y),
+        truckRouteId: crossingMatch.truckRouteId,
+        pedestrianRouteId: crossingMatch.pedestrianRouteIds[0],
+        pedestrianRouteIds: crossingMatch.pedestrianRouteIds,
+      }
+      const routeById = new Map(s.pedestrianRoutes.map((route) => [route.id, route]))
+      const safetyBarriers = s.safetyBarriers.map((barrier) => {
+        if (!barrier.generatedForPedestrianRouteId || !crossingMatch.pedestrianRouteIds.includes(barrier.generatedForPedestrianRouteId)) return barrier
+        const pedestrianRoute = routeById.get(barrier.generatedForPedestrianRouteId)
+        const distanceMm = distanceAlongPath(barrier.points, crossingMatch.point)
+        if (!pedestrianRoute || distanceMm === null) return barrier
+        return { ...barrier, openings: [...(barrier.openings ?? []), { crossingId: id, distanceMm, widthMm: pedestrianRoute.usableWidthMm + barrier.thicknessMm }] }
+      })
+      return { pedestrianCrossings: [...s.pedestrianCrossings, item], safetyBarriers, ...selection([id]), placing: null }
+    })
+    return true
+  },
+  addParallelPedestrianRoute: (truckRouteId, side, offsetMm, usableWidthMm) => {
+    const state = get()
+    const truckRoute = state.truckRoutes.find((route) => route.id === truckRouteId)
+    if (!truckRoute || !Number.isFinite(offsetMm) || offsetMm < 0 || !Number.isFinite(usableWidthMm) || usableWidthMm <= 0) return false
+    const sides = side === 'both' ? ['left', 'right'] as const : [side]
+    const routes: PedestrianRoute[] = []
+    const barriers: SafetyBarrier[] = []
+    for (const routeSide of sides) {
+      const points = parallelRoutePoints(truckRoute.points, routeSide, offsetMm)
+      if (!points || points.length < 2) return false
+      const id = crypto.randomUUID()
+      const route: PedestrianRoute = {
+        id,
+        name: `Pedestrian route ${state.pedestrianRoutes.length + routes.length + 1}`,
+        points,
+        usableWidthMm,
+        parallel: { truckRouteId, side: routeSide, offsetMm },
+      }
+      routes.push(route)
+      const barrierPoints = parallelRoutePoints(truckRoute.points, routeSide, truckRoute.usableWidthMm / 2 + DEFAULT_BARRIER_THICKNESS_MM / 2 + GENERATED_BARRIER_CLEARANCE_MM)
+      if (barrierPoints) barriers.push({
+        id: crypto.randomUUID(), name: `Route separator · ${route.name}`, points: barrierPoints,
+        thicknessMm: DEFAULT_BARRIER_THICKNESS_MM, purpose: 'pedestrian-separation', generatedForPedestrianRouteId: id,
+      })
+    }
+    set((s) => ({ pedestrianRoutes: [...s.pedestrianRoutes, ...routes], safetyBarriers: [...s.safetyBarriers, ...barriers], ...selection([routes[0].id]) }))
+    return true
+  },
+  startPlacingBarrierKeepClear: (barrierId) => set((s) => ({
+    placing: s.placing?.kind === 'barrier-clearance' && s.placing.barrierId === barrierId ? null : { kind: 'barrier-clearance', barrierId, outline: [] },
+    ...selection([barrierId]),
+  })),
+  setBarrierKeepClearPoints: (outline) => set((s) => s.placing?.kind === 'barrier-clearance' ? { placing: { ...s.placing, outline: outline.map(roundPoint) } } : s),
+  updateTruckParkingSpot: (id, patch) => set((s) => ({ truckParkingSpots: s.truckParkingSpots.map((item) => item.id === id ? { ...item, ...patch } : item) })),
+  updateTruckServiceStation: (id, patch) => set((s) => ({ truckServiceStations: s.truckServiceStations.map((item) => item.id === id ? { ...item, ...patch } : item) })),
+  updateTruckRoute: (id, patch) => set((s) => {
+    const truckRoutes = s.truckRoutes.map((item) => item.id === id ? { ...item, ...patch } : item)
+    const updatedRoute = truckRoutes.find((item) => item.id === id)
+    const pedestrianRoutes = updatedRoute ? s.pedestrianRoutes.map((route) => {
+      if (route.parallel?.truckRouteId !== id) return route
+      const points = parallelRoutePoints(updatedRoute.points, route.parallel.side, route.parallel.offsetMm)
+      return points ? { ...route, points } : route
+    }) : s.pedestrianRoutes
+    const safetyBarriers = s.safetyBarriers.map((barrier) => {
+      const route = pedestrianRoutes.find((item) => item.id === barrier.generatedForPedestrianRouteId)
+      if (!route?.parallel || !updatedRoute || route.parallel.truckRouteId !== id) return barrier
+      const points = parallelRoutePoints(updatedRoute.points, route.parallel.side, updatedRoute.usableWidthMm / 2 + barrier.thicknessMm / 2 + GENERATED_BARRIER_CLEARANCE_MM)
+      return points ? { ...barrier, points } : barrier
+    })
+    return { truckRoutes, pedestrianRoutes, safetyBarriers }
+  }),
+  updatePedestrianRoute: (id, patch) => set((s) => {
+    const pedestrianRoutes = s.pedestrianRoutes.map((item) => {
+      if (item.id !== id) return item
+      const updated = { ...item, ...patch, ...('points' in patch && !('parallel' in patch) ? { parallel: undefined } : {}) }
+      if (!updated.parallel) return updated
+      const source = s.truckRoutes.find((route) => route.id === updated.parallel?.truckRouteId)
+      const points = source && parallelRoutePoints(source.points, updated.parallel.side, updated.parallel.offsetMm)
+      return points ? { ...updated, points } : updated
+    })
+    const route = pedestrianRoutes.find((item) => item.id === id)
+    const source = route?.parallel && s.truckRoutes.find((item) => item.id === route.parallel?.truckRouteId)
+    const safetyBarriers = s.safetyBarriers.map((barrier) => {
+      if (barrier.generatedForPedestrianRouteId !== id) return barrier
+      if (!route?.parallel || !source) return { ...barrier, generatedForPedestrianRouteId: undefined }
+      const points = parallelRoutePoints(source.points, route.parallel.side, source.usableWidthMm / 2 + barrier.thicknessMm / 2 + GENERATED_BARRIER_CLEARANCE_MM)
+      return points ? { ...barrier, points } : barrier
+    })
+    return { pedestrianRoutes, safetyBarriers }
+  }),
+  updatePedestrianCrossing: (id, patch) => set((s) => {
+    const pedestrianCrossings = s.pedestrianCrossings.map((item) => item.id === id ? { ...item, ...patch } : item)
+    const crossing = pedestrianCrossings.find((item) => item.id === id)
+    const safetyBarriers = crossing ? s.safetyBarriers.map((barrier) => {
+      if (!barrier.openings?.some((opening) => opening.crossingId === id)) return barrier
+      const distanceMm = distanceAlongPath(barrier.points, crossing)
+      return distanceMm === null ? barrier : { ...barrier, openings: barrier.openings.map((opening) => opening.crossingId === id ? { ...opening, distanceMm } : opening) }
+    }) : s.safetyBarriers
+    return { pedestrianCrossings, safetyBarriers }
+  }),
+  updateSafetyBarrier: (id, patch) => set((s) => ({
+    safetyBarriers: s.safetyBarriers.map((item) => {
+      if (item.id !== id) return item
+      const updated = { ...item, ...patch, ...('points' in patch ? { generatedForPedestrianRouteId: undefined, openings: undefined } : {}) }
+      if ('points' in patch || !updated.generatedForPedestrianRouteId) return updated
+      const route = s.pedestrianRoutes.find((candidate) => candidate.id === updated.generatedForPedestrianRouteId)
+      const source = route?.parallel && s.truckRoutes.find((candidate) => candidate.id === route.parallel?.truckRouteId)
+      const points = source && route?.parallel && parallelRoutePoints(source.points, route.parallel.side, source.usableWidthMm / 2 + updated.thicknessMm / 2 + GENERATED_BARRIER_CLEARANCE_MM)
+      return points ? { ...updated, points } : updated
+    }),
+  })),
+
   addZone: (kind, a, b) =>
     set((s) => {
       const info = ZONE_KINDS[kind]
@@ -786,14 +1082,49 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         : bay)
       if (floorplan && loadingDocks.some((dock) => moving.has(dock.id) && loadingDockIssue(dock, floorplan, loadingDocks))) return s
       if (floorplan && loadingBays.some((bay) => moving.has(bay.id) && loadingBayIssue(bay, floorplan, loadingDocks, loadingBays))) return s
+      const truckRoutes = s.truckRoutes.map((route) => moving.has(route.id) ? { ...route, points: route.points.map(shift) } : route)
+      const pedestrianRoutes = s.pedestrianRoutes.map((route) => {
+        if (moving.has(route.id) && route.parallel && !moving.has(route.parallel.truckRouteId)) return { ...route, points: route.points.map(shift), parallel: undefined }
+        if (route.parallel && moving.has(route.parallel.truckRouteId)) {
+          const source = truckRoutes.find((truckRoute) => truckRoute.id === route.parallel?.truckRouteId)
+          const points = source && parallelRoutePoints(source.points, route.parallel.side, route.parallel.offsetMm)
+          return points ? { ...route, points } : route
+        }
+        return moving.has(route.id) ? { ...route, points: route.points.map(shift) } : route
+      })
+      const pedestrianCrossings = s.pedestrianCrossings.map(by)
+      const safetyBarriers = s.safetyBarriers.map((barrier) => {
+        if (moving.has(barrier.id)) return { ...barrier, points: barrier.points.map(shift), ...(barrier.keepClearOutline && { keepClearOutline: barrier.keepClearOutline.map(shift) }), generatedForPedestrianRouteId: undefined }
+        const route = pedestrianRoutes.find((item) => item.id === barrier.generatedForPedestrianRouteId)
+        const source = route?.parallel && truckRoutes.find((item) => item.id === route.parallel?.truckRouteId)
+        if (route?.parallel && source) {
+          const points = parallelRoutePoints(source.points, route.parallel.side, source.usableWidthMm / 2 + barrier.thicknessMm / 2 + GENERATED_BARRIER_CLEARANCE_MM)
+          if (points) barrier = { ...barrier, points }
+        } else if (barrier.generatedForPedestrianRouteId) {
+          barrier = { ...barrier, generatedForPedestrianRouteId: undefined }
+        }
+        if (!barrier.openings?.length) return barrier
+        return { ...barrier, openings: barrier.openings.map((opening) => {
+          const crossing = pedestrianCrossings.find((item) => item.id === opening.crossingId)
+          const distanceMm = crossing && distanceAlongPath(barrier.points, crossing)
+          return distanceMm === null || distanceMm === undefined ? opening : { ...opening, distanceMm }
+        }) }
+      })
       return {
         machines: s.machines.map(by),
+        forkliftInstances: s.forkliftInstances.map(by),
         pillars: s.pillars.map(by),
         utilities: s.utilities.map((u) =>
           moving.has(u.id) && s.floorplan ? { ...u, ...placeUtility(u.kind, u.x + dx, u.y + dy, s.floorplan) } : u,
         ),
         loadingDocks,
         loadingBays,
+        truckParkingSpots: s.truckParkingSpots.map((spot) => moving.has(spot.id) ? { ...spot, outline: spot.outline.map(shift) } : spot),
+        truckRoutes,
+        pedestrianRoutes,
+        safetyBarriers,
+        truckServiceStations: s.truckServiceStations.map(by),
+        pedestrianCrossings,
         walls: s.walls.map((w) => (moving.has(w.id) ? { ...w, start: shift(w.start), end: shift(w.end) } : w)),
         zones: s.zones.map(by),
       }
@@ -803,6 +1134,8 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
     set((s) => {
       const gone = new Set(ids)
       const removedBays = new Set(s.loadingBays.filter((bay) => gone.has(bay.id) || gone.has(bay.loadingDockId)).map((bay) => bay.id))
+      const removedPedestrianRoutes = new Set(s.pedestrianRoutes.filter((route) => gone.has(route.id) || gone.has(route.parallel?.truckRouteId ?? '')).map((route) => route.id))
+      const removedCrossings = new Set(s.pedestrianCrossings.filter((crossing) => gone.has(crossing.id) || gone.has(crossing.truckRouteId) || (crossing.pedestrianRouteIds ?? [crossing.pedestrianRouteId]).every((id) => removedPedestrianRoutes.has(id))).map((crossing) => crossing.id))
       return {
         machines: s.machines.filter((m) => !gone.has(m.id)),
         utilities: s.utilities.filter((u) => !gone.has(u.id)),
@@ -811,6 +1144,26 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         zones: s.zones.filter((z) => !gone.has(z.id)),
         loadingDocks: s.loadingDocks.filter((dock) => !gone.has(dock.id)),
         loadingBays: s.loadingBays.filter((bay) => !removedBays.has(bay.id)),
+        truckTypes: s.truckTypes.filter((item) => !gone.has(item.id)),
+        forkliftInstances: s.forkliftInstances.filter((item) => !gone.has(item.id) && !gone.has(item.typeId)),
+        truckParkingSpots: s.truckParkingSpots.filter((item) => !gone.has(item.id)).map((item) => ({ ...item, compatibleTruckTypeIds: item.compatibleTruckTypeIds.filter((typeId) => !gone.has(typeId)) })),
+        truckServiceStations: s.truckServiceStations.filter((item) => !gone.has(item.id)).map((item) => ({
+          ...item,
+          compatibleTruckTypeIds: item.compatibleTruckTypeIds.filter((typeId) => !gone.has(typeId)),
+          ...(item.connectedPowerUtilityId && gone.has(item.connectedPowerUtilityId) && { connectedPowerUtilityId: undefined }),
+          ...(item.connectedWaterUtilityId && gone.has(item.connectedWaterUtilityId) && { connectedWaterUtilityId: undefined }),
+        })),
+        truckRoutes: s.truckRoutes.filter((item) => !gone.has(item.id)).map((item) => ({ ...item, allowedTruckTypeIds: item.allowedTruckTypeIds.filter((typeId) => !gone.has(typeId)) })),
+        pedestrianRoutes: s.pedestrianRoutes.filter((item) => !removedPedestrianRoutes.has(item.id)).map((item) => gone.has(item.parallel?.truckRouteId ?? '') ? { ...item, parallel: undefined } : item),
+        pedestrianCrossings: s.pedestrianCrossings.filter((item) => !removedCrossings.has(item.id)).map((item) => {
+          const pedestrianRouteIds = (item.pedestrianRouteIds ?? [item.pedestrianRouteId]).filter((routeId) => !removedPedestrianRoutes.has(routeId))
+          return { ...item, pedestrianRouteId: pedestrianRouteIds[0], pedestrianRouteIds }
+        }),
+        safetyBarriers: s.safetyBarriers.filter((item) => !gone.has(item.id) && !removedPedestrianRoutes.has(item.generatedForPedestrianRouteId ?? '')).map((item) => ({
+          ...item,
+          openings: item.openings?.filter((opening) => !removedCrossings.has(opening.crossingId)),
+          ...(gone.has(item.protectedTargetId ?? '') ? { protectedTargetId: undefined, keepClearOutline: undefined } : {}),
+        })),
         ...selection(s.selectedIds.filter((x) => !gone.has(x) && !removedBays.has(x))),
       }
     }),
@@ -965,7 +1318,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
 
   rotatePlacing: () =>
     set((s) =>
-      s.placing?.kind === 'machine'
+      s.placing?.kind === 'machine' || s.placing?.kind === 'forklift'
         ? { placing: { ...s.placing, rotation: rotateBy(s.placing.rotation, 15) } }
         : s,
     ),

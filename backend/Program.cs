@@ -25,6 +25,7 @@ builder.Services.AddScoped<UtilityDemandService>();
 builder.Services.AddScoped<UtilityValidationService>();
 builder.Services.AddScoped<LoadingDockValidationService>();
 builder.Services.AddScoped<LoadingBayValidationService>();
+builder.Services.AddScoped<TruckLogisticsValidationService>();
 
 var app = builder.Build();
 
