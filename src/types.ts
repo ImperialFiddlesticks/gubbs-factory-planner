@@ -78,6 +78,14 @@ export interface MachineInstance {
   rotation: Rotation
   /** Length of a straight conveyor belt, mm (its size along x at rotation 0). */
   length?: number
+  /** Own name shown on the plan, e.g. "M1" or "Jig 3 – wing spar"; an automatic "CNC 01" when unset. */
+  name?: string
+  /** The work done at this station, free text. */
+  work?: string
+  /** How many people work here. */
+  people?: number
+  /** Fill colour on the plan (hex, e.g. "#1a9fd9"), e.g. to mark a product line; the default blue when unset. */
+  colour?: string
 }
 
 export type UtilityKind = 'power' | 'water' | 'sprinkler' | 'extinguisher' | 'exit'
@@ -189,6 +197,10 @@ export const MachineInstanceSchema = z.object({
   y: z.number(),
   rotation: RotationSchema,
   length: z.number().positive().optional(),
+  name: z.string().optional(),
+  work: z.string().optional(),
+  people: z.number().int().min(0).optional(),
+  colour: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
 }) satisfies z.ZodType<MachineInstance>
 
 export const UtilityKindSchema = z.enum([

@@ -109,9 +109,9 @@ Decided: the floor name in the header is the project switcher (no new header but
 ### Object details (kickoff: "work performed in each jig", "colour, text, dimensions")
 - [x] Auto-numbered short names by type on the canvas ("CNC 01", "BELT 02") — on master (PR #19, `machineLabels.ts`).
 - [x] Editable size per placed item: width, depth, height (height not used by 2D checks yet) and clearance per side — on master (PR #19).
-- [ ] Own name/label per item (e.g. "M1", "Jig 3 – wing spar"), replacing the auto name when set.
-- [ ] Work description per item (free text) and number of people working there; shown in the properties panel and as a tooltip on hover.
-- [ ] Colour per item (a small palette), e.g. to mark which product line it belongs to.
+- [x] Own name/label per item (e.g. "M1", "Jig 3 – wing spar"), replacing the auto name when set.
+- [x] Work description per item (free text) and number of people working there; shown in the properties panel and as a tooltip on hover.
+- [x] Colour per item (a small palette), e.g. to mark which product line it belongs to.
 
 ### Zones (kickoff: "mark floor areas with colours and text"; replaces keep-clear aisles and height limits)
 - Draw a zone as a rectangle (click-drag), with a name, colour and type; the label is drawn in the zone (like "Zon 2: Svets & plåt" in the example layout).
