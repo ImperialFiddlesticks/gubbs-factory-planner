@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { CommitInput } from '@/components/CommitInput'
+import { CommitText } from '@/components/CommitText'
 import { PanelHeading } from '@/components/PanelHeading'
 import { UTILITY_ICONS } from '@/components/utilityIcons'
 import { Button } from '@/components/ui/button'
@@ -7,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { machineTypeFor } from '@/data/catalog'
+import { MACHINE_COLOURS } from '@/data/machineColours'
 import { isValidConveyorLength } from '@/data/conveyors'
 import { MIN_WALL_LENGTH } from '@/data/structures'
 import { EXIT_MAX_DISTANCE, UTILITY_KINDS, utilityRadius } from '@/data/utilities'
@@ -15,7 +17,7 @@ import { conveyorRuns } from '@/lib/conveyors'
 import { footprint, wallLength } from '@/lib/geometry'
 import { cn } from '@/lib/utils'
 import { findLayoutIssues, powerAssignments, type LayoutIssue } from '@/lib/validation'
-import { machineLabelGroup, machineShortName } from '@/lib/machineLabels'
+import { machineAutoName, machineName } from '@/lib/machineLabels'
 import { usePlanner } from '@/store'
 import { CANVAS } from '@/theme'
 import type { MachineInstance, Pillar, Utility, Wall } from '@/types'
@@ -102,7 +104,7 @@ function CommentsSection() {
       ? { x: (wall.start.x + wall.end.x) / 2, y: (wall.start.y + wall.end.y) / 2 }
       : null
   const targetLabel = machine
-    ? machineShortName(machine.typeId, machines.filter((item) => machineLabelGroup(item.typeId) === machineLabelGroup(machine.typeId)).findIndex((item) => item.id === machine.id) + 1)
+    ? machineName(machine, machines)
     : utility
       ? UTILITY_KINDS[utility.kind].name
       : pillar
@@ -402,6 +404,7 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
   const setBeltLength = usePlanner((s) => s.setBeltLength)
   const updateDimensions = usePlanner((s) => s.updateMachineDimensions)
   const updateClearance = usePlanner((s) => s.updateMachineClearance)
+  const updateDetails = usePlanner((s) => s.updateMachineDetails)
   const machines = usePlanner((s) => s.machines)
   const singlePieceId = usePlanner((s) => s.singlePieceId)
   const run = useMemo(() => conveyorRuns(machines).runOf.get(machine.id), [machines, machine.id])
@@ -410,13 +413,12 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
   if (!type) return null
   const size = footprint(type, machine.rotation)
   const clearance = machine.clearance ?? type.clearance
-  const index = machines.filter((m) => machineLabelGroup(m.typeId) === machineLabelGroup(machine.typeId)).findIndex((m) => m.id === machine.id) + 1
-  const shortName = machineShortName(machine.typeId, index)
+  const shortName = machineAutoName(machine, machines)
 
   return (
     <div className="space-y-3">
       <div>
-        <div className="text-sm font-semibold">{shortName}</div>
+        <div className="text-sm font-semibold">{machine.name ?? shortName}</div>
         <div className="text-xs text-muted-foreground">{type.name}</div>
         <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
           <PropertyValue label="Width × depth" value={`${formatMetres(size.width)} × ${formatMetres(size.depth)} m`} />
@@ -427,6 +429,15 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
         <div className="mt-1 text-xs text-muted-foreground">Water: {type.needsWater ? 'Required' : 'Not required'}</div>
         {type.needsFireSuppression && <div className="text-xs text-muted-foreground">Sprinkler: Required</div>}
       </div>
+
+      {!type.conveyor && (
+        <StationDetails
+          key={machine.id}
+          machine={machine}
+          autoName={shortName}
+          onChange={(patch) => updateDetails(machine.id, patch)}
+        />
+      )}
 
       <div className="rounded-md border bg-muted/20 p-2.5">
         <div className="mb-2 text-xs font-medium">Working clearance</div>
@@ -552,6 +563,71 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
         >
           Delete
         </Button>
+      </div>
+    </div>
+  )
+}
+
+/** A station's own name, the work done there, how many people work there, and its colour. */
+function StationDetails({
+  machine,
+  autoName,
+  onChange,
+}: {
+  machine: MachineInstance
+  /** The automatic name ("CNC 01"), shown as the placeholder. */
+  autoName: string
+  onChange: (patch: Partial<Pick<MachineInstance, 'name' | 'work' | 'people' | 'colour'>>) => void
+}) {
+  const current = machine.colour ?? MACHINE_COLOURS[0].hex
+  return (
+    <div className="space-y-2.5 rounded-md border bg-muted/20 p-2.5">
+      <div className="text-xs font-medium">Station</div>
+      <Field id="station-name" label="Name">
+        <CommitText id="station-name" className="h-8" value={machine.name ?? ''} placeholder={autoName} onCommit={(name) => onChange({ name })} />
+      </Field>
+      <Field id="station-work" label="Work done here">
+        <CommitText
+          id="station-work"
+          multiline
+          value={machine.work ?? ''}
+          placeholder="e.g. Drill and rivet the wing spar"
+          onCommit={(work) => onChange({ work })}
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field id="station-people" label="People">
+          <CommitInput
+            id="station-people"
+            className="h-8"
+            min={0}
+            step={1}
+            value={machine.people ?? 0}
+            isValid={(n) => Number.isInteger(n) && n >= 0 && n <= 99}
+            onCommit={(n) => onChange({ people: n === 0 ? undefined : n })}
+          />
+        </Field>
+        <div className="space-y-1.5">
+          <span className="text-xs text-muted-foreground">Colour</span>
+          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Colour">
+            {MACHINE_COLOURS.map((c, i) => (
+              <button
+                key={c.hex}
+                type="button"
+                role="radio"
+                aria-checked={current === c.hex}
+                title={c.name}
+                aria-label={c.name}
+                onClick={() => onChange({ colour: i === 0 ? undefined : c.hex })}
+                className={cn(
+                  'size-5 rounded-full border border-white/30 transition-transform hover:scale-110',
+                  current === c.hex && 'ring-2 ring-accent ring-offset-1 ring-offset-background',
+                )}
+                style={{ backgroundColor: c.hex }}
+              />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -884,10 +960,7 @@ function commentTargetName(
   walls: Wall[],
 ) {
   const machine = machines.find((item) => item.id === id)
-  if (machine) {
-    const index = machines.filter((item) => machineLabelGroup(item.typeId) === machineLabelGroup(machine.typeId)).findIndex((item) => item.id === id) + 1
-    return machineShortName(machine.typeId, index)
-  }
+  if (machine) return machineName(machine, machines)
   const utility = utilities.find((item) => item.id === id)
   if (utility) return UTILITY_KINDS[utility.kind].name
   if (pillars.some((item) => item.id === id)) return 'Pillar'

@@ -8,7 +8,7 @@ import { SCALE } from '@/constants'
 import { getMachineType, machineTypeFor } from '@/data/catalog'
 import { snapShift } from '@/lib/conveyors'
 import { clearanceRect, footprint } from '@/lib/geometry'
-import { machineLabelGroup, machineShortName } from '@/lib/machineLabels'
+import { machineName, machineShortName } from '@/lib/machineLabels'
 import type { Need } from '@/lib/validation'
 import { usePlanner } from '@/store'
 import { CANVAS, COLORS } from '@/theme'
@@ -40,9 +40,7 @@ export function Machine({
     const isConveyor = !!getMachineType(machine.typeId)?.conveyor
     const groupRef = useRef<Konva.Group>(null)
     const [hovered, setHovered] = useState(false)
-    const labelIndex = machines
-        .filter((m) => machineLabelGroup(m.typeId) === machineLabelGroup(machine.typeId))
-        .findIndex((m) => m.id === machine.id) + 1
+    const name = machineName(machine, machines)
 
     // Juice: pop in when placed.
     useEffect(() => {
@@ -152,13 +150,22 @@ export function Machine({
             <MachineBody
                 typeId={machine.typeId}
                 length={machine.length}
-                label={machineShortName(machine.typeId, labelIndex)}
+                width={machine.width}
+                depth={machine.depth}
+                colour={machine.colour}
+                label={name}
                 rotation={machine.rotation}
                 outline={outline}
                 needs={needs}
                 fit={fit}
             />
-            {hovered && <MachineHoverLabel machine={machine} fit={fit} />}
+            {hovered && (
+                <MachineHoverLabel
+                    machine={machine}
+                    name={name}
+                    fit={fit}
+                />
+            )}
         </Group>
     )
 }
@@ -202,15 +209,21 @@ function MachineMark({ typeId, w, h }: { typeId: string; w: number; h: number })
     return null
 }
 
-function MachineHoverLabel({ machine, fit }: { machine: MachineInstance; fit: number }) {
+/** Tooltip above a hovered machine: its name and type, and the work done there if set. */
+function MachineHoverLabel({ machine, name, fit }: { machine: MachineInstance; name: string; fit: number }) {
     const type = machineTypeFor(machine)
     if (!type) return null
     const height = footprint(type, machine.rotation).depth * SCALE
+    const lines = [
+        name === type.name ? name : `${name} · ${type.name}`,
+        machine.work,
+        machine.people !== undefined && `${machine.people} ${machine.people === 1 ? 'person' : 'people'}`,
+    ].filter(Boolean)
     return (
         <Group y={-height / 2} scaleX={1 / fit} scaleY={1 / fit} listening={false}>
             <Label y={-8}>
                 <Tag fill={CANVAS.machineStroke} cornerRadius={3} pointerDirection="down" pointerWidth={8} pointerHeight={5} />
-                <Text text={type.name} fontSize={12} padding={4} fill="white" />
+                <Text text={lines.join('\n')} fontSize={12} lineHeight={1.35} padding={5} fill="white" width={lines.length > 1 ? 240 : undefined} wrap="word" />
             </Label>
         </Group>
     )
@@ -227,6 +240,9 @@ const OUTLINE_STYLE: Record<Outline, { stroke: string; width: number }> = {
 export function MachineBody({
     typeId,
     length,
+    width,
+    depth,
+    colour,
     label,
     rotation,
     outline,
@@ -238,13 +254,18 @@ export function MachineBody({
     label?: string
     /** Straight conveyor length, mm. */
     length?: number
+    /** Per-item size overrides, mm (see MachineInstance). */
+    width?: number
+    depth?: number
+    /** Fill colour; the default machine blue when unset. */
+    colour?: string
     rotation: Rotation
     outline: Outline
     needs: Need[]
     fit: number
     dashed?: boolean
 }) {
-    const type = machineTypeFor({ typeId, length })
+    const type = machineTypeFor({ typeId, length, width, depth })
     if (!type) return null
 
     const w = type.width * SCALE
@@ -277,7 +298,7 @@ export function MachineBody({
                     y={-h / 2}
                     width={w}
                     height={h}
-                    fill={CANVAS.machineFill}
+                    fill={colour ?? CANVAS.machineFill}
                     stroke={style.stroke}
                     strokeWidth={style.width}
                     strokeScaleEnabled={false}

@@ -19,6 +19,7 @@ import {
   type Rect,
 } from '@/lib/geometry'
 import { conveyorMachineLinks, conveyorRuns, type ConveyorRun } from '@/lib/conveyors'
+import { machineName } from '@/lib/machineLabels'
 import { walkingRoutes, type WalkingRoute } from '@/lib/walking'
 import type { Floorplan, MachineInstance, MachineType, Pillar, Point, Utility, Wall } from '@/types'
 
@@ -45,6 +46,8 @@ export interface LayoutIssue {
 interface Resolved {
   machine: MachineInstance
   type: MachineType
+  /** What warnings call it: its own name or its automatic one ("CNC 02"). */
+  name: string
   /** The machine's real shape, turned with it: used for clashes, the floor edge and reach. */
   shape: Rect
   /** Its clearance zone, turned with it. */
@@ -61,6 +64,7 @@ function resolve(machines: MachineInstance[]): Resolved[] {
       out.push({
         machine,
         type,
+        name: machineName(machine, machines),
         shape: bodyRect(type, machine),
         clearance: clearanceRect(type, machine),
         body: bodyBox(type, machine),
@@ -271,9 +275,9 @@ function structureIssues(resolved: Resolved[], structures: StructureBox[], floor
       const ids = [r.machine.id, s.id]
       const key = ids.join('|')
       if (rectsOverlap(r.shape, structure)) {
-        issues.push({ key: `${s.noun}-on:${key}`, category: 'space', ids, message: `${r.type.name} stands on a ${s.noun}.` })
+        issues.push({ key: `${s.noun}-on:${key}`, category: 'space', ids, message: `${r.name} stands on a ${s.noun}.` })
       } else if (rectsOverlap(r.clearance, structure)) {
-        issues.push({ key: `${s.noun}-clear:${key}`, category: 'space', ids, message: `A ${s.noun} blocks the clearance of ${r.type.name}.` })
+        issues.push({ key: `${s.noun}-clear:${key}`, category: 'space', ids, message: `A ${s.noun} blocks the clearance of ${r.name}.` })
       }
     }
   }
@@ -290,9 +294,9 @@ function spaceIssues(
   for (const r of resolved) {
     const id = r.machine.id
     if (!rectInsideFloor(r.shape, floorplan)) {
-      issues.push({ key: `out:${id}`, category: 'space', ids: [id], message: `${r.type.name} is outside the floor.` })
+      issues.push({ key: `out:${id}`, category: 'space', ids: [id], message: `${r.name} is outside the floor.` })
     } else if (!rectInsideFloor(r.clearance, floorplan)) {
-      issues.push({ key: `edge:${id}`, category: 'space', ids: [id], message: `${r.type.name} needs more space from the wall.` })
+      issues.push({ key: `edge:${id}`, category: 'space', ids: [id], message: `${r.name} needs more space from the wall.` })
     }
   }
 
@@ -308,13 +312,13 @@ function spaceIssues(
         (runOf.has(a.machine.id) && runOf.get(a.machine.id) === runOf.get(b.machine.id)) ||
         linked(a.machine.id, b.machine.id)
       if (rectsOverlap(a.shape, b.shape)) {
-        issues.push({ key: `overlap:${key}`, category: 'space', ids, message: `${a.type.name} overlaps ${b.type.name}.` })
+        issues.push({ key: `overlap:${key}`, category: 'space', ids, message: `${a.name} overlaps ${b.name}.` })
       } else if (noClash) {
         continue
       } else if (rectsOverlap(a.shape, b.clearance)) {
-        issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${a.type.name} blocks the clearance of ${b.type.name}.` })
+        issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${a.name} blocks the clearance of ${b.name}.` })
       } else if (rectsOverlap(b.shape, a.clearance)) {
-        issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${b.type.name} blocks the clearance of ${a.type.name}.` })
+        issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${b.name} blocks the clearance of ${a.name}.` })
       }
     }
   }
@@ -355,7 +359,7 @@ function utilityIssues(
 
   for (const r of resolved) {
     const id = r.machine.id
-    const name = r.type.name
+    const name = r.name
     if (r.type.needsWater && inReach(r, utilities, 'water', walls).length === 0) {
       issues.push({ key: `water:${id}`, category: 'utility', need: 'water', ids: [id], message: `${name} has no water point in reach.` })
     }

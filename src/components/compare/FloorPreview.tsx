@@ -5,6 +5,7 @@ import { UtilityGlyph } from '@/components/canvas/UtilityNode'
 import { WallBody } from '@/components/canvas/WallNode'
 import { SCALE } from '@/constants'
 import { floorCorners } from '@/lib/floorShapes'
+import { machineName } from '@/lib/machineLabels'
 import { findLayoutIssues, idsWithIssues } from '@/lib/validation'
 import type { Project } from '@/store'
 import { CANVAS } from '@/theme'
@@ -51,6 +52,10 @@ export function FloorPreview({
             <MachineBody
               typeId={m.typeId}
               length={m.length}
+              width={m.width}
+              depth={m.depth}
+              colour={m.colour}
+              label={machineName(m, machines)}
               rotation={m.rotation}
               outline={clashes.has(m.id) ? 'invalid' : 'none'}
               needs={[]}

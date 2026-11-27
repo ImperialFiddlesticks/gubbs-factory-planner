@@ -132,6 +132,8 @@ export interface PlannerState {
   rotateMachine: (id: string) => void
   updateMachineDimensions: (id: string, patch: Partial<Pick<MachineInstance, 'width' | 'depth' | 'height'>>) => void
   updateMachineClearance: (id: string, patch: Partial<NonNullable<MachineInstance['clearance']>>) => void
+  /** Set a station's own name, work description, people or colour; an empty or undefined value clears it. */
+  updateMachineDetails: (id: string, patch: Partial<Pick<MachineInstance, 'name' | 'work' | 'people' | 'colour'>>) => void
   /** Change a straight belt's length, keeping its input end in place. */
   setBeltLength: (id: string, length: number) => void
   removeMachine: (id: string) => void
@@ -433,6 +435,22 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   updateMachineDimensions: (id, patch) =>
     set((s) => ({
       machines: s.machines.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+    })),
+
+  updateMachineDetails: (id, patch) =>
+    set((s) => ({
+      machines: s.machines.map((m) => {
+        if (m.id !== id) return m
+        const next = { ...m, ...patch }
+        // Blank text clears the field, so the automatic name or no description shows again.
+        for (const key of ['name', 'work', 'colour'] as const) {
+          const value = next[key]
+          if (value === undefined || value.trim() === '') delete next[key]
+          else next[key] = value.trim()
+        }
+        if (next.people === undefined) delete next.people
+        return next
+      }),
     })),
 
   updateMachineClearance: (id, patch) =>
