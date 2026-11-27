@@ -50,6 +50,7 @@ export function ConveyorBody({
         stroke={stroke}
         strokeWidth={strokeWidth}
         strokeScaleEnabled={false}
+        hitStrokeWidth={12 / fit}
         dash={dashed ? [6, 4] : undefined}
       />
       {piece === 'straight' ? (

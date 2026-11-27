@@ -3,13 +3,13 @@ import { selection, usePlanner, type PlannerState } from '@/store'
 
 /**
  * Undo / redo for the layout. Every change to the layout (floor, machines, utilities, pillars,
- * walls) is recorded as one step: actions update the store once per change, and drags only
+ * walls, zones) is recorded as one step: actions update the store once per change, and drags only
  * update it when dropped, so a whole drag is one step. Selection, layers and other UI state
  * aren't recorded. History is per project (it starts fresh when another project is opened) and
  * lasts for the session only (not autosaved).
  */
 
-type Layout = Pick<PlannerState, 'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls'>
+type Layout = Pick<PlannerState, 'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'zones' | 'loadingDocks' | 'loadingBays'>
 
 /** Steps kept; older ones are dropped. */
 const LIMIT = 100
@@ -20,6 +20,9 @@ const layoutOf = (s: Layout): Layout => ({
   utilities: s.utilities,
   pillars: s.pillars,
   walls: s.walls,
+  zones: s.zones,
+  loadingDocks: s.loadingDocks,
+  loadingBays: s.loadingBays,
 })
 
 /** The store never mutates, so a changed list or floor is a new object. */
@@ -28,7 +31,10 @@ const changed = (a: Layout, b: Layout) =>
   a.machines !== b.machines ||
   a.utilities !== b.utilities ||
   a.pillars !== b.pillars ||
-  a.walls !== b.walls
+  a.walls !== b.walls ||
+  a.zones !== b.zones ||
+  a.loadingDocks !== b.loadingDocks ||
+  a.loadingBays !== b.loadingBays
 
 interface HistoryState {
   /** Earlier layouts, oldest first. */
@@ -55,7 +61,7 @@ usePlanner.subscribe((state, prev) => {
 function restore(layout: Layout) {
   restoring = true
   usePlanner.setState((s) => {
-    const ids = new Set([...layout.machines, ...layout.utilities, ...layout.pillars, ...layout.walls].map((x) => x.id))
+    const ids = new Set([...layout.machines, ...layout.utilities, ...layout.pillars, ...layout.walls, ...layout.zones, ...layout.loadingDocks, ...layout.loadingBays].map((x) => x.id))
     return {
       ...layout,
       // Keep the selection where the items still exist; stop placing so the ghost doesn't linger.

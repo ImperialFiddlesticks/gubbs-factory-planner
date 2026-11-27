@@ -81,6 +81,7 @@ Decided: conveyors are pieces placed one at a time (straight belts and corners),
 - [x] 36. Runs: connected pieces form one run. No clearance clashes between pieces of a run; power is counted once per run (0.25 kW per metre of belt) from one power point that reaches any piece, with one wire; the properties panel shows the run (pieces, total length, power).
 - [x] 37. Machine fronts: a conveyor end snaps to the middle of a machine's front (feeding into it, or taking goods out of it); one conveyor per front; a joined belt and machine don't block each other's clearance; free fronts are marked while a conveyor piece is being placed or dragged.
 - [x] 38. Moving runs: dragging a conveyor piece moves its whole run (outlined together when selected, and the run's free ends snap); double-click a piece to move it on its own.
+- [x] Machines snap onto belt ends too: dragging or placing a machine near a free conveyor end puts the middle of its front on it, turned to face the belt (taking goods off an output, or feeding an input), so a run can go from one machine to another.
 
 ### Autosave
 - [x] Keep the current layout (floor, machines, utilities, structures, wizard answers) in the browser and restore it after a refresh or a closed tab, so no work is lost. Saved quietly on every change; "New floor" still starts fresh. First piece of saved projects.
@@ -98,25 +99,36 @@ Decided: the floor name in the header is the project switcher (no new header but
 - [x] 41. Compare screen: pick two projects; both floors drawn side by side at the same scale (view only); a table of key figures (stations, warnings, floor area used, longest walk to an exit, total power, conveyor length) with the better value highlighted; an "Open" button under each.
 - [x] 42. Export / import a project as a JSON file (in the switcher menu), for sharing until the backend can sync.
 
+### Fixes after the merge of PR #19 (free rotation)
+- [x] Conveyor joins compare flow directions exactly, but rotation now uses cos/sin (cos 90° = 6e-17, not 0). Result: a corner no longer joins a belt turned 90°/270°, and a belt flowing up (270°) doesn't snap into a machine front. Fix: compare directions with a small tolerance (or round them).
+
 ### Production flow (kickoff: "flow between jigs") — paused for now
 - Process order: give stations a step number (in the properties panel, or by clicking stations one after another in a "flow" mode). Several products/flows can come later.
 - Flow view: arrows from station to station in process order, drawn along the walking routes (around walls and machines), with each leg's distance and the total travel distance. Conveyor runs between stations count as part of the flow. A static view, not a simulation — shown as its own layer.
 - Figures: total flow distance (also in the compare table), and the longest leg highlighted, so a tangled layout is easy to spot.
 
 ### Object details (kickoff: "work performed in each jig", "colour, text, dimensions")
-- Name/label per placed item (e.g. "M1", "Jig 3 – wing spar"), shown on the canvas instead of the type name; auto-numbered by type when placed ("CNC 01", "Bench 02").
-- Work description per item (free text) and number of people working there; shown in the properties panel and as a tooltip on hover.
-- Editable size: width/depth (and height) per placed item, starting from the catalog values.
-- Colour per item (a small palette), e.g. to mark which product line it belongs to.
+- [x] Auto-numbered short names by type on the canvas ("CNC 01", "BELT 02") — on master (PR #19, `machineLabels.ts`).
+- [x] Editable size per placed item: width, depth, height (height not used by 2D checks yet) and clearance per side — on master (PR #19).
+- [x] Own name/label per item (e.g. "M1", "Jig 3 – wing spar"), replacing the auto name when set.
+- [x] Work description per item (free text) and number of people working there; shown in the properties panel and as a tooltip on hover.
+- [x] Colour per item (a small palette), e.g. to mark which product line it belongs to.
 
 ### Zones (kickoff: "mark floor areas with colours and text"; replaces keep-clear aisles and height limits)
-- Draw a zone as a rectangle (click-drag), with a name, colour and type; the label is drawn in the zone (like "Zon 2: Svets & plåt" in the example layout).
-- Zone types: plain area (labelling only); keep-clear aisle (hatched, no machine body may stand in it — warning); height limit (max height — a taller machine standing in it gets a warning); maybe welding/hazard area.
-- Area shown for each zone (m²), and machines can tell which zone they're in.
+
+Decided: a zone is selected and moved by its name tag (dragging elsewhere inside it still draws the select box, and machines in it stay clickable), resized with corner handles; catalog machines get typical heights (editable per machine) so height limits always work; a "Zones" layer, on by default.
+
+- [x] 43. Data model: `Zone` (id, name, kind: area / aisle / height limit, rectangle x/y/width/depth, colour, maxHeight for height limits) + zod schema; `zones` in the store with add/update/remove; part of projects, autosave, export/import, undo, duplicate and compare previews. Typical heights for every catalog machine.
+- [x] 44. Drawing: a "Zone" item in Structures; click-drag on the floor draws the rectangle (live size shown), Esc cancels; the new zone is selected so it can be named straight away.
+- [x] 45. Canvas: tinted fill and coloured border (aisles hatched); a name tag in the top-left corner with the area in m²; click the tag to select, drag it to move; corner handles resize the selected zone; a "Zones" layer. Drawn under machines.
+- [x] 46. Properties panel: name, type, colour, max height (height limits), position and size, area, delete; Delete key and undo work as for other items.
+- [x] 47. Rules: a machine body in a keep-clear aisle → "CNC 01 stands in the keep-clear aisle "Main aisle"."; a machine taller than a height limit it stands under → "CNC 01 (3.2 m) is taller than the 3.0 m height limit "Mezzanine"."
 
 ### Equipment library (assembly first)
-- Assembly-shop equipment, the hardest case for Saab: assembly jig (large, 2–3 people, clearance all round), work bench, tool cabinet/trolley, storage shelf, EUR-pallet spot, chemicals cabinet, quality-control table, parts washer, welding table, press brake, compressor — sizes from the example layout's legend.
-- Machines get a height (for height-limit zones). Catalog search once the list is long.
+- [x] Machines have a typical height (done with zones). Catalog search is on master (teammates).
+- [x] 48. New equipment (sizes from the example layout's legend) in seven categories, two new — Welding & sheet metal, Storage & logistics: assembly jig large (6 × 3 m) and small (3 × 2 m), heavy work bench, assembly table, quality-control table; pillar drill, metal band saw; welding table, grinding bench, press brake; hydraulic press 30 t; tool cabinet, tool trolley, storage shelf / pallet rack, EUR-pallet spot, chemicals cabinet; parts washer. Each with size, clearance, power, water/fire needs and height.
+- [x] 49. Typical people per station (jigs 2–3, benches 1), used when the station has no own number. Storage items (cabinets, trolleys, shelves, pallets) don't count as stations in the goal counter or compare table, like conveyors.
+- [x] 50. Canvas: short names for the new types ("JIG 01", "BENCH 02", "SHELF 01") and a simple mark on each so types are told apart at a glance (jig frame, bench vice, pallet cross, shelf stripes, …).
 
 ### View and measure (kickoff: "pan, zoom", "measure between points")
 - Zoom (scroll, +/− in the map toolbar, zoom level, fit-to-screen) and pan (drag with Space held or the middle mouse button).
@@ -133,22 +145,22 @@ Decided: the floor name in the header is the project switcher (no new header but
 - Export the floor as a PNG and/or PDF, with a title block (name, size, date), scale bar and a legend of items.
 
 ### Free rotation
-- Machines can stand at any angle: a rotate handle on the selected machine and an angle field in the properties panel; snaps every 15° (stronger at 0/90/180/270), Shift for any angle; R / Rotate button still turn 90°. Conveyors stay at 90° steps for now.
-- Needs: `rotation` becomes any angle in degrees (backend contract change — tell the backend team); clashes, clearance, inside-floor, utility reach, walking routes, supply lines, machine fronts and box select all work with rotated rectangles instead of upright boxes. Estimate ~1–1.5 days.
+- [x] `rotation` is any angle in degrees (0–359) in types and schema; R and the "Rotate 15°" button turn in 15° steps; machines are drawn at their angle — on master (PR #19).
+- [x] Clash checks, clearance, reach and walking routes work with a rotated machine's enclosing upright box — on master (PR #19).
+- [x] Fixed (rotated-rectangle checks for clashes, clearance, floor edge and reach; walking routes, supply lines and box select still use the enclosing box). Was: the enclosing box is bigger than the machine at angles other than 0/90/180/270 (≈ 40 % wider at 45°), so angled machines get false "overlaps" / "blocks the clearance" warnings near their corners. Proper fix: rotated-rectangle checks (separating-axis test), ~0.5–1 day.
+- [ ] Angle field in the properties panel (type any angle) and/or a rotate handle on the selected machine; R could stay at 90° with 15° on Shift+R.
 
 ### Ease of use
 - Alignment guides: while dragging, dashed guide lines appear when a machine lines up with another's edge or centre, and it snaps gently onto them; a distance label (e.g. "1.2 m") shows the gap to the nearest neighbour.
 - Drag from the catalog: drag an item straight onto the floor, as well as click-then-place.
 - Quick actions: a small floating bar next to the selected item (Rotate, Duplicate, Comment, Delete), plus shortcuts: R rotate, Ctrl+D duplicate, arrow keys to nudge (Shift for bigger steps).
-- Example floors: ready-made templates in the wizard (e.g. the example 22 × 13 m mechanical workshop, an assembly hall) to start from instead of an empty hall.
+- [x] Example workshop (Saab's 22 × 13 m drawing V-2026-02), opened from the welcome page or the project menu. Still open: more templates (e.g. an assembly hall), and offering them in the wizard. Was: ready-made templates in the wizard (e.g. the example 22 × 13 m mechanical workshop, an assembly hall) to start from instead of an empty hall.
 - First-time hints: two or three short tips the first time someone places a machine (drag to move, R to rotate, red means it needs more space), dismissable and shown once.
 - Wizard "Edit an existing layout": open a saved project or import a project file.
 
 ### Comments (working together)
-- Add a comment to anything on the plan: a machine, utility, structure, zone, or a spot on the empty floor.
-- On the canvas a comment shows only as a small chat-bubble icon next to what it's about; clicking it opens the full comment.
-- An "All comments" panel lists every comment, so the whole plan's discussion can be reviewed in one place; clicking one selects and shows its item.
-- To decide when planning: author name on each comment, replies (threads), marking a comment resolved, and how comments are shared between people (needs the backend to sync; local-only until then).
+- [x] Comments on an item or pinned to a spot on the floor, with author, time and open/resolved status; markers on the canvas; a "Discussion" section listing them; saved with the project in the browser — on master (PR #19).
+- [ ] Sharing between people (needs the backend to sync plans); replies/threads if wanted.
 
 ### Open floor shapes
 - A floor side can be marked open (no wall) where the hall continues into an adjoining area, e.g. a corridor or another hall. Drawn as a dashed edge; machines may not cross it, but walking routes can leave through it (counts like a wide exit), and exits don't snap to it. Chosen per side in the wizard's floor step and editable in the planner.

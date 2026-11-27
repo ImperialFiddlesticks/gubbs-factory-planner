@@ -11,7 +11,9 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins("http://localhost:5173");
+        policy.WithOrigins(
+            "http://localhost:5173",
+            "http://localhost:5174");
         policy.AllowAnyHeader();
         policy.AllowAnyMethod();
     } );
@@ -19,6 +21,11 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddScoped<PlacementService>();
+builder.Services.AddScoped<MachineTypeValidationService>();
+builder.Services.AddScoped<UtilityDemandService>();
+builder.Services.AddScoped<UtilityValidationService>();
+builder.Services.AddScoped<LoadingDockValidationService>();
+builder.Services.AddScoped<LoadingBayValidationService>();
 
 builder.Services.AddSingleton<backend.Services.IProjectRepository>(_ =>
     new backend.Services.FileProjectRepository(

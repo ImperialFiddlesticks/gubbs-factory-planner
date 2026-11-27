@@ -3,8 +3,10 @@ import { MachineBody } from '@/components/canvas/MachineNode'
 import { PillarBody } from '@/components/canvas/PillarNode'
 import { UtilityGlyph } from '@/components/canvas/UtilityNode'
 import { WallBody } from '@/components/canvas/WallNode'
+import { ZoneShape } from '@/components/canvas/ZoneNode'
 import { SCALE } from '@/constants'
 import { floorCorners } from '@/lib/floorShapes'
+import { machineName } from '@/lib/machineLabels'
 import { findLayoutIssues, idsWithIssues } from '@/lib/validation'
 import type { Project } from '@/store'
 import { CANVAS } from '@/theme'
@@ -31,13 +33,16 @@ export function FloorPreview({
   const x = Math.round((width - floorplan.width * pxPerMm) / 2)
   const y = Math.round((height - floorplan.depth * pxPerMm) / 2)
   const floorPoints = floorCorners(floorplan).flatMap((p) => [p.x * SCALE, p.y * SCALE])
-  const clashes = idsWithIssues(findLayoutIssues(machines, utilities, floorplan, { pillars, walls }), 'space')
+  const clashes = idsWithIssues(findLayoutIssues(machines, utilities, floorplan, { pillars, walls, zones: project.zones ?? [] }), 'space')
 
   return (
     <Stage width={width} height={height} listening={false}>
       <Layer x={x} y={y} scaleX={fit} scaleY={fit} listening={false}>
         <Line points={floorPoints} closed fill={CANVAS.floor} />
         <Line points={floorPoints} closed stroke={CANVAS.floorStroke} strokeWidth={2} strokeScaleEnabled={false} />
+        {(project.zones ?? []).map((z) => (
+          <ZoneShape key={z.id} zone={z} fit={fit} />
+        ))}
         {walls.map((w) => (
           <WallBody key={w.id} wall={w} fit={fit} />
         ))}
@@ -51,6 +56,10 @@ export function FloorPreview({
             <MachineBody
               typeId={m.typeId}
               length={m.length}
+              width={m.width}
+              depth={m.depth}
+              colour={m.colour}
+              label={machineName(m, machines)}
               rotation={m.rotation}
               outline={clashes.has(m.id) ? 'invalid' : 'none'}
               needs={[]}

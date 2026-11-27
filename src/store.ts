@@ -3,6 +3,8 @@ import { persist } from 'zustand/middleware'
 import { getMachineType } from '@/data/catalog'
 import type { EquipmentCategoryId } from '@/data/categories'
 import { DEFAULT_CONVEYOR_LENGTH } from '@/data/conveyors'
+import { DEFAULT_HEIGHT_LIMIT, ZONE_KINDS } from '@/data/zones'
+import { exampleWorkshop } from '@/data/exampleWorkshop'
 import { DEFAULT_LAYERS, UTILITY_LAYER, utilityVisible, type LayerId } from '@/data/layers'
 import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
 import { DEFAULT_PILLAR_GRID, type PillarGrid } from '@/lib/pillarGrid'
@@ -11,7 +13,9 @@ import { UTILITY_KINDS } from '@/data/utilities'
 import { autosave } from '@/lib/autosave'
 import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
-import type { Floorplan, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall } from '@/types'
+import type { Floorplan, LayoutComment, LoadingBay, LoadingDock, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall, Zone, ZoneKind } from '@/types'
+import { DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockIssue, loadingDockPerimeter, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
+import { loadingBayIssue } from '@/lib/loadingBays'
 
 export type NewFloorplanInput = Omit<Floorplan, 'id'>
 
@@ -20,8 +24,12 @@ export type Placing =
   | { kind: 'machine'; typeId: string; rotation: Rotation; length?: number }
   | { kind: 'utility'; utilityKind: UtilityKind }
   | { kind: 'pillar' }
+  /** Drawing a zone: `start` is set while the mouse is held down, dragging out the rectangle. */
+  | { kind: 'zone'; zoneKind: ZoneKind; start: Point | null }
   /** Drawing a wall: `start` is null until the first click. */
   | { kind: 'wall'; start: Point | null }
+  | { kind: 'loadingDock' }
+  | { kind: 'loadingBay'; loadingDockId: string; outline: Point[] }
 
 /** Which full-page screen is showing. */
 export type Screen = 'welcome' | 'wizard' | 'planner' | 'compare'
@@ -60,7 +68,19 @@ export interface Project {
   utilities: Utility[]
   pillars: Pillar[]
   walls: Wall[]
+  /** Missing in projects saved before zones existed. */
+  zones?: Zone[]
+  /** Missing in projects saved before loading docks existed. */
+  loadingDocks?: LoadingDock[]
+  /** Missing in projects saved before loading bays existed. */
+  loadingBays?: LoadingBay[]
+  comments: LayoutComment[]
   setup: SetupAnswers
+}
+
+interface CommentDraft {
+  message: string
+  author: string
 }
 
 export interface PlannerState {
@@ -72,6 +92,10 @@ export interface PlannerState {
   wizard: SetupAnswers
   /** Saved projects other than the open one. */
   projects: Project[]
+  comments: LayoutComment[]
+  /** Current discussion item and a pending floor-pin comment; UI-only. */
+  selectedCommentId: string | null
+  commentDraft: CommentDraft | null
 
   /** Open the wizard with fresh answers. The current project stays open until the wizard finishes. */
   startSetup: () => void
@@ -85,7 +109,10 @@ export interface PlannerState {
   utilities: Utility[]
   pillars: Pillar[]
   walls: Wall[]
-  /** The selected item (machine, utility, pillar or wall) when exactly one is selected, else null. */
+  zones: Zone[]
+  loadingDocks: LoadingDock[]
+  loadingBays: LoadingBay[]
+  /** The selected item (machine, utility, pillar, wall, zone, loading dock or bay) when exactly one is selected, else null. */
   selectedId: string | null
   /** Everything selected (one item, or several from box select / Shift-click). */
   selectedIds: string[]
@@ -100,7 +127,7 @@ export interface PlannerState {
   conveyorLength: number
   /** Which canvas overlays are switched on; UI-only, autosaved as a preference. */
   layers: Record<LayerId, boolean>
-  /** Pillars and walls can't be selected or dragged; UI-only, not saved. */
+  /** Pillars, walls, and loading docks can't be selected or dragged; UI-only, not saved. */
   lockStructures: boolean
 
   /**
@@ -120,6 +147,10 @@ export interface PlannerState {
   /** Move several machines at once (a conveyor run). */
   moveMachines: (moves: { id: string; x: number; y: number }[]) => void
   rotateMachine: (id: string) => void
+  updateMachineDimensions: (id: string, patch: Partial<Pick<MachineInstance, 'width' | 'depth' | 'height'>>) => void
+  updateMachineClearance: (id: string, patch: Partial<NonNullable<MachineInstance['clearance']>>) => void
+  /** Set a station's own name, work description, people or colour; an empty or undefined value clears it. */
+  updateMachineDetails: (id: string, patch: Partial<Pick<MachineInstance, 'name' | 'work' | 'people' | 'colour'>>) => void
   /** Change a straight belt's length, keeping its input end in place. */
   setBeltLength: (id: string, length: number) => void
   removeMachine: (id: string) => void
@@ -142,6 +173,16 @@ export interface PlannerState {
   updateWall: (id: string, patch: Partial<Pick<Wall, 'start' | 'end' | 'thickness'>>) => void
   removeWall: (id: string) => void
 
+  addLoadingDock: (boundaryOffsetMm: number) => boolean
+  startPlacingLoadingDock: () => void
+  moveLoadingDock: (id: string, x: number, y: number) => void
+  updateLoadingDock: (id: string, patch: Partial<Pick<LoadingDock, 'name' | 'widthMm' | 'boundaryOffsetMm' | 'flowDirection'>>) => void
+  removeLoadingDock: (id: string) => void
+  addLoadingBay: (loadingDockId: string, outline: Point[]) => boolean
+  startPlacingLoadingBay: (loadingDockId: string) => void
+  setLoadingBayPoints: (outline: Point[]) => void
+  updateLoadingBay: (id: string, patch: Partial<Pick<LoadingBay, 'name' | 'loadingDockId' | 'outline'>>) => void
+
   /** Open a saved project; the one that was open is kept in `projects`. */
   openProject: (id: string) => void
   /** Copy the open project as "<name> (copy)" and open the copy. */
@@ -155,15 +196,25 @@ export interface PlannerState {
    * projects), and "(imported)" is added to its name if a project already has that name.
    */
   importProject: (project: Project) => void
+  /** Open a fresh copy of the example workshop as a new project. */
+  openExample: () => void
   /** Show the compare page / go back to the planner. */
   openCompare: () => void
   closeCompare: () => void
+
+  /** Add a zone from a rectangle (two opposite corners, mm) and select it. */
+  addZone: (kind: ZoneKind, a: Point, b: Point) => void
+  /** Rename, recolour, retype, move or resize a zone (sizes rounded to whole mm). */
+  updateZone: (id: string, patch: Partial<Omit<Zone, 'id'>>) => void
+  removeZone: (id: string) => void
 
   select: (id: string | null) => void
   /** Select several items (box select); with `add`, they're added to the current selection. */
   selectMany: (ids: string[], add?: boolean) => void
   /** Shift-click: add the item to the selection, or take it out. */
   toggleSelected: (id: string) => void
+  /** Move a machine and turn it in one step (e.g. dropped onto a conveyor end). */
+  moveMachineTo: (id: string, x: number, y: number, rotation: Rotation) => void
   /** Move items of any kind by (dx, dy) mm in one step; exits stay on the wall. */
   moveItems: (ids: string[], dx: number, dy: number) => void
   /** Delete items of any kind in one step. */
@@ -175,6 +226,13 @@ export interface PlannerState {
   setConveyorLength: (length: number) => void
   /** Locking also deselects a selected structure. */
   toggleLockStructures: () => void
+  addComment: (comment: Omit<LayoutComment, 'id' | 'createdAt' | 'status'>) => void
+  startCommentPlacement: (draft: CommentDraft) => void
+  addLocationComment: (x: number, y: number) => void
+  cancelCommentPlacement: () => void
+  selectComment: (id: string | null) => void
+  setCommentStatus: (id: string, status: LayoutComment['status']) => void
+  deleteComment: (id: string) => void
 
   /** Pick up a machine type; picking the same one again puts it back. */
   startPlacingMachine: (typeId: string) => void
@@ -186,6 +244,10 @@ export interface PlannerState {
   startPlacingWall: () => void
   /** First click of a wall: fix its start point. */
   setWallStart: (start: Point) => void
+  /** Pick up a zone type to draw; picking the same one again puts it back. */
+  startPlacingZone: (kind: ZoneKind) => void
+  /** Mouse down (a point) or a drag too small to make a zone (null) while drawing a zone. */
+  setZoneStart: (start: Point | null) => void
   rotatePlacing: () => void
   cancelPlacing: () => void
 }
@@ -205,7 +267,18 @@ function placeUtility(kind: UtilityKind, x: number, y: number, floorplan: Floorp
 /** The open project as a saved project (null when no floor is open). */
 export function currentProject(s: PlannerState): Project | null {
   if (!s.floorplan) return null
-  return { floorplan: s.floorplan, machines: s.machines, utilities: s.utilities, pillars: s.pillars, walls: s.walls, setup: s.setup }
+  return {
+    floorplan: s.floorplan,
+    machines: s.machines,
+    utilities: s.utilities,
+    pillars: s.pillars,
+    walls: s.walls,
+    zones: s.zones,
+    loadingDocks: s.loadingDocks,
+    loadingBays: s.loadingBays,
+    comments: s.comments,
+    setup: s.setup,
+  }
 }
 
 /** The project list with the open project added, before something else is opened. */
@@ -222,6 +295,12 @@ function opened(p: Project): Partial<PlannerState> {
     utilities: p.utilities,
     pillars: p.pillars,
     walls: p.walls,
+    zones: p.zones ?? [],
+    loadingDocks: p.loadingDocks ?? [],
+    loadingBays: p.loadingBays ?? [],
+    comments: p.comments ?? [],
+    selectedCommentId: null,
+    commentDraft: null,
     setup: p.setup,
     ...selection([]),
     singlePieceId: null,
@@ -251,6 +330,12 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   utilities: [],
   pillars: [],
   walls: [],
+  zones: [],
+  loadingDocks: [],
+  loadingBays: [],
+  comments: [],
+  selectedCommentId: null,
+  commentDraft: null,
   selectedId: null,
   selectedIds: [],
   singlePieceId: null,
@@ -267,6 +352,12 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       utilities: [],
       pillars: pillars.map((p) => ({ id: crypto.randomUUID(), ...p })),
       walls: [],
+      zones: [],
+      loadingDocks: [],
+      loadingBays: [],
+      comments: [],
+      selectedCommentId: null,
+      commentDraft: null,
       setup: s.wizard,
       ...selection([]),
       singlePieceId: null,
@@ -283,6 +374,12 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         projects: keepOpenProject(s),
       }
     }),
+
+  openExample: () => {
+    const s = get()
+    const names = [...(s.floorplan ? [s.floorplan.name] : []), ...s.projects.map((p) => p.floorplan.name)]
+    s.importProject(exampleWorkshop(names))
+  },
 
   openCompare: () => set((s) => (s.floorplan ? { screen: 'compare', placing: null } : s)),
   closeCompare: () => set({ screen: 'planner' }),
@@ -326,6 +423,12 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         utilities: [],
         pillars: [],
         walls: [],
+        zones: [],
+        loadingDocks: [],
+        loadingBays: [],
+        comments: [],
+        selectedCommentId: null,
+        commentDraft: null,
         setup: DEFAULT_SETUP,
         ...selection([]),
         singlePieceId: null,
@@ -344,8 +447,21 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         y: Math.round((p.y * depth) / oldD),
       }))
       const floorplan = { ...s.floorplan, width, depth, ...(scaled && { outline: scaled }) }
+      const loadingBays = s.loadingBays.map((bay) => ({
+        ...bay,
+        outline: bay.outline.map((point) => ({
+          x: Math.round((point.x * width) / oldW),
+          y: Math.round((point.y * depth) / oldD),
+        })),
+      }))
+      const oldPerimeter = loadingDockPerimeter(s.floorplan)
+      const newPerimeter = loadingDockPerimeter(floorplan)
       return {
         floorplan,
+        loadingDocks: oldPerimeter > 0
+          ? s.loadingDocks.map((dock) => ({ ...dock, boundaryOffsetMm: dock.boundaryOffsetMm * newPerimeter / oldPerimeter }))
+          : s.loadingDocks,
+        loadingBays,
         // The walls moved, so keep exits on them.
         utilities: s.utilities.map((u) =>
           u.kind === 'exit' ? { ...u, ...placeUtility(u.kind, u.x, u.y, floorplan) } : u,
@@ -389,6 +505,37 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       machines: s.machines.map((m) =>
         m.id === id ? { ...m, rotation: rotateBy(m.rotation, 15) } : m,
       ),
+    })),
+
+  updateMachineDimensions: (id, patch) =>
+    set((s) => ({
+      machines: s.machines.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+    })),
+
+  updateMachineDetails: (id, patch) =>
+    set((s) => ({
+      machines: s.machines.map((m) => {
+        if (m.id !== id) return m
+        const next = { ...m, ...patch }
+        // Blank text clears the field, so the automatic name or no description shows again.
+        for (const key of ['name', 'work', 'colour'] as const) {
+          const value = next[key]
+          if (value === undefined || value.trim() === '') delete next[key]
+          else next[key] = value.trim()
+        }
+        if (next.people === undefined) delete next.people
+        return next
+      }),
+    })),
+
+  updateMachineClearance: (id, patch) =>
+    set((s) => ({
+      machines: s.machines.map((m) => {
+        if (m.id !== id) return m
+        const type = getMachineType(m.typeId)
+        if (!type) return m
+        return { ...m, clearance: { ...type.clearance, ...m.clearance, ...patch } }
+      }),
     })),
 
   setBeltLength: (id, length) =>
@@ -491,6 +638,117 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
+  addLoadingDock: (boundaryOffsetMm) => {
+    const s = get()
+    if (!s.floorplan) return false
+    const dock: LoadingDock = {
+      id: crypto.randomUUID(),
+      name: `Loading dock ${s.loadingDocks.length + 1}`,
+      widthMm: DEFAULT_LOADING_DOCK_WIDTH_MM,
+      boundaryOffsetMm,
+      flowDirection: 'two-way',
+    }
+    if (loadingDockIssue(dock, s.floorplan, s.loadingDocks)) return false
+    set({ loadingDocks: [...s.loadingDocks, dock], ...selection([dock.id]) })
+    return true
+  },
+
+  moveLoadingDock: (id, x, y) =>
+    set((s) => {
+      if (!s.floorplan) return s
+      const dock = s.loadingDocks.find((item) => item.id === id)
+      const position = nearestLoadingDockPosition(x, y, s.floorplan)
+      if (!dock || !position) return s
+      const moved = { ...dock, boundaryOffsetMm: position.offsetMm }
+      if (loadingDockIssue(moved, s.floorplan, s.loadingDocks)) return s
+      return { loadingDocks: s.loadingDocks.map((item) => item.id === id ? moved : item) }
+    }),
+
+  updateLoadingDock: (id, patch) =>
+    set((s) => {
+      if (!s.floorplan) return s
+      const dock = s.loadingDocks.find((item) => item.id === id)
+      if (!dock) return s
+      const updated = { ...dock, ...patch, name: patch.name?.trim() ?? dock.name }
+      if (loadingDockIssue(updated, s.floorplan, s.loadingDocks)) return s
+      return { loadingDocks: s.loadingDocks.map((item) => item.id === id ? updated : item) }
+    }),
+
+  removeLoadingDock: (id) =>
+    set((s) => {
+      const removedBays = new Set(s.loadingBays.filter((bay) => bay.loadingDockId === id).map((bay) => bay.id))
+      return {
+        loadingDocks: s.loadingDocks.filter((dock) => dock.id !== id),
+        loadingBays: s.loadingBays.filter((bay) => bay.loadingDockId !== id),
+        ...selection(s.selectedIds.filter((selected) => selected !== id && !removedBays.has(selected))),
+      }
+    }),
+
+  addLoadingBay: (loadingDockId, outline) => {
+    const s = get()
+    if (!s.floorplan) return false
+    const bay: LoadingBay = {
+      id: crypto.randomUUID(),
+      name: `Loading bay ${s.loadingBays.length + 1}`,
+      loadingDockId,
+      outline: outline.map(roundPoint),
+    }
+    if (loadingBayIssue(bay, s.floorplan, s.loadingDocks, s.loadingBays)) return false
+    set((state) => ({ loadingBays: [...state.loadingBays, bay], ...selection([bay.id]) }))
+    return true
+  },
+
+  updateLoadingBay: (id, patch) =>
+    set((s) => {
+      if (!s.floorplan) return s
+      const bay = s.loadingBays.find((item) => item.id === id)
+      if (!bay) return s
+      const updated = {
+        ...bay,
+        ...patch,
+        ...(patch.name !== undefined && { name: patch.name.trim() }),
+        ...(patch.outline && { outline: patch.outline.map(roundPoint) }),
+      }
+      if (loadingBayIssue(updated, s.floorplan, s.loadingDocks, s.loadingBays)) return s
+      return { loadingBays: s.loadingBays.map((item) => item.id === id ? updated : item) }
+    }),
+
+  addZone: (kind, a, b) =>
+    set((s) => {
+      const info = ZONE_KINDS[kind]
+      const zone: Zone = {
+        id: crypto.randomUUID(),
+        // Numbered per kind: "Area 1", "Aisle 2", …
+        name: `${info.name} ${s.zones.filter((z) => z.kind === kind).length + 1}`,
+        kind,
+        x: Math.round((a.x + b.x) / 2),
+        y: Math.round((a.y + b.y) / 2),
+        width: Math.round(Math.abs(b.x - a.x)),
+        depth: Math.round(Math.abs(b.y - a.y)),
+        colour: info.colour,
+        ...(kind === 'height' && { maxHeight: DEFAULT_HEIGHT_LIMIT }),
+      }
+      return { zones: [...s.zones, zone], ...selection([zone.id]) }
+    }),
+
+  updateZone: (id, patch) =>
+    set((s) => ({
+      zones: s.zones.map((z) => {
+        if (z.id !== id) return z
+        const next = { ...z, ...patch }
+        for (const key of ['x', 'y', 'width', 'depth'] as const) next[key] = Math.round(next[key])
+        if (next.kind !== 'height') delete next.maxHeight
+        else next.maxHeight ??= DEFAULT_HEIGHT_LIMIT
+        return next
+      }),
+    })),
+
+  removeZone: (id) =>
+    set((s) => ({
+      zones: s.zones.filter((z) => z.id !== id),
+      ...selection(s.selectedIds.filter((x) => x !== id)),
+    })),
+
   select: (id) =>
     set((s) => ({ ...selection(id ? [id] : []), ...(id !== s.singlePieceId && { singlePieceId: null }) })),
 
@@ -503,31 +761,57 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       singlePieceId: null,
     })),
 
+  moveMachineTo: (id, x, y, rotation) =>
+    set((s) => ({
+      machines: s.machines.map((m) => (m.id === id ? { ...m, x: Math.round(x), y: Math.round(y), rotation } : m)),
+    })),
+
   moveItems: (ids, dx, dy) =>
     set((s) => {
       const moving = new Set(ids)
       const by = <T extends { id: string; x: number; y: number }>(item: T) =>
         moving.has(item.id) ? { ...item, x: Math.round(item.x + dx), y: Math.round(item.y + dy) } : item
       const shift = (p: Point) => ({ x: Math.round(p.x + dx), y: Math.round(p.y + dy) })
+      const floorplan = s.floorplan
+      const loadingDocks = floorplan
+        ? s.loadingDocks.map((dock) => {
+            if (!moving.has(dock.id)) return dock
+            const point = loadingDockPointAt(floorplan, dock.boundaryOffsetMm)
+            const next = point && nearestLoadingDockPosition(point.x + dx, point.y + dy, floorplan)
+            return next ? { ...dock, boundaryOffsetMm: next.offsetMm } : dock
+          })
+        : s.loadingDocks
+      const loadingBays = s.loadingBays.map((bay) => moving.has(bay.id)
+        ? { ...bay, outline: bay.outline.map(shift) }
+        : bay)
+      if (floorplan && loadingDocks.some((dock) => moving.has(dock.id) && loadingDockIssue(dock, floorplan, loadingDocks))) return s
+      if (floorplan && loadingBays.some((bay) => moving.has(bay.id) && loadingBayIssue(bay, floorplan, loadingDocks, loadingBays))) return s
       return {
         machines: s.machines.map(by),
         pillars: s.pillars.map(by),
         utilities: s.utilities.map((u) =>
           moving.has(u.id) && s.floorplan ? { ...u, ...placeUtility(u.kind, u.x + dx, u.y + dy, s.floorplan) } : u,
         ),
+        loadingDocks,
+        loadingBays,
         walls: s.walls.map((w) => (moving.has(w.id) ? { ...w, start: shift(w.start), end: shift(w.end) } : w)),
+        zones: s.zones.map(by),
       }
     }),
 
   removeItems: (ids) =>
     set((s) => {
       const gone = new Set(ids)
+      const removedBays = new Set(s.loadingBays.filter((bay) => gone.has(bay.id) || gone.has(bay.loadingDockId)).map((bay) => bay.id))
       return {
         machines: s.machines.filter((m) => !gone.has(m.id)),
         utilities: s.utilities.filter((u) => !gone.has(u.id)),
         pillars: s.pillars.filter((p) => !gone.has(p.id)),
         walls: s.walls.filter((w) => !gone.has(w.id)),
-        ...selection(s.selectedIds.filter((x) => !gone.has(x))),
+        zones: s.zones.filter((z) => !gone.has(z.id)),
+        loadingDocks: s.loadingDocks.filter((dock) => !gone.has(dock.id)),
+        loadingBays: s.loadingBays.filter((bay) => !removedBays.has(bay.id)),
+        ...selection(s.selectedIds.filter((x) => !gone.has(x) && !removedBays.has(x))),
       }
     }),
 
@@ -551,9 +835,55 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   toggleLockStructures: () =>
     set((s) => {
       const lock = !s.lockStructures
-      const structures = new Set([...s.pillars, ...s.walls].map((x) => x.id))
+      const structures = new Set([...s.pillars, ...s.walls, ...s.loadingDocks, ...s.loadingBays].map((x) => x.id))
       return { lockStructures: lock, ...(lock && selection(s.selectedIds.filter((x) => !structures.has(x)))) }
     }),
+
+  addComment: (comment) =>
+    set((s) => {
+      if (!s.floorplan || !comment.message.trim()) return s
+      const created: LayoutComment = {
+        ...comment,
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        status: 'open',
+      }
+      return { comments: [...s.comments, created], selectedCommentId: created.id }
+    }),
+
+  startCommentPlacement: (draft) =>
+    set({ commentDraft: { message: draft.message.trim(), author: draft.author.trim() || 'You' } }),
+
+  addLocationComment: (x, y) =>
+    set((s) => {
+      if (!s.floorplan || !s.commentDraft?.message) return s
+      const created: LayoutComment = {
+        id: crypto.randomUUID(),
+        x: Math.round(x),
+        y: Math.round(y),
+        author: s.commentDraft.author,
+        createdAt: new Date().toISOString(),
+        message: s.commentDraft.message,
+        status: 'open',
+      }
+      return {
+        comments: [...s.comments, created],
+        selectedCommentId: created.id,
+        commentDraft: null,
+      }
+    }),
+
+  cancelCommentPlacement: () => set({ commentDraft: null }),
+  selectComment: (id) => set({ selectedCommentId: id }),
+  setCommentStatus: (id, status) =>
+    set((s) => ({
+      comments: s.comments.map((comment) => (comment.id === id ? { ...comment, status } : comment)),
+    })),
+  deleteComment: (id) =>
+    set((s) => ({
+      comments: s.comments.filter((comment) => comment.id !== id),
+      ...(s.selectedCommentId === id && { selectedCommentId: null }),
+    })),
 
   startPlacingMachine: (typeId) =>
     set((s) =>
@@ -594,6 +924,40 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       s.placing?.kind === 'wall'
         ? { placing: null }
         : { placing: { kind: 'wall', start: null }, ...selection([]) },
+    ),
+
+  startPlacingLoadingDock: () =>
+    set((s) =>
+      s.placing?.kind === 'loadingDock'
+        ? { placing: null }
+        : { placing: { kind: 'loadingDock' }, ...selection([]) },
+    ),
+
+  startPlacingLoadingBay: (loadingDockId) =>
+    set((s) =>
+      s.placing?.kind === 'loadingBay' && s.placing.loadingDockId === loadingDockId
+        ? { placing: null }
+        : { placing: { kind: 'loadingBay', loadingDockId, outline: [] }, ...selection([]) },
+    ),
+
+  setLoadingBayPoints: (outline) =>
+    set((s) => s.placing?.kind === 'loadingBay' ? { placing: { ...s.placing, outline: outline.map(roundPoint) } } : s),
+
+  startPlacingZone: (zoneKind) =>
+    set((s) =>
+      s.placing?.kind === 'zone' && s.placing.zoneKind === zoneKind
+        ? { placing: null }
+        : {
+            placing: { kind: 'zone', zoneKind, start: null },
+            ...selection([]),
+            // Drawing something the Zones layer hides turns the layer on, so it doesn't vanish.
+            layers: { ...s.layers, zones: true },
+          },
+    ),
+
+  setZoneStart: (start) =>
+    set((s) =>
+      s.placing?.kind === 'zone' ? { placing: { ...s.placing, start: start && roundPoint(start) } } : s,
     ),
 
   setWallStart: (start) =>

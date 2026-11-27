@@ -1,4 +1,4 @@
-import { Cog, Hammer, Package, Truck, Wrench, type LucideIcon } from 'lucide-react'
+import { Archive, Cog, Flame, Hammer, Package, Truck, Wrench, type LucideIcon } from 'lucide-react'
 import { ChoiceCard } from '@/components/wizard/ChoiceCard'
 import { CATALOG } from '@/data/catalog'
 import { EQUIPMENT_CATEGORIES, type EquipmentCategoryId } from '@/data/categories'
@@ -7,8 +7,10 @@ import { usePlanner } from '@/store'
 const CATEGORY_ICONS: Record<EquipmentCategoryId, LucideIcon> = {
   machining: Cog,
   forming: Hammer,
+  welding: Flame,
   'material-handling': Truck,
   'assembly-packing': Package,
+  storage: Archive,
   support: Wrench,
 }
 

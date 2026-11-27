@@ -54,6 +54,8 @@ export interface MachineType {
   powerKw: number
   needsWater: boolean
   needsFireSuppression: boolean
+  /** Typical height, mm (checked against height-limit zones). */
+  height?: number
 }
 
 /** Rotation in degrees, clockwise. */
@@ -64,6 +66,13 @@ export interface MachineInstance {
   id: string
   /** References MachineType.id. */
   typeId: string
+  /** Optional per-instance footprint overrides, mm. */
+  width?: number
+  depth?: number
+  /** Optional equipment height, mm; retained for reference but not used by 2D checks. */
+  height?: number
+  /** Optional per-instance working-space overrides, mm. */
+  clearance?: Clearance
   /** Centre of the machine on the floorplan, mm. */
   x: number
   /** Centre of the machine on the floorplan, mm. */
@@ -71,6 +80,14 @@ export interface MachineInstance {
   rotation: Rotation
   /** Length of a straight conveyor belt, mm (its size along x at rotation 0). */
   length?: number
+  /** Own name shown on the plan, e.g. "M1" or "Jig 3 – wing spar"; an automatic "CNC 01" when unset. */
+  name?: string
+  /** The work done at this station, free text. */
+  work?: string
+  /** How many people work here. */
+  people?: number
+  /** Fill colour on the plan (hex, e.g. "#1a9fd9"), e.g. to mark a product line; the default blue when unset. */
+  colour?: string
 }
 
 export type UtilityKind = 'power' | 'water' | 'sprinkler' | 'extinguisher' | 'exit'
@@ -87,6 +104,31 @@ export interface Utility {
   radius?: number
   /** Power available at this point, kW (power utilities only). */
   capacityKw?: number
+}
+
+/**
+ * What a zone means: a plain labelled area, a keep-clear aisle (no machine may stand in it),
+ * or a height limit (machines under it may be no taller than maxHeight).
+ */
+export type ZoneKind = 'area' | 'aisle' | 'height'
+
+/** A marked floor area, e.g. "Zon 2: Svets & plåt", a transport aisle, or a low ceiling. */
+export interface Zone {
+  id: string
+  name: string
+  kind: ZoneKind
+  /** Centre of the zone on the floorplan, mm. */
+  x: number
+  /** Centre of the zone on the floorplan, mm. */
+  y: number
+  /** Size along x, mm. */
+  width: number
+  /** Size along y, mm. */
+  depth: number
+  /** Fill/border colour on the plan, hex (e.g. "#1a9fd9"). */
+  colour: string
+  /** Height limits only: the tallest machine allowed under it, mm. */
+  maxHeight?: number
 }
 
 /** A structural column: a fixed part of the building that machines must avoid. */
@@ -114,6 +156,37 @@ export interface Wall {
   end: Point
   /** mm. */
   thickness: number
+}
+
+export type LoadingDockFlowDirection = 'inbound' | 'outbound' | 'two-way'
+
+/** An opening measured along the outer floor boundary from its first vertex, in millimetres. */
+export interface LoadingDock {
+  id: string
+  name: string
+  widthMm: number
+  boundaryOffsetMm: number
+  flowDirection: LoadingDockFlowDirection
+}
+
+/** Outdoor staging area connected to a loading dock; outline coordinates share the floorplan world space. */
+export interface LoadingBay {
+  id: string
+  name: string
+  loadingDockId: string
+  outline: Point[]
+}
+
+/** A local discussion note anchored to a layout item or a floor location. */
+export interface LayoutComment {
+  id: string
+  x: number
+  y: number
+  targetId?: string
+  author: string
+  createdAt: string
+  message: string
+  status: 'open' | 'resolved'
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +224,7 @@ export const MachineTypeSchema = z.object({
   powerKw: z.number().nonnegative(),
   needsWater: z.boolean(),
   needsFireSuppression: z.boolean(),
+  height: z.number().positive().optional(),
 }) satisfies z.ZodType<MachineType>
 
 export const RotationSchema = z
@@ -162,10 +236,18 @@ export const RotationSchema = z
 export const MachineInstanceSchema = z.object({
   id: z.string(),
   typeId: z.string(),
+  width: z.number().positive().optional(),
+  depth: z.number().positive().optional(),
+  height: z.number().positive().optional(),
+  clearance: ClearanceSchema.optional(),
   x: z.number(),
   y: z.number(),
   rotation: RotationSchema,
   length: z.number().positive().optional(),
+  name: z.string().optional(),
+  work: z.string().optional(),
+  people: z.number().int().min(0).optional(),
+  colour: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
 }) satisfies z.ZodType<MachineInstance>
 
 export const UtilityKindSchema = z.enum([
@@ -185,6 +267,18 @@ export const UtilitySchema = z.object({
   capacityKw: z.number().nonnegative().optional(),
 }) satisfies z.ZodType<Utility>
 
+export const ZoneSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.enum(['area', 'aisle', 'height']),
+  x: z.number(),
+  y: z.number(),
+  width: z.number().positive(),
+  depth: z.number().positive(),
+  colour: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  maxHeight: z.number().positive().optional(),
+}) satisfies z.ZodType<Zone>
+
 export const PillarSchema = z.object({
   id: z.string(),
   x: z.number(),
@@ -203,3 +297,29 @@ export const WallSchema = z
   .refine((w) => w.start.x === w.end.x || w.start.y === w.end.y, {
     message: 'Walls must be horizontal or vertical.',
   }) satisfies z.ZodType<Wall>
+
+export const LoadingDockSchema = z.object({
+  id: z.string(),
+  name: z.string().trim().min(1),
+  widthMm: z.number().finite().positive(),
+  boundaryOffsetMm: z.number().finite().nonnegative(),
+  flowDirection: z.enum(['inbound', 'outbound', 'two-way']),
+}) satisfies z.ZodType<LoadingDock>
+
+export const LoadingBaySchema = z.object({
+  id: z.string(),
+  name: z.string().trim().min(1),
+  loadingDockId: z.string(),
+  outline: z.array(PointSchema).min(3),
+}) satisfies z.ZodType<LoadingBay>
+
+export const LayoutCommentSchema = z.object({
+  id: z.string(),
+  x: z.number(),
+  y: z.number(),
+  targetId: z.string().optional(),
+  author: z.string(),
+  createdAt: z.string(),
+  message: z.string(),
+  status: z.enum(['open', 'resolved']),
+}) satisfies z.ZodType<LayoutComment>

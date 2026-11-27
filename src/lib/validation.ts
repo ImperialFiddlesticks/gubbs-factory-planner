@@ -2,21 +2,26 @@ import { machineTypeFor } from '@/data/catalog'
 import { EXIT_MAX_DISTANCE, utilityRadius } from '@/data/utilities'
 import {
   bodyBox,
-  boxesOverlap,
+  bodyRect,
   boxInsideFloor,
-  clearanceBox,
+  boxToRect,
+  clearanceRect,
   clearLine,
-  distanceToBox,
+  distanceToRect,
   pillarBox,
-  samplePoints,
+  rectInsideFloor,
+  rectSamplePoints,
+  rectsOverlap,
   segmentEntersBox,
   wallBox,
   type Box,
   type FloorBounds,
+  type Rect,
 } from '@/lib/geometry'
 import { conveyorMachineLinks, conveyorRuns, type ConveyorRun } from '@/lib/conveyors'
+import { machineName } from '@/lib/machineLabels'
 import { walkingRoutes, type WalkingRoute } from '@/lib/walking'
-import type { Floorplan, MachineInstance, MachineType, Pillar, Point, Utility, Wall } from '@/types'
+import type { Floorplan, MachineInstance, MachineType, Pillar, Point, Utility, Wall, Zone } from '@/types'
 
 /**
  * - space:   machines clash with each other or the walls (red outline on the canvas)
@@ -41,15 +46,30 @@ export interface LayoutIssue {
 interface Resolved {
   machine: MachineInstance
   type: MachineType
+  /** What warnings call it: its own name or its automatic one ("CNC 02"). */
+  name: string
+  /** The machine's real shape, turned with it: used for clashes, the floor edge and reach. */
+  shape: Rect
+  /** Its clearance zone, turned with it. */
+  clearance: Rect
+  /** The upright box around the shape: used for routing (walking routes, supply lines). */
   body: Box
-  clearance: Box
 }
 
 function resolve(machines: MachineInstance[]): Resolved[] {
   const out: Resolved[] = []
   for (const machine of machines) {
     const type = machineTypeFor(machine)
-    if (type) out.push({ machine, type, body: bodyBox(type, machine), clearance: clearanceBox(type, machine) })
+    if (type) {
+      out.push({
+        machine,
+        type,
+        name: machineName(machine, machines),
+        shape: bodyRect(type, machine),
+        clearance: clearanceRect(type, machine),
+        body: bodyBox(type, machine),
+      })
+    }
   }
   return out
 }
@@ -64,9 +84,9 @@ function inReach(r: Resolved, utilities: Utility[], kind: Utility['kind'], walls
   for (const u of utilities) {
     if (u.kind !== kind) continue
     const radius = utilityRadius(u)
-    if (distanceToBox(u.x, u.y, r.body) > radius) continue
+    if (distanceToRect(u.x, u.y, r.shape) > radius) continue
     // The nearest point comes first; with no walls it is always reachable.
-    const reachable = samplePoints(r.body, u)
+    const reachable = rectSamplePoints(r.shape, u)
       .map((p) => ({ p, d: Math.hypot(p.x - u.x, p.y - u.y) }))
       .filter(({ p, d }) => d <= radius && (walls.length === 0 || clearLine(u, p, walls)))
       .sort((a, b) => a.d - b.d)[0]
@@ -227,6 +247,7 @@ export function findLayoutIssues(
   return [
     ...spaceIssues(resolved, floorplan, runOf, conveyorMachineLinks(machines)),
     ...structureIssues(resolved, boxes, floorplan),
+    ...zoneIssues(resolved, structures.zones ?? []),
     ...utilityIssues(resolved, machines, utilities, structures.walls, floorplan, runs, runOf),
   ]
 }
@@ -235,6 +256,39 @@ export function findLayoutIssues(
 export interface Structures {
   pillars: Pillar[]
   walls: Wall[]
+  /** Keep-clear aisles and height limits; plain areas have no rules. */
+  zones?: Zone[]
+}
+
+/**
+ * Zone rules: nothing may stand in a keep-clear aisle (conveyor pieces included: a belt across
+ * an aisle blocks it), and nothing under a height limit may be taller than its max height.
+ * A machine counts as in a zone if any part of it (its rotated shape) is.
+ */
+function zoneIssues(resolved: Resolved[], zones: Zone[]): LayoutIssue[] {
+  const issues: LayoutIssue[] = []
+  for (const z of zones) {
+    if (z.kind === 'area') continue
+    const area = boxToRect({ x: z.x - z.width / 2, y: z.y - z.depth / 2, width: z.width, depth: z.depth })
+    for (const r of resolved) {
+      if (!rectsOverlap(r.shape, area)) continue
+      const ids = [r.machine.id, z.id]
+      if (z.kind === 'aisle') {
+        issues.push({ key: `aisle:${ids.join('|')}`, category: 'space', ids, message: `${r.name} stands in the keep-clear aisle "${z.name}".` })
+      } else if (z.maxHeight !== undefined) {
+        const height = r.machine.height ?? r.type.height
+        if (height !== undefined && height > z.maxHeight) {
+          issues.push({
+            key: `height:${ids.join('|')}`,
+            category: 'space',
+            ids,
+            message: `${r.name} (${metres(height)} m) is taller than the ${metres(z.maxHeight)} m height limit "${z.name}".`,
+          })
+        }
+      }
+    }
+  }
+  return issues
 }
 
 interface StructureBox {
@@ -250,13 +304,14 @@ function structureIssues(resolved: Resolved[], structures: StructureBox[], floor
     if (!boxInsideFloor(s.box, floorplan)) {
       issues.push({ key: `${s.noun}-out:${s.id}`, category: 'space', ids: [s.id], message: `A ${s.noun} is outside the floor.` })
     }
+    const structure = boxToRect(s.box)
     for (const r of resolved) {
       const ids = [r.machine.id, s.id]
       const key = ids.join('|')
-      if (boxesOverlap(r.body, s.box)) {
-        issues.push({ key: `${s.noun}-on:${key}`, category: 'space', ids, message: `${r.type.name} stands on a ${s.noun}.` })
-      } else if (boxesOverlap(r.clearance, s.box)) {
-        issues.push({ key: `${s.noun}-clear:${key}`, category: 'space', ids, message: `A ${s.noun} blocks the clearance of ${r.type.name}.` })
+      if (rectsOverlap(r.shape, structure)) {
+        issues.push({ key: `${s.noun}-on:${key}`, category: 'space', ids, message: `${r.name} stands on a ${s.noun}.` })
+      } else if (rectsOverlap(r.clearance, structure)) {
+        issues.push({ key: `${s.noun}-clear:${key}`, category: 'space', ids, message: `A ${s.noun} blocks the clearance of ${r.name}.` })
       }
     }
   }
@@ -272,10 +327,10 @@ function spaceIssues(
   const issues: LayoutIssue[] = []
   for (const r of resolved) {
     const id = r.machine.id
-    if (!boxInsideFloor(r.body, floorplan)) {
-      issues.push({ key: `out:${id}`, category: 'space', ids: [id], message: `${r.type.name} is outside the floor.` })
-    } else if (!boxInsideFloor(r.clearance, floorplan)) {
-      issues.push({ key: `edge:${id}`, category: 'space', ids: [id], message: `${r.type.name} needs more space from the wall.` })
+    if (!rectInsideFloor(r.shape, floorplan)) {
+      issues.push({ key: `out:${id}`, category: 'space', ids: [id], message: `${r.name} is outside the floor.` })
+    } else if (!rectInsideFloor(r.clearance, floorplan)) {
+      issues.push({ key: `edge:${id}`, category: 'space', ids: [id], message: `${r.name} needs more space from the wall.` })
     }
   }
 
@@ -290,14 +345,14 @@ function spaceIssues(
       const noClash =
         (runOf.has(a.machine.id) && runOf.get(a.machine.id) === runOf.get(b.machine.id)) ||
         linked(a.machine.id, b.machine.id)
-      if (boxesOverlap(a.body, b.body)) {
-        issues.push({ key: `overlap:${key}`, category: 'space', ids, message: `${a.type.name} overlaps ${b.type.name}.` })
+      if (rectsOverlap(a.shape, b.shape)) {
+        issues.push({ key: `overlap:${key}`, category: 'space', ids, message: `${a.name} overlaps ${b.name}.` })
       } else if (noClash) {
         continue
-      } else if (boxesOverlap(a.body, b.clearance)) {
-        issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${a.type.name} blocks the clearance of ${b.type.name}.` })
-      } else if (boxesOverlap(b.body, a.clearance)) {
-        issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${b.type.name} blocks the clearance of ${a.type.name}.` })
+      } else if (rectsOverlap(a.shape, b.clearance)) {
+        issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${a.name} blocks the clearance of ${b.name}.` })
+      } else if (rectsOverlap(b.shape, a.clearance)) {
+        issues.push({ key: `clear:${key}`, category: 'space', ids, message: `${b.name} blocks the clearance of ${a.name}.` })
       }
     }
   }
@@ -338,7 +393,7 @@ function utilityIssues(
 
   for (const r of resolved) {
     const id = r.machine.id
-    const name = r.type.name
+    const name = r.name
     if (r.type.needsWater && inReach(r, utilities, 'water', walls).length === 0) {
       issues.push({ key: `water:${id}`, category: 'utility', need: 'water', ids: [id], message: `${name} has no water point in reach.` })
     }

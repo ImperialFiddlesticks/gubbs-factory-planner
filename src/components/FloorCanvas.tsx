@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import type Konva from 'konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
-import { Group, Layer, Line, Rect, Shape, Stage } from 'react-konva'
+import { Group, Label, Layer, Line, Rect, Shape, Stage, Tag, Text } from 'react-konva'
 import { MapToolbar } from '@/components/MapToolbar'
 import { ConveyorEnds } from '@/components/canvas/ConveyorBody'
+import { CommentMarkers } from '@/components/canvas/CommentMarkers'
 import { ClearanceZone, Machine, MachineBody, type Outline } from '@/components/canvas/MachineNode'
 import { GHOST_ID, type DragState } from '@/components/canvas/shared'
 import { PillarBody, PillarNode } from '@/components/canvas/PillarNode'
 import { WallBody, WallNode } from '@/components/canvas/WallNode'
+import { LoadingDockGlyph, LoadingDockNode } from '@/components/canvas/LoadingDockNode'
+import { LoadingBayNode } from '@/components/canvas/LoadingBayNode'
+import { ZoneNode, ZoneShape } from '@/components/canvas/ZoneNode'
 import { CoverageCircle, UtilityGlyph, UtilityNode } from '@/components/canvas/UtilityNode'
 import { PowerLoadTags, SupplyLines } from '@/components/canvas/SupplyLines'
 import { WalkingRoutes } from '@/components/canvas/WalkingRoutes'
@@ -16,8 +20,12 @@ import { getMachineType, machineTypeFor } from '@/data/catalog'
 import { UTILITY_LAYER, utilityVisible } from '@/data/layers'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS, MIN_WALL_LENGTH } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
-import { conveyorRuns, snapConveyor } from '@/lib/conveyors'
+import { MIN_ZONE_SIZE, ZONE_KINDS, zoneArea } from '@/data/zones'
+import { conveyorRuns, snapConveyor, snapMachineToConveyor } from '@/lib/conveyors'
+import { keepOnFloor } from '@/lib/placement'
 import { floorCorners } from '@/lib/floorShapes'
+import { DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockBounds, loadingDockIssue, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
+import { loadingBayBounds, loadingBayCentroid, loadingBayIssue, loadingBayWorldBounds } from '@/lib/loadingBays'
 import {
   bodyBox,
   boxesOverlap,
@@ -32,7 +40,7 @@ import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validatio
 import { useElementSize } from '@/lib/useElementSize'
 import { usePlanner, type Placing } from '@/store'
 import { CANVAS } from '@/theme'
-import type { Floorplan, MachineInstance, Pillar, Point, Utility, Wall } from '@/types'
+import type { Floorplan, LoadingBay, LoadingDock, MachineInstance, Pillar, Point, Utility, Wall, Zone, ZoneKind } from '@/types'
 
 interface FloorCanvasProps {
   floorplan: Floorplan | null
@@ -48,9 +56,8 @@ export function FloorCanvas({ floorplan }: FloorCanvasProps) {
       className="relative overflow-hidden"
       style={{ backgroundColor: CANVAS.background }}
     >
-      {floorplan && size.width > 0 && <FloorStage floorplan={floorplan} size={size} />}
+      {floorplan && size.width > 0 && <FloorStage key={floorplan.id} floorplan={floorplan} size={size} />}
       <PlacingHint />
-      {floorplan && <MapToolbar />}
     </main>
   )
 }
@@ -59,19 +66,52 @@ function placingName(p: Placing) {
   if (p.kind === 'machine') return getMachineType(p.typeId)?.name
   if (p.kind === 'pillar') return 'Pillar'
   if (p.kind === 'wall') return 'Wall'
+  if (p.kind === 'zone') return ZONE_KINDS[p.zoneKind].name
+  if (p.kind === 'loadingDock') return 'Loading dock'
+  if (p.kind === 'loadingBay') return 'Loading bay'
   return UTILITY_KINDS[p.utilityKind].name
 }
 
 /** Instruction strip shown at the top of the work area while placing. */
 function PlacingHint() {
   const placing = usePlanner((s) => s.placing)
+  const commentDraft = usePlanner((s) => s.commentDraft)
+  if (commentDraft) {
+    return (
+      <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+        Pin comment on the floor · Click a location · Esc to cancel
+      </div>
+    )
+  }
   if (!placing) return null
+  if (placing.kind === 'zone') {
+    return (
+      <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+        Drawing a <span className="font-semibold">{ZONE_KINDS[placing.zoneKind].name}</span> zone · Press and
+        drag on the floor · Esc or right-click to cancel
+      </div>
+    )
+  }
   if (placing.kind === 'wall') {
     return (
       <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
         Drawing a <span className="font-semibold">Wall</span> ·{' '}
         {placing.start ? 'Click to set the end' : 'Click to set the start'} · Esc or right-click to
         cancel
+      </div>
+    )
+  }
+  if (placing.kind === 'loadingDock') {
+    return (
+      <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+        Placing a <span className="font-semibold">Loading dock</span> · Click the outer boundary · Red preview means it overlaps another dock · Esc to cancel
+      </div>
+    )
+  }
+  if (placing.kind === 'loadingBay') {
+    return (
+      <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+        Drawing a <span className="font-semibold">Loading bay</span> · Click outline corners, then click the first point to finish · Red means invalid · Esc to cancel
       </div>
     )
   }
@@ -91,6 +131,8 @@ type Active =
   | { kind: 'utility'; item: Utility }
   | { kind: 'pillar'; item: Pillar }
   | { kind: 'wall'; item: Wall }
+  | { kind: 'loadingDock'; item: LoadingDock & Point }
+  | { kind: 'loadingBay'; item: LoadingBay & Point }
 
 function FloorStage({
   floorplan,
@@ -99,19 +141,31 @@ function FloorStage({
   floorplan: Floorplan
   size: { width: number; height: number }
 }) {
-  const floorW = floorplan.width * SCALE
-  const floorH = floorplan.depth * SCALE
+  const loadingBays = usePlanner((s) => s.loadingBays)
+  const placing = usePlanner((s) => s.placing)
+  const draftBays = placing?.kind === 'loadingBay' && placing.outline.length > 0
+    ? [{ id: GHOST_ID, name: 'Loading bay', loadingDockId: placing.loadingDockId, outline: placing.outline }]
+    : []
+  const worldBounds = loadingBayWorldBounds(floorplan, [...loadingBays, ...draftBays])
+  const worldW = (worldBounds.maxX - worldBounds.minX) * SCALE
+  const worldH = (worldBounds.maxY - worldBounds.minY) * SCALE
   // The map toolbar sits at the bottom, so the floor uses the space above it.
   const viewH = size.height - TOOLBAR_SPACE
-  // Floors larger than the work area are shrunk to fit; smaller ones stay at SCALE.
-  const fit = Math.min(
+  // Fit the hall and any exterior bays together without moving their shared world coordinates.
+  const baseFit = Math.min(
     1,
-    (size.width - 2 * VIEW_PADDING) / floorW,
-    (viewH - 2 * VIEW_PADDING) / floorH,
+    (size.width - 2 * VIEW_PADDING) / worldW,
+    (viewH - 2 * VIEW_PADDING) / worldH,
   )
-  // Centre the floorplan in the work area above the toolbar.
-  const originX = Math.round((size.width - floorW * fit) / 2)
-  const originY = Math.round((viewH - floorH * fit) / 2)
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [panActive, setPanActive] = useState(false)
+  const panStart = useRef<{ pointer: Point; pan: Point } | null>(null)
+  const spacePan = useSpacePan()
+  const fit = baseFit * zoom
+  // Keep the full world bounds centred at the current zoom, then apply any user panning.
+  const originX = Math.round((size.width - worldW * fit) / 2 - worldBounds.minX * SCALE * fit + pan.x)
+  const originY = Math.round((viewH - worldH * fit) / 2 - worldBounds.minY * SCALE * fit + pan.y)
 
   // Floor corners in layer px, flat [x0, y0, x1, y1, ...] for Konva.
   const floorPoints = floorCorners(floorplan).flatMap((p) => [p.x * SCALE, p.y * SCALE])
@@ -127,20 +181,30 @@ function FloorStage({
   const utilities = usePlanner((s) => s.utilities)
   const pillars = usePlanner((s) => s.pillars)
   const walls = usePlanner((s) => s.walls)
+  const zones = usePlanner((s) => s.zones)
+  const loadingDocks = usePlanner((s) => s.loadingDocks)
   const lockStructures = usePlanner((s) => s.lockStructures)
   const selectedId = usePlanner((s) => s.selectedId)
   const selectedIds = usePlanner((s) => s.selectedIds)
   const selectMany = usePlanner((s) => s.selectMany)
   const singlePieceId = usePlanner((s) => s.singlePieceId)
-  const placing = usePlanner((s) => s.placing)
   const layers = usePlanner((s) => s.layers)
+  const comments = usePlanner((s) => s.comments)
+  const commentDraft = usePlanner((s) => s.commentDraft)
   const select = usePlanner((s) => s.select)
   const addMachine = usePlanner((s) => s.addMachine)
   const addUtility = usePlanner((s) => s.addUtility)
   const addPillar = usePlanner((s) => s.addPillar)
   const addWall = usePlanner((s) => s.addWall)
   const setWallStart = usePlanner((s) => s.setWallStart)
+  const setZoneStart = usePlanner((s) => s.setZoneStart)
+  const addZone = usePlanner((s) => s.addZone)
+  const addLoadingDock = usePlanner((s) => s.addLoadingDock)
+  const addLoadingBay = usePlanner((s) => s.addLoadingBay)
+  const setLoadingBayPoints = usePlanner((s) => s.setLoadingBayPoints)
   const cancelPlacing = usePlanner((s) => s.cancelPlacing)
+  const addLocationComment = usePlanner((s) => s.addLocationComment)
+  const cancelCommentPlacement = usePlanner((s) => s.cancelCommentPlacement)
 
   const layerRef = useRef<Konva.Layer>(null)
   /** Cursor position on the floor in mm, while it is over the canvas. */
@@ -149,19 +213,66 @@ function FloorStage({
   /** Selection box being dragged out on empty floor, in mm; `add` when Shift was held. */
   const [box, setBox] = useState<{ start: Point; end: Point; add: boolean } | null>(null)
 
+  function zoomAround(nextZoom: number, anchor: Point) {
+    const boundedZoom = Math.max(1, Math.min(4, nextZoom))
+    const oldFit = baseFit * zoom
+    const nextFit = baseFit * boundedZoom
+    const oldOriginX = (size.width - worldW * oldFit) / 2 - worldBounds.minX * SCALE * oldFit + pan.x
+    const oldOriginY = (viewH - worldH * oldFit) / 2 - worldBounds.minY * SCALE * oldFit + pan.y
+    const mapX = (anchor.x - oldOriginX) / oldFit
+    const mapY = (anchor.y - oldOriginY) / oldFit
+    const nextOriginX = (size.width - worldW * nextFit) / 2 - worldBounds.minX * SCALE * nextFit
+    const nextOriginY = (viewH - worldH * nextFit) / 2 - worldBounds.minY * SCALE * nextFit
+    setZoom(boundedZoom)
+    setPan({
+      x: anchor.x - nextOriginX - mapX * nextFit,
+      y: anchor.y - nextOriginY - mapY * nextFit,
+    })
+  }
+
+  function zoomAtCenter(nextZoom: number) {
+    zoomAround(nextZoom, { x: size.width / 2, y: viewH / 2 })
+  }
+
+  function fitToView() {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }
+
   usePlacingKeys()
   useSelectionKeys()
 
-  const active = activeItem(placing, pointer, drag, machines, utilities, pillars, walls, floorplan)
+  const active = keepGhostOnFloor(
+    activeItem(placing, pointer, drag, machines, utilities, pillars, walls, loadingDocks, loadingBays, floorplan),
+    floorplan,
+  )
 
   // Items moving along with the dragged one (multi-selection, conveyor run), at their live spot.
-  const delta = groupDelta(drag, machines, utilities, pillars, walls)
+  const delta = groupDelta(drag, machines, utilities, pillars, walls, zones, loadingDocks, loadingBays, floorplan)
   const moving = new Set(delta ? drag?.group : [])
   const shiftItems = <T extends { id: string; x: number; y: number }>(list: T[]) =>
     delta ? list.map((i) => (moving.has(i.id) ? { ...i, x: i.x + delta.x, y: i.y + delta.y } : i)) : list
   const shiftPoint = (p: Point) => (delta ? { x: p.x + delta.x, y: p.y + delta.y } : p)
   const shownUtilities = shiftItems(utilities)
   const shownPillars = shiftItems(pillars)
+  const shownZones = shiftItems(zones)
+  const shownLoadingDocks = delta
+    ? loadingDocks.map((dock) => {
+        if (!moving.has(dock.id)) return dock
+        const point = loadingDockPointAt(floorplan, dock.boundaryOffsetMm)
+        const next = point && nearestLoadingDockPosition(point.x + delta.x, point.y + delta.y, floorplan)
+        return next ? { ...dock, boundaryOffsetMm: next.offsetMm } : dock
+      })
+    : loadingDocks
+  const liveLoadingDocks = active?.kind === 'loadingDock' && active.item.id !== GHOST_ID
+    ? withItem(shownLoadingDocks, active.item)
+    : shownLoadingDocks
+  const shownLoadingBays = delta
+    ? loadingBays.map((bay) => moving.has(bay.id) ? { ...bay, outline: bay.outline.map(shiftPoint) } : bay)
+    : loadingBays
+  const liveLoadingBays = active?.kind === 'loadingBay'
+    ? withItem(shownLoadingBays, active.item)
+    : shownLoadingBays
   const shownWalls = delta
     ? walls.map((w) => (moving.has(w.id) ? { ...w, start: shiftPoint(w.start), end: shiftPoint(w.end) } : w))
     : walls
@@ -173,7 +284,14 @@ function FloorStage({
   const livePillars = active?.kind === 'pillar' ? withItem(shownPillars, active.item) : shownPillars
   const liveWalls = active?.kind === 'wall' ? withItem(shownWalls, active.item) : shownWalls
 
-  const issues = findLayoutIssues(liveMachines, liveUtilities, floorplan, { pillars: livePillars, walls: liveWalls })
+  // A zone being dragged by its tag, at its live spot.
+  const draggedZone = drag && zones.find((z) => z.id === drag.id)
+  const liveZones = draggedZone ? withItem(shownZones, { ...draggedZone, x: drag.x, y: drag.y }) : shownZones
+  const issues = findLayoutIssues(liveMachines, liveUtilities, floorplan, {
+    pillars: livePillars,
+    walls: liveWalls,
+    zones: layers.zones ? liveZones : zones,
+  })
   const spaceBad = idsWithIssues(issues, 'space')
   const utilityBad = idsWithIssues(issues, 'utility')
   const needs = needsByMachine(issues)
@@ -196,10 +314,26 @@ function FloorStage({
   }
 
   function handlePointerDown(e: KonvaEventObject<MouseEvent | TouchEvent>) {
+    if (commentDraft) {
+      if ('button' in e.evt && e.evt.button !== 0) return
+      const at = pointerMm()
+      if (at) addLocationComment(at.x, at.y)
+      return
+    }
+    if (spacePan && !placing && 'button' in e.evt && e.evt.button === 0) {
+      const pointer = e.target.getStage()?.getPointerPosition()
+      if (pointer) {
+        panStart.current = { pointer, pan }
+        setPanActive(true)
+      }
+      return
+    }
     if (placing) {
       // Left click (or touch) drops the ghost where it is; right click is handled below.
       if ('button' in e.evt && e.evt.button !== 0) return
       const at = pointerMm()
+      // Zones: press here, drag, release to finish (see finishZone).
+      if (at && placing.kind === 'zone') return setZoneStart(at)
       if (at && placing.kind === 'wall') {
         // Two clicks: the first sets the start, the second (far enough away) finishes the wall.
         if (!placing.start) return setWallStart(at)
@@ -210,11 +344,39 @@ function FloorStage({
         return
       }
       if (at && placing.kind === 'machine') {
-        // Where the ghost is drawn, which includes conveyor snapping.
+        // Where the ghost is drawn, which includes conveyor snapping and staying on the floor.
         const ghost = active?.kind === 'machine' ? active.item : at
-        addMachine(placing.typeId, { x: ghost.x, y: ghost.y, rotation: placing.rotation, length: placing.length })
+        // In the cut-out corner of a shaped floor it can't go: wait for a click where it fits.
+        if (active?.kind === 'machine' && !keepOnFloor([active.item], { x: 0, y: 0 }, floorplan)) return
+        // The ghost's rotation: a machine snapped onto a belt end is turned to face it.
+        const rotation = active?.kind === 'machine' ? active.item.rotation : placing.rotation
+        addMachine(placing.typeId, { x: ghost.x, y: ghost.y, rotation, length: placing.length })
       } else if (at && placing.kind === 'utility') {
         addUtility(placing.utilityKind, at.x, at.y)
+      } else if (at && placing.kind === 'loadingDock') {
+        const position = active?.kind === 'loadingDock' && active.item.id === GHOST_ID
+          ? { offsetMm: active.item.boundaryOffsetMm }
+          : nearestLoadingDockPosition(at.x, at.y, floorplan)
+        if (!position) return
+        const candidate: LoadingDock = {
+          id: GHOST_ID,
+          name: 'Loading dock',
+          widthMm: DEFAULT_LOADING_DOCK_WIDTH_MM,
+          boundaryOffsetMm: position.offsetMm,
+          flowDirection: 'two-way',
+        }
+        if (loadingDockIssue(candidate, floorplan, loadingDocks) || !addLoadingDock(position.offsetMm)) return
+        cancelPlacing()
+        return
+      } else if (at && placing.kind === 'loadingBay') {
+        const points = placing.outline
+        if (points.length && Math.hypot(at.x - points[points.length - 1].x, at.y - points[points.length - 1].y) <= 50) return
+        if (points.length >= 3 && Math.hypot(at.x - points[0].x, at.y - points[0].y) <= 500) {
+          if (addLoadingBay(placing.loadingDockId, points)) cancelPlacing()
+          return
+        }
+        setLoadingBayPoints([...points, at])
+        return
       } else if (at && placing.kind === 'pillar') {
         addPillar(at.x, at.y)
       }
@@ -223,16 +385,37 @@ function FloorStage({
     }
     // Pressing empty floor starts a selection box (a plain click clears the selection on release).
     const t = e.target
-    if (['.machine', '.utility', '.pillar', '.wall'].some((n) => t.findAncestor(n, true))) return
+    if (['.machine', '.utility', '.pillar', '.wall', '.zone', '.loading-dock', '.loading-bay'].some((n) => t.findAncestor(n, true))) return
     if ('button' in e.evt && e.evt.button !== 0) return
     const at = pointerMm()
     if (at) setBox({ start: at, end: at, add: e.evt.shiftKey })
   }
 
-  function handlePointerMove() {
+  function handlePointerMove(e: KonvaEventObject<MouseEvent | TouchEvent>) {
+    const screenPointer = e.target.getStage()?.getPointerPosition()
+    if (panStart.current && screenPointer) {
+      setPan({
+        x: panStart.current.pan.x + screenPointer.x - panStart.current.pointer.x,
+        y: panStart.current.pan.y + screenPointer.y - panStart.current.pointer.y,
+      })
+      return
+    }
     const at = pointerMm()
     setPointer(at)
     if (box && at) setBox({ ...box, end: at })
+  }
+
+  /** Release while drawing a zone: create it if it's big enough, or wait for another try. */
+  function finishZone() {
+    if (placing?.kind !== 'zone' || !placing.start) return
+    const at = pointerMm()
+    const r = at && boxRect(placing.start, at)
+    if (at && r && r.width >= MIN_ZONE_SIZE && r.depth >= MIN_ZONE_SIZE) {
+      addZone(placing.zoneKind, placing.start, at)
+      cancelPlacing()
+    } else {
+      setZoneStart(null)
+    }
   }
 
   /** Release: select everything the box touches (added to the selection with Shift). */
@@ -258,6 +441,14 @@ function FloorStage({
       // Locked structures can't be selected.
       ...(lockStructures ? [] : pillars.filter((p) => hit(pillarBox(p))).map((p) => p.id)),
       ...(lockStructures ? [] : walls.filter((w) => hit(wallBox(w))).map((w) => w.id)),
+      ...(lockStructures ? [] : loadingDocks.flatMap((dock) => {
+        const bounds = loadingDockBounds(dock, floorplan)
+        return bounds && hit({ ...bounds, width: Math.max(bounds.width, 1), depth: Math.max(bounds.depth, 1) }) ? [dock.id] : []
+      })),
+      ...(lockStructures ? [] : loadingBays.flatMap((bay) => {
+        const bounds = loadingBayBounds(bay)
+        return bounds && hit({ ...bounds, depth: bounds.depth }) ? [bay.id] : []
+      })),
     ]
     selectMany(ids, box.add)
   }
@@ -277,23 +468,41 @@ function FloorStage({
   }
 
   return (
+    <>
     <Stage
       width={size.width}
       height={size.height}
-      style={{ cursor: placing ? 'crosshair' : undefined }}
+      style={{ cursor: placing ? 'crosshair' : panActive ? 'grabbing' : spacePan ? 'grab' : undefined }}
       onMouseDown={handlePointerDown}
       onTouchStart={handlePointerDown}
       onMouseMove={handlePointerMove}
       onTouchMove={handlePointerMove}
-      onMouseUp={finishBox}
-      onTouchEnd={finishBox}
+      onMouseUp={() => {
+        panStart.current = null
+        setPanActive(false)
+        finishZone()
+        finishBox()
+      }}
+      onTouchEnd={() => {
+        finishZone()
+        finishBox()
+      }}
       onMouseLeave={() => {
         setPointer(null)
+        panStart.current = null
+        setPanActive(false)
         finishBox()
+      }}
+      onWheel={(e) => {
+        const pointer = e.target.getStage()?.getPointerPosition()
+        if (!pointer) return
+        e.evt.preventDefault()
+        zoomAround(zoom * (e.evt.deltaY > 0 ? 1 / 1.1 : 1.1), pointer)
       }}
       onContextMenu={(e) => {
         e.evt.preventDefault()
-        cancelPlacing()
+        if (commentDraft) cancelCommentPlacement()
+        else cancelPlacing()
       }}
     >
       <Layer ref={layerRef} x={originX} y={originY} scaleX={fit} scaleY={fit}>
@@ -311,6 +520,49 @@ function FloorStage({
           lineJoin="round"
           listening={false}
         />
+        {liveLoadingBays.map((bay) => (
+          <LoadingBayNode
+            key={bay.id}
+            bay={bay}
+            dock={liveLoadingDocks.find((dock) => dock.id === bay.loadingDockId)}
+            floorplan={floorplan}
+            selected={selected.has(bay.id)}
+            invalid={bay.outline.length < 3 || (bay.id === GHOST_ID && placing?.kind === 'loadingBay' && placing.outline.length < 3) || Boolean(loadingBayIssue(bay, floorplan, liveLoadingDocks, liveLoadingBays))}
+            interactive={bay.id !== GHOST_ID && !placing && !lockStructures && !spacePan && !commentDraft}
+            fit={fit}
+            onDrag={setDrag}
+          />
+        ))}
+        {liveLoadingDocks.map((dock) => (
+          <LoadingDockNode
+            key={dock.id}
+            dock={dock}
+            floorplan={floorplan}
+            fit={fit}
+            selected={selected.has(dock.id)}
+            invalid={Boolean(loadingDockIssue(dock, floorplan, liveLoadingDocks))}
+            interactive={!placing && !lockStructures && !spacePan && !commentDraft}
+            onDrag={setDrag}
+          />
+        ))}
+
+        {/* Zones are floor markings: under everything else. Only their name tags are clickable. */}
+        {layers.zones &&
+          shownZones.map((z) => (
+            <ZoneNode
+              key={z.id}
+              zone={z}
+              fit={fit}
+              selected={selected.has(z.id)}
+              resizable={selectedId === z.id}
+              interactive={!placing && !spacePan && !commentDraft}
+              onDrag={setDrag}
+            />
+          ))}
+        {/* Zone being drawn: from where the mouse went down to the cursor, with its size. */}
+        {placing?.kind === 'zone' && placing.start && pointer && (
+          <ZoneGhost kind={placing.zoneKind} a={placing.start} b={pointer} fit={fit} />
+        )}
 
         {/* Coverage: utilities whose layer is on, plus the active/selected one. */}
         {/* Clipped to the floor: reach stops at the building walls. */}
@@ -330,7 +582,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(w.id)}
             invalid={spaceBad.has(w.id)}
-            interactive={!placing && !lockStructures}
+            interactive={!placing && !lockStructures && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -341,7 +593,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(p.id)}
             invalid={spaceBad.has(p.id)}
-            interactive={!placing && !lockStructures}
+            interactive={!placing && !lockStructures && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -362,7 +614,7 @@ function FloorStage({
               outline={outlineFor(m.id)}
               needs={needs.get(m.id) ?? []}
               fit={fit}
-              interactive={!placing}
+              interactive={!placing && !spacePan && !commentDraft}
               onDrag={setDrag}
             />
           ))}
@@ -424,7 +676,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(u.id)}
             invalid={utilityBad.has(u.id)}
-            interactive={!placing}
+            interactive={!placing && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -438,7 +690,16 @@ function FloorStage({
           fit={fit}
         />
 
-        {active && active.kind !== 'wall' && active.item.id === GHOST_ID && (
+        <CommentMarkers
+          comments={comments}
+          machines={liveMachines}
+          utilities={shownUtilities}
+          pillars={shownPillars}
+          walls={shownWalls}
+          fit={fit}
+        />
+
+        {active && active.kind !== 'wall' && active.kind !== 'loadingBay' && active.item.id === GHOST_ID && (
           <Group
             x={active.item.x * SCALE}
             y={active.item.y * SCALE}
@@ -462,6 +723,14 @@ function FloorStage({
                 fit={fit}
                 outline={outlineFor(GHOST_ID)}
               />
+            ) : active.kind === 'loadingDock' ? (
+              <LoadingDockGlyph
+                dock={active.item}
+                floorplan={floorplan}
+                fit={fit}
+                center={active.item}
+                invalid={Boolean(loadingDockIssue(active.item, floorplan, loadingDocks))}
+              />
             ) : (
               <UtilityGlyph utility={active.item} floorplan={floorplan} fit={fit} selected />
             )}
@@ -478,7 +747,26 @@ function FloorStage({
         {box && <SelectionBox rect={boxRect(box.start, box.end)} />}
       </Layer>
     </Stage>
+      <MapToolbar
+        zoom={zoom}
+        onZoomIn={() => zoomAtCenter(zoom * 1.2)}
+        onZoomOut={() => zoomAtCenter(zoom / 1.2)}
+        onFit={fitToView}
+      />
+    </>
   )
+}
+
+/**
+ * A machine being placed (the ghost) slides along the outer walls instead of going past them.
+ * On a shaped floor, where it can't fit (the cut-out corner) it stays under the cursor, drawn as
+ * a clash, and a click there doesn't place it.
+ */
+function keepGhostOnFloor(active: Active | null, floorplan: Floorplan): Active | null {
+  if (active?.kind !== 'machine' || active.item.id !== GHOST_ID) return active
+  const kept = keepOnFloor([active.item], { x: 0, y: 0 }, floorplan)
+  if (!kept || (kept.x === 0 && kept.y === 0)) return active
+  return { kind: 'machine', item: { ...active.item, x: active.item.x + kept.x, y: active.item.y + kept.y } }
 }
 
 /** How far the dragged item has moved, when other items move along with it (else null). */
@@ -488,12 +776,45 @@ function groupDelta(
   utilities: Utility[],
   pillars: Pillar[],
   walls: Wall[],
+  zones: Zone[],
+  loadingDocks: LoadingDock[],
+  loadingBays: LoadingBay[],
+  floorplan: Floorplan,
 ): Point | null {
   if (!drag?.group?.length) return null
   // A wall reports its offset from where it started; everything else its position.
   if (walls.some((w) => w.id === drag.id)) return { x: drag.x, y: drag.y }
-  const from = [...machines, ...utilities, ...pillars].find((i) => i.id === drag.id)
-  return from ? { x: drag.x - from.x, y: drag.y - from.y } : null
+  const from = [...machines, ...utilities, ...pillars, ...zones].find((i) => i.id === drag.id)
+  if (from) return { x: drag.x - from.x, y: drag.y - from.y }
+  const dock = loadingDocks.find((item) => item.id === drag.id)
+  const point = dock && loadingDockPointAt(floorplan, dock.boundaryOffsetMm)
+  if (point) return { x: drag.x - point.x, y: drag.y - point.y }
+  const bay = loadingBays.find((item) => item.id === drag.id)
+  const center = bay && loadingBayCentroid(bay)
+  return center ? { x: drag.x - center.x, y: drag.y - center.y } : null
+}
+
+/** The zone being drawn, with its size in metres. */
+function ZoneGhost({ kind, a, b, fit }: { kind: ZoneKind; a: Point; b: Point; fit: number }) {
+  const r = boxRect(a, b)
+  const zone = { kind, colour: ZONE_KINDS[kind].colour, x: r.x + r.width / 2, y: r.y + r.depth / 2, width: r.width, depth: r.depth }
+  const big = r.width >= MIN_ZONE_SIZE && r.depth >= MIN_ZONE_SIZE
+  return (
+    <Group listening={false} opacity={big ? 0.9 : 0.5}>
+      <ZoneShape zone={zone} fit={fit} selected />
+      <Group x={(r.x + r.width) * SCALE} y={(r.y + r.depth) * SCALE} scaleX={1 / fit} scaleY={1 / fit}>
+        <Label x={6} y={6}>
+          <Tag fill={CANVAS.selected} cornerRadius={3} />
+          <Text
+            text={`${(r.width / 1000).toFixed(1)} × ${(r.depth / 1000).toFixed(1)} m · ${zoneArea(r)} m²`}
+            fontSize={11}
+            padding={4}
+            fill="black"
+          />
+        </Label>
+      </Group>
+    </Group>
+  )
 }
 
 /** Faint yellow fill with a dashed yellow border. */
@@ -522,6 +843,10 @@ function useSelectionKeys() {
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
       const s = usePlanner.getState()
+      if (s.commentDraft) {
+        s.cancelCommentPlacement()
+        return
+      }
       if (s.placing || s.selectedIds.length === 0) return
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
@@ -535,6 +860,42 @@ function useSelectionKeys() {
   }, [])
 }
 
+/** Hold Space and drag to pan without changing the existing empty-floor box-select gesture. */
+function useSpacePan() {
+  const [active, setActive] = useState(false)
+
+  useEffect(() => {
+    function isTyping(target: EventTarget | null) {
+      return target instanceof HTMLElement && !!target.closest('input, textarea, [contenteditable="true"]')
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== 'Space' || isTyping(e.target)) return
+      e.preventDefault()
+      setActive(true)
+    }
+
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code === 'Space') setActive(false)
+    }
+
+    function onBlur() {
+      setActive(false)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
+
+  return active
+}
+
 /** The ghost under the cursor, or the item being dragged, at its live position. */
 function activeItem(
   placing: Placing | null,
@@ -544,6 +905,8 @@ function activeItem(
   utilities: Utility[],
   pillars: Pillar[],
   walls: Wall[],
+  loadingDocks: LoadingDock[],
+  loadingBays: LoadingBay[],
   floorplan: Floorplan,
 ): Active | null {
   if (placing && pointer) {
@@ -555,8 +918,8 @@ function activeItem(
         length: placing.length,
         ...pointer,
       }
-      // Conveyor pieces snap onto a nearby free end.
-      return { kind: 'machine', item: { ...item, ...snapConveyor(item, machines) } }
+      // Conveyor pieces snap onto a nearby free end; other machines onto the end of a belt.
+      return { kind: 'machine', item: { ...item, ...snapConveyor(item, machines), ...snapMachineToConveyor(item, machines) } }
     }
     if (placing.kind === 'pillar') {
       return {
@@ -577,6 +940,28 @@ function activeItem(
         },
       }
     }
+    // A zone being drawn is shown by the canvas itself (see ZoneShape below).
+    if (placing.kind === 'zone') return null
+    if (placing.kind === 'loadingBay') {
+      const closing = placing.outline.length >= 3 && Math.hypot(pointer.x - placing.outline[0].x, pointer.y - placing.outline[0].y) <= 500
+      const outline = closing ? placing.outline : [...placing.outline, pointer]
+      return { kind: 'loadingBay', item: { id: GHOST_ID, name: 'Loading bay', loadingDockId: placing.loadingDockId, outline, ...loadingBayCentroid({ outline }) } }
+    }
+    if (placing.kind === 'loadingDock') {
+      const position = nearestLoadingDockPosition(pointer.x, pointer.y, floorplan)
+      if (!position) return null
+      return {
+        kind: 'loadingDock',
+        item: {
+          id: GHOST_ID,
+          name: 'Loading dock',
+          widthMm: DEFAULT_LOADING_DOCK_WIDTH_MM,
+          boundaryOffsetMm: position.offsetMm,
+          flowDirection: 'two-way',
+          ...position.point,
+        },
+      }
+    }
     const info = UTILITY_KINDS[placing.utilityKind]
     const at = placing.utilityKind === 'exit' ? snapToWall(pointer.x, pointer.y, floorplan) : pointer
     return {
@@ -592,7 +977,7 @@ function activeItem(
   }
   if (!drag) return null
   const m = machines.find((m) => m.id === drag.id)
-  if (m) return { kind: 'machine', item: { ...m, x: drag.x, y: drag.y } }
+  if (m) return { kind: 'machine', item: { ...m, x: drag.x, y: drag.y, ...(drag.rotation !== undefined && { rotation: drag.rotation }) } }
   const u = utilities.find((u) => u.id === drag.id)
   if (u) return { kind: 'utility', item: { ...u, x: drag.x, y: drag.y } }
   const p = pillars.find((p) => p.id === drag.id)
@@ -602,6 +987,21 @@ function activeItem(
   if (w) {
     const shift = (q: Point) => ({ x: q.x + drag.x, y: q.y + drag.y })
     return { kind: 'wall', item: { ...w, start: shift(w.start), end: shift(w.end) } }
+  }
+  const bay = loadingBays.find((item) => item.id === drag.id)
+  if (bay) {
+    const center = loadingBayCentroid(bay)
+    const dx = drag.x - center.x
+    const dy = drag.y - center.y
+    return { kind: 'loadingBay', item: { ...bay, outline: bay.outline.map((point) => ({ x: point.x + dx, y: point.y + dy })), x: drag.x, y: drag.y } }
+  }
+  const dock = loadingDocks.find((item) => item.id === drag.id)
+  const dockPosition = nearestLoadingDockPosition(drag.x, drag.y, floorplan)
+  if (dock && dockPosition) {
+    return {
+      kind: 'loadingDock',
+      item: { ...dock, boundaryOffsetMm: dockPosition.offsetMm, ...dockPosition.point },
+    }
   }
   return null
 }
