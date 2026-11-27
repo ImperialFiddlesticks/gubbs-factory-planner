@@ -21,7 +21,7 @@ import {
 import { conveyorMachineLinks, conveyorRuns, type ConveyorRun } from '@/lib/conveyors'
 import { machineName } from '@/lib/machineLabels'
 import { walkingRoutes, type WalkingRoute } from '@/lib/walking'
-import type { Floorplan, MachineInstance, MachineType, Pillar, Point, Utility, Wall, Zone } from '@/types'
+import type { Floorplan, MachineInstance, MachineType, Pillar, Point, TruckServiceStation, TruckType, Utility, Wall, Zone } from '@/types'
 
 /**
  * - space:   machines clash with each other or the walls (red outline on the canvas)
@@ -123,19 +123,22 @@ export interface SupplyLine {
 }
 
 /**
- * One line per machine that needs the kind and has a utility of it in reach; for power, one
- * line per conveyor run (its drive) instead of one per piece.
+ * One line per machine or station that needs the kind and has a utility in reach; for power,
+ * one line per conveyor run (its drive) instead of one per piece.
  */
 export function supplyLines(
   machines: MachineInstance[],
   utilities: Utility[],
   kind: keyof typeof NEEDS,
   walls: Wall[],
+  serviceStations: TruckServiceStation[] = [],
+  truckTypes: TruckType[] = [],
 ): SupplyLine[] {
   const lines: SupplyLine[] = []
   const resolved = resolve(machines)
   const bodies = resolved.map((o) => o.body)
   const { runs, runOf } = kind === 'power' ? conveyorRuns(machines) : { runs: [], runOf: new Map<string, ConveyorRun>() }
+  const truckById = new Map(truckTypes.map((truck) => [truck.id, truck]))
 
   const lineTo = (r: Resolved, nearest: ReturnType<typeof inReach>[number], servedIds: string[], powerKw: number) => {
     const from = { x: nearest.u.x, y: nearest.u.y }
@@ -157,6 +160,29 @@ export function supplyLines(
       if (nearest && (!best || nearest.d < best.nearest.d)) best = { r, nearest }
     }
     if (best) lineTo(best.r, best.nearest, run.pieceIds, run.powerKw)
+  }
+
+  for (const station of serviceStations) {
+    const needsUtility = kind === 'water'
+      ? station.kind === 'battery-watering' && station.compatibleTruckTypeIds.some((id) => {
+          const truck = truckById.get(id)
+          return Boolean(truck?.batteryType && station.compatibleBatteryTypes.includes(truck.batteryType))
+        })
+      : kind === 'power' && (station.kind === 'charging' || station.requiresPower === true)
+    if (!needsUtility) continue
+    const endpoint = { x: station.x, y: station.y }
+    const reachable = utilities
+      .filter((utility) => utility.kind === kind && Math.hypot(endpoint.x - utility.x, endpoint.y - utility.y) <= utilityRadius(utility) &&
+        (walls.length === 0 || clearLine(utility, endpoint, walls)))
+      .sort((a, b) => Math.hypot(endpoint.x - a.x, endpoint.y - a.y) - Math.hypot(endpoint.x - b.x, endpoint.y - b.y))[0]
+    if (!reachable) continue
+    const body = { x: station.x, y: station.y, width: 0, depth: 0 }
+    const path = orthogonalRoute({ x: reachable.x, y: reachable.y }, body, endpoint, walls, bodies)
+    const demand = station.kind === 'charging' ? station.chargerPowerKw : station.powerDemandKw
+    const stationPowerKw = kind === 'power' && demand !== undefined && Number.isFinite(demand) && demand > 0 &&
+      Number.isFinite(station.serviceCapacity) && station.serviceCapacity > 0 ? demand * station.serviceCapacity : 0
+    lines.push({ machineId: station.id, servedIds: [station.id], powerKw: stationPowerKw, utilityId: reachable.id,
+      from: { x: reachable.x, y: reachable.y }, to: path[path.length - 1], path })
   }
   return lines
 }
@@ -200,10 +226,10 @@ const withoutRepeats = (path: Point[]) =>
  * Which power point feeds each machine (its nearest one in reach) and the
  * total load on each power point, kW.
  */
-export function powerAssignments(machines: MachineInstance[], utilities: Utility[], walls: Wall[]) {
-  const feeds = new Map<string, string>() // machine id -> power point id
+export function powerAssignments(machines: MachineInstance[], utilities: Utility[], walls: Wall[], serviceStations: TruckServiceStation[] = []) {
+  const feeds = new Map<string, string>() // machine or station id -> power point id
   const loads = new Map<string, number>() // power point id -> kW
-  for (const line of supplyLines(machines, utilities, 'power', walls)) {
+  for (const line of supplyLines(machines, utilities, 'power', walls, serviceStations)) {
     for (const id of line.servedIds) feeds.set(id, line.utilityId)
     loads.set(line.utilityId, Math.round(((loads.get(line.utilityId) ?? 0) + line.powerKw) * 100) / 100)
   }
@@ -237,6 +263,8 @@ export function findLayoutIssues(
   utilities: Utility[],
   floorplan: Floorplan,
   structures: Structures,
+  serviceStations: TruckServiceStation[] = [],
+  truckTypes: TruckType[] = [],
 ): LayoutIssue[] {
   const resolved = resolve(machines)
   const { runs, runOf } = conveyorRuns(machines)
@@ -248,7 +276,7 @@ export function findLayoutIssues(
     ...spaceIssues(resolved, floorplan, runOf, conveyorMachineLinks(machines)),
     ...structureIssues(resolved, boxes, floorplan),
     ...zoneIssues(resolved, structures.zones ?? []),
-    ...utilityIssues(resolved, machines, utilities, structures.walls, floorplan, runs, runOf),
+    ...utilityIssues(resolved, machines, utilities, structures.walls, floorplan, runs, runOf, serviceStations, truckTypes),
   ]
 }
 
@@ -368,10 +396,30 @@ function utilityIssues(
   floorplan: Floorplan,
   runs: ConveyorRun[],
   runOf: Map<string, ConveyorRun>,
+  serviceStations: TruckServiceStation[],
+  truckTypes: TruckType[],
 ): LayoutIssue[] {
   const issues: LayoutIssue[] = []
-  // Who gets power: a machine, or every piece of a conveyor run through its drive.
-  const powered = new Set(supplyLines(machines, utilities, 'power', walls).flatMap((l) => l.servedIds))
+  // Who gets power: machines, stations, or every piece of a conveyor run through its drive.
+  const powerLines = supplyLines(machines, utilities, 'power', walls, serviceStations, truckTypes)
+  const waterLines = supplyLines(machines, utilities, 'water', walls, serviceStations, truckTypes)
+  const powered = new Set(powerLines.flatMap((l) => l.servedIds))
+  const watered = new Set(waterLines.flatMap((l) => l.servedIds))
+  for (const station of serviceStations) {
+    if (station.kind === 'charging' && !powered.has(station.id)) {
+      issues.push({ key: `power-station:${station.id}`, category: 'utility', need: 'power', ids: [station.id], message: `${station.name} has no power point in reach.` })
+    }
+    const hasCompatibleBattery = station.compatibleTruckTypeIds.some((id) => {
+      const truck = truckTypes.find((item) => item.id === id)
+      return Boolean(truck?.batteryType && station.compatibleBatteryTypes.includes(truck.batteryType))
+    })
+    if (station.kind === 'battery-watering' && hasCompatibleBattery && !watered.has(station.id)) {
+      issues.push({ key: `water-station:${station.id}`, category: 'utility', need: 'water', ids: [station.id], message: `${station.name} has no water point in reach.` })
+    }
+    if (station.kind === 'battery-watering' && station.requiresPower && !powered.has(station.id)) {
+      issues.push({ key: `power-station:${station.id}`, category: 'utility', need: 'power', ids: [station.id], message: `${station.name} has no power point in reach.` })
+    }
+  }
   for (const run of runs) {
     if (run.powerKw > 0 && !powered.has(run.id)) {
       const what = run.pieceIds.length > 1 ? 'Conveyor run' : 'Conveyor'
@@ -431,7 +479,7 @@ function utilityIssues(
     }
   }
 
-  const { feeds, loads } = powerAssignments(machines, utilities, walls)
+  const { feeds, loads } = powerAssignments(machines, utilities, walls, serviceStations)
   for (const u of utilities) {
     const load = loads.get(u.id) ?? 0
     if (u.kind === 'power' && u.capacityKw !== undefined && load > u.capacityKw) {

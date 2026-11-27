@@ -9,7 +9,7 @@ import { selection, usePlanner, type PlannerState } from '@/store'
  * lasts for the session only (not autosaved).
  */
 
-type Layout = Pick<PlannerState, 'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'zones' | 'loadingDocks' | 'loadingBays'>
+type Layout = Pick<PlannerState, 'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'zones' | 'loadingDocks' | 'loadingBays' | 'truckTypes' | 'forkliftInstances' | 'truckParkingSpots' | 'truckServiceStations' | 'truckRoutes' | 'pedestrianRoutes' | 'pedestrianCrossings' | 'safetyBarriers'>
 
 /** Steps kept; older ones are dropped. */
 const LIMIT = 100
@@ -23,6 +23,14 @@ const layoutOf = (s: Layout): Layout => ({
   zones: s.zones,
   loadingDocks: s.loadingDocks,
   loadingBays: s.loadingBays,
+  truckTypes: s.truckTypes,
+  forkliftInstances: s.forkliftInstances,
+  truckParkingSpots: s.truckParkingSpots,
+  truckServiceStations: s.truckServiceStations,
+  truckRoutes: s.truckRoutes,
+  pedestrianRoutes: s.pedestrianRoutes,
+  pedestrianCrossings: s.pedestrianCrossings,
+  safetyBarriers: s.safetyBarriers,
 })
 
 /** The store never mutates, so a changed list or floor is a new object. */
@@ -34,7 +42,15 @@ const changed = (a: Layout, b: Layout) =>
   a.walls !== b.walls ||
   a.zones !== b.zones ||
   a.loadingDocks !== b.loadingDocks ||
-  a.loadingBays !== b.loadingBays
+  a.loadingBays !== b.loadingBays ||
+  a.truckTypes !== b.truckTypes ||
+  a.forkliftInstances !== b.forkliftInstances ||
+  a.truckParkingSpots !== b.truckParkingSpots ||
+  a.truckServiceStations !== b.truckServiceStations ||
+  a.truckRoutes !== b.truckRoutes ||
+  a.pedestrianRoutes !== b.pedestrianRoutes ||
+  a.pedestrianCrossings !== b.pedestrianCrossings ||
+  a.safetyBarriers !== b.safetyBarriers
 
 interface HistoryState {
   /** Earlier layouts, oldest first. */
@@ -61,7 +77,7 @@ usePlanner.subscribe((state, prev) => {
 function restore(layout: Layout) {
   restoring = true
   usePlanner.setState((s) => {
-    const ids = new Set([...layout.machines, ...layout.utilities, ...layout.pillars, ...layout.walls, ...layout.zones, ...layout.loadingDocks, ...layout.loadingBays].map((x) => x.id))
+    const ids = new Set([...layout.machines, ...layout.utilities, ...layout.pillars, ...layout.walls, ...layout.zones, ...layout.loadingDocks, ...layout.loadingBays, ...layout.truckTypes, ...layout.forkliftInstances, ...layout.truckParkingSpots, ...layout.truckServiceStations, ...layout.truckRoutes, ...layout.pedestrianRoutes, ...layout.pedestrianCrossings, ...layout.safetyBarriers].map((x) => x.id))
     return {
       ...layout,
       // Keep the selection where the items still exist; stop placing so the ghost doesn't linger.

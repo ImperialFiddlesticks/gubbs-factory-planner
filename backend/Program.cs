@@ -27,6 +27,7 @@ builder.Services.AddScoped<UtilityDemandService>();
 builder.Services.AddScoped<UtilityValidationService>();
 builder.Services.AddScoped<LoadingDockValidationService>();
 builder.Services.AddScoped<LoadingBayValidationService>();
+builder.Services.AddScoped<TruckLogisticsValidationService>();
 
 var projectStoreDirectory = builder.Configuration["ProjectStore:Directory"];
 if (string.IsNullOrWhiteSpace(projectStoreDirectory))
