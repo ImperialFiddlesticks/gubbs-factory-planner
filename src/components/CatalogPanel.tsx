@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { CATALOG, getMachineType } from '@/data/catalog'
+import { EQUIPMENT_CATEGORIES, type EquipmentCategoryId } from '@/data/categories'
 import { isValidConveyorLength } from '@/data/conveyors'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
 import { ZONE_KIND_LIST, type ZoneKindInfo } from '@/data/zones'
@@ -29,18 +30,28 @@ export function CatalogPanel({
   onToggle: () => void
 }) {
   const [query, setQuery] = useState('')
-  const categories = usePlanner((s) => s.setup.categories)
-  // Machines from the categories picked in the wizard come first; the rest are tucked away.
-  // With no categories picked, everything is shown as one list.
-  const mine = categories.length
-    ? CATALOG.filter((t) => categories.includes(t.category))
-    : CATALOG
-  const other = CATALOG.filter((t) => !mine.includes(t))
+  const picked = usePlanner((s) => s.setup.categories)
+  /** Categories opened or closed by hand; otherwise the ones picked in the wizard start open. */
+  const [openState, setOpenState] = useState<Partial<Record<EquipmentCategoryId, boolean>>>({})
   const normalizedQuery = query.trim().toLowerCase()
   const matches = (...terms: string[]) =>
     !normalizedQuery || terms.some((term) => term.toLowerCase().includes(normalizedQuery))
-  const visibleMine = normalizedQuery ? CATALOG.filter((t) => matches(t.name, t.category, t.id, `${t.width} ${t.depth} ${t.powerKw}`)) : mine
-  const visibleOther = normalizedQuery ? [] : other
+  // One group per category: the ones picked in the wizard first, then the rest in their usual order.
+  const groups = [
+    ...EQUIPMENT_CATEGORIES.filter((c) => picked.includes(c.id)),
+    ...EQUIPMENT_CATEGORIES.filter((c) => !picked.includes(c.id)),
+  ]
+    .map((category) => ({
+      category,
+      types: CATALOG.filter(
+        (t) =>
+          t.category === category.id &&
+          matches(t.name, t.shortName, category.name, t.id, `${t.width} ${t.depth} ${t.powerKw}`),
+      ),
+    }))
+    .filter((g) => g.types.length > 0)
+  const isOpen = (id: EquipmentCategoryId) => Boolean(normalizedQuery) || (openState[id] ?? picked.includes(id))
+  const machineCount = groups.reduce((sum, g) => sum + g.types.length, 0)
   const visibleUtilities = UTILITY_LIST.filter((info) => matches(info.name, info.kind))
   const showPillar = matches('pillar', 'structure')
   const showWall = matches('wall', 'structure')
@@ -88,20 +99,35 @@ export function CatalogPanel({
       <p className="mb-3 text-xs text-muted-foreground">
         Pick an item, then click the floor. The cursor preview shows its working clearance.
       </p>
-      <PanelHeading>{normalizedQuery ? `Machines (${visibleMine.length})` : categories.length ? 'Your machines' : 'Machines'}</PanelHeading>
-      <MachineList types={visibleMine} />
-
-      {visibleOther.length > 0 && (
-        <details className="group mt-4">
-          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-semibold tracking-widest text-muted-foreground uppercase hover:text-foreground [&::-webkit-details-marker]:hidden">
-            <ChevronRight className="size-4 transition-transform group-open:rotate-90" aria-hidden />
-            Other machines ({visibleOther.length})
-          </summary>
-          <div className="mt-3">
-            <MachineList types={visibleOther} />
-          </div>
-        </details>
-      )}
+      {groups.length > 0 && <PanelHeading>{normalizedQuery ? `Equipment (${machineCount})` : 'Equipment'}</PanelHeading>}
+      <div className="space-y-1">
+        {groups.map(({ category, types }) => {
+          const open = isOpen(category.id)
+          return (
+            <section key={category.id}>
+              <button
+                type="button"
+                aria-expanded={open}
+                onClick={() => setOpenState((prev) => ({ ...prev, [category.id]: !open }))}
+                disabled={Boolean(normalizedQuery)}
+                className="flex w-full items-center gap-1.5 rounded-sm py-1.5 text-left text-sm font-medium hover:text-foreground disabled:cursor-default"
+              >
+                <ChevronRight
+                  className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
+                  aria-hidden
+                />
+                <span className="flex-1">{category.name}</span>
+                <span className="text-xs text-muted-foreground tabular-nums">{types.length}</span>
+              </button>
+              {open && (
+                <div className="mt-1 mb-3">
+                  <MachineList types={types} />
+                </div>
+              )}
+            </section>
+          )
+        })}
+      </div>
 
       {showStructures ? <Separator className="my-5" /> : null}
 
@@ -132,7 +158,7 @@ export function CatalogPanel({
           </ul>
         </>
       )}
-      {visibleMine.length === 0 && visibleOther.length === 0 && !showStructures && visibleUtilities.length === 0 && (
+      {groups.length === 0 && !showStructures && visibleUtilities.length === 0 && (
         <p className="text-xs text-muted-foreground">No equipment matches “{query}”.</p>
       )}
     </aside>
@@ -232,16 +258,10 @@ function BeltItem({ type, active }: { type: MachineType; active: boolean }) {
   )
 }
 
+/** The catalog list's name for a type: its short name (the full name is the tooltip). */
 function shortCatalogName(typeId: string) {
-  const names: Record<string, string> = {
-    'cnc-mill': 'CNC mill',
-    'cnc-lathe': 'CNC lathe',
-    'hydraulic-press': 'Hydraulic press',
-    'conveyor-straight': 'Belt conveyor',
-    'packing-table': 'Packing table',
-    'air-compressor': 'Air compressor',
-  }
-  return names[typeId] ?? typeId
+  const type = getMachineType(typeId)
+  return type?.shortName ?? type?.name ?? typeId
 }
 
 function MachineGlyph({ typeId }: { typeId: string }) {
