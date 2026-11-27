@@ -81,6 +81,7 @@ Decided: conveyors are pieces placed one at a time (straight belts and corners),
 - [x] 36. Runs: connected pieces form one run. No clearance clashes between pieces of a run; power is counted once per run (0.25 kW per metre of belt) from one power point that reaches any piece, with one wire; the properties panel shows the run (pieces, total length, power).
 - [x] 37. Machine fronts: a conveyor end snaps to the middle of a machine's front (feeding into it, or taking goods out of it); one conveyor per front; a joined belt and machine don't block each other's clearance; free fronts are marked while a conveyor piece is being placed or dragged.
 - [x] 38. Moving runs: dragging a conveyor piece moves its whole run (outlined together when selected, and the run's free ends snap); double-click a piece to move it on its own.
+- [x] Machines snap onto belt ends too: dragging or placing a machine near a free conveyor end puts the middle of its front on it, turned to face the belt (taking goods off an output, or feeding an input), so a run can go from one machine to another.
 
 ### Autosave
 - [x] Keep the current layout (floor, machines, utilities, structures, wizard answers) in the browser and restore it after a refresh or a closed tab, so no work is lost. Saved quietly on every change; "New floor" still starts fresh. First piece of saved projects.

@@ -193,6 +193,8 @@ export interface PlannerState {
   selectMany: (ids: string[], add?: boolean) => void
   /** Shift-click: add the item to the selection, or take it out. */
   toggleSelected: (id: string) => void
+  /** Move a machine and turn it in one step (e.g. dropped onto a conveyor end). */
+  moveMachineTo: (id: string, x: number, y: number, rotation: Rotation) => void
   /** Move items of any kind by (dx, dy) mm in one step; exits stay on the wall. */
   moveItems: (ids: string[], dx: number, dy: number) => void
   /** Delete items of any kind in one step. */
@@ -639,6 +641,11 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
     set((s) => ({
       ...selection(s.selectedIds.includes(id) ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id]),
       singlePieceId: null,
+    })),
+
+  moveMachineTo: (id, x, y, rotation) =>
+    set((s) => ({
+      machines: s.machines.map((m) => (m.id === id ? { ...m, x: Math.round(x), y: Math.round(y), rotation } : m)),
     })),
 
   moveItems: (ids, dx, dy) =>

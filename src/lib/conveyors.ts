@@ -1,8 +1,11 @@
 import { conveyorKw, machineTypeFor } from '@/data/catalog'
+import { bodyRect, distanceToRect } from '@/lib/geometry'
 import type { MachineInstance, Point, Rotation } from '@/types'
 
 /** How close (mm) a piece's end must come to a free end to snap onto it. */
 export const CONVEYOR_SNAP_DISTANCE = 500
+/** How close (mm) a machine's body must come to a free conveyor end to snap onto it. */
+export const MACHINE_SNAP_DISTANCE = 800
 /** Ends this close (mm) count as joined. */
 const JOIN_TOLERANCE = 1
 
@@ -172,6 +175,47 @@ export function snapShift(moving: MachineInstance[], all: MachineInstance[]): Po
         for (const front of fronts) consider(mineOut, front.in)
     }
     return best ? (best as { shift: Point }).shift : null
+}
+
+/** The rotation (whole degrees) that turns a machine's front to face along `normal`. */
+function rotationFacing(normal: Point): Rotation {
+    // At rotation r the front faces (-sin r, cos r); see machineFront.
+    const degrees = Math.round((Math.atan2(-normal.x, normal.y) * 180) / Math.PI)
+    return (degrees + 360) % 360
+}
+
+/**
+ * Where a (non-conveyor) machine should go to finish a conveyor run: when its body comes near a
+ * free belt end, it jumps there and turns so its front faces the belt — taking goods off a
+ * belt's output, or feeding goods onto a belt's input. Returns its new centre and rotation, or
+ * null when no free end is near. `all` is everything on the floor (the machine is skipped).
+ */
+export function snapMachineToConveyor(
+    machine: MachineInstance,
+    all: MachineInstance[],
+): { x: number; y: number; rotation: Rotation } | null {
+    const type = machineTypeFor(machine)
+    if (!type || type.conveyor) return null
+    const { inputs, outputs } = freeEnds(all.filter((o) => o.id !== machine.id))
+    const body = bodyRect(type, machine)
+
+    let best: { x: number; y: number; rotation: Rotation; d: number } | null = null
+    /** Put the middle of the machine's front on `port`, facing along `normal`. */
+    const consider = (port: Port, normal: Point) => {
+        const d = distanceToRect(port.point.x, port.point.y, body)
+        if (d > MACHINE_SNAP_DISTANCE || (best && d >= best.d)) return
+        const rotation = rotationFacing(normal)
+        const front = rotate({ x: 0, y: type.depth / 2 }, rotation)
+        best = { x: Math.round(port.point.x - front.x), y: Math.round(port.point.y - front.y), rotation, d }
+    }
+    // A belt delivering goods: the machine faces back up the belt.
+    for (const out of outputs) consider(out, { x: -out.dir.x, y: -out.dir.y })
+    // A belt taking goods away: the machine faces along it.
+    for (const input of inputs) consider(input, input.dir)
+
+    if (!best) return null
+    const { x, y, rotation } = best as { x: number; y: number; rotation: Rotation }
+    return { x, y, rotation }
 }
 
 /**

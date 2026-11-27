@@ -6,7 +6,8 @@ import { UtilityIcon } from '@/components/canvas/UtilityNode'
 import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { getMachineType, machinePeople, machineTypeFor } from '@/data/catalog'
-import { snapShift } from '@/lib/conveyors'
+import { snapMachineToConveyor, snapShift } from '@/lib/conveyors'
+import { keepOnFloor } from '@/lib/placement'
 import { clearanceRect, footprint } from '@/lib/geometry'
 import { machineName, machineShortName } from '@/lib/machineLabels'
 import type { Need } from '@/lib/validation'
@@ -35,6 +36,7 @@ export function Machine({
     onDrag: (drag: DragState | null) => void
 }) {
     const moveItems = usePlanner((s) => s.moveItems)
+    const moveMachineTo = usePlanner((s) => s.moveMachineTo)
     const selectSinglePiece = usePlanner((s) => s.selectSinglePiece)
     const machines = usePlanner((s) => s.machines)
     const isConveyor = !!getMachineType(machine.typeId)?.conveyor
@@ -76,10 +78,22 @@ export function Machine({
      * dragging, so they can't be used to measure the move), the ids moving with it (rest of a
      * multi-selection or conveyor run), and those of them that are machines (for conveyor snapping).
      */
-    const drag = useRef<{ from: { x: number; y: number }; group: string[]; machines: MachineInstance[] }>({
+    const drag = useRef<{
+        from: { x: number; y: number }
+        group: string[]
+        machines: MachineInstance[]
+        /** The last position that kept everything on the floor. */
+        lastGood: { x: number; y: number }
+        /** Its rotation when the drag started, and now (turned when snapped onto a belt end). */
+        startRotation: number
+        rotation: number
+    }>({
         from: { x: 0, y: 0 },
         group: [],
         machines: [],
+        lastGood: { x: 0, y: 0 },
+        startRotation: 0,
+        rotation: 0,
     })
 
     /**
@@ -88,17 +102,41 @@ export function Machine({
      */
     const toMm = (node: Konva.Node) => {
         const at = { x: node.x() / SCALE, y: node.y() / SCALE }
-        const { from, machines } = drag.current
+        const { from, machines, startRotation } = drag.current
+        const all = usePlanner.getState().machines
         const dx = at.x - from.x
         const dy = at.y - from.y
-        const moving = [{ ...machine, ...at }, ...machines.map((m) => ({ ...m, x: m.x + dx, y: m.y + dy }))]
-        const shift = snapShift(moving, usePlanner.getState().machines)
-        if (!shift) return at
-        const snapped = { x: Math.round(at.x + shift.x), y: Math.round(at.y + shift.y) }
-        node.position({ x: snapped.x * SCALE, y: snapped.y * SCALE })
-        return snapped
+        const moving = [{ ...machine, ...at, rotation: startRotation }, ...machines.map((m) => ({ ...m, x: m.x + dx, y: m.y + dy }))]
+        const shift = snapShift(moving, all)
+        let pos = shift ? { x: Math.round(at.x + shift.x), y: Math.round(at.y + shift.y) } : at
+        let rotation = startRotation
+
+        // A machine dragged on its own jumps onto a nearby free belt end, turned to face it.
+        if (!isConveyor && drag.current.group.length === 0) {
+            const snapped = snapMachineToConveyor({ ...machine, ...at, rotation: startRotation }, all)
+            if (snapped) {
+                pos = { x: snapped.x, y: snapped.y }
+                rotation = snapped.rotation
+            }
+        }
+
+        // Machines can't go through the outer walls: slide along them, or (on a shaped floor)
+        // stay at the last spot that fit.
+        const { floorplan } = usePlanner.getState()
+        if (floorplan) {
+            const start = [{ ...machine, x: from.x, y: from.y, rotation }, ...machines]
+            const kept = keepOnFloor(start, { x: pos.x - from.x, y: pos.y - from.y }, floorplan)
+            pos = kept ? { x: Math.round(from.x + kept.x), y: Math.round(from.y + kept.y) } : drag.current.lastGood
+        }
+        drag.current.lastGood = pos
+        drag.current.rotation = rotation
+
+        if (pos.x !== at.x || pos.y !== at.y) node.position({ x: pos.x * SCALE, y: pos.y * SCALE })
+        return pos
     }
     const group = () => (drag.current.group.length ? drag.current.group : undefined)
+    /** The new rotation if the drag has turned the machine, else undefined. */
+    const turned = () => (drag.current.rotation !== drag.current.startRotation ? drag.current.rotation : undefined)
 
     return (
         // The group sits at the machine's centre; everything inside is drawn around it.
@@ -119,20 +157,26 @@ export function Machine({
             onDragStart={(e) => {
                 const ids = dragGroup(machine.id)
                 const { machines } = usePlanner.getState()
+                const from = machines.find((m) => m.id === machine.id) ?? machine
                 drag.current = {
-                    from: machines.find((m) => m.id === machine.id) ?? machine,
+                    from,
                     group: ids,
                     machines: machines.filter((m) => ids.includes(m.id)),
+                    lastGood: { x: from.x, y: from.y },
+                    startRotation: from.rotation,
+                    rotation: from.rotation,
                 }
-                onDrag({ id: machine.id, ...toMm(e.target), group: group() })
+                onDrag({ id: machine.id, ...toMm(e.target), group: group(), rotation: turned() })
             }}
-            onDragMove={(e) => onDrag({ id: machine.id, ...toMm(e.target), group: group() })}
+            onDragMove={(e) => onDrag({ id: machine.id, ...toMm(e.target), group: group(), rotation: turned() })}
             onDragEnd={(e) => {
                 // Free placement (conveyors snap to free ends), rounded to whole millimetres.
                 const { x, y } = toMm(e.target)
                 const { from, group: ids } = drag.current
-                moveItems([machine.id, ...ids], x - from.x, y - from.y)
-                drag.current = { from: { x: 0, y: 0 }, group: [], machines: [] }
+                const rotation = turned()
+                if (rotation !== undefined) moveMachineTo(machine.id, x, y, rotation)
+                else moveItems([machine.id, ...ids], x - from.x, y - from.y)
+                drag.current = { from: { x: 0, y: 0 }, group: [], machines: [], lastGood: { x: 0, y: 0 }, startRotation: 0, rotation: 0 }
                 onDrag(null)
                 // Juice: small settle when dropped.
                 e.target.scale({ x: 1.06, y: 1.06 })
