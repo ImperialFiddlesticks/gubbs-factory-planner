@@ -6,6 +6,7 @@ builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
@@ -18,6 +19,12 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddScoped<PlacementService>();
+
+builder.Services.AddSingleton<backend.Services.IProjectRepository>(_ =>
+    new backend.Services.FileProjectRepository(
+        builder.Configuration["ProjectStore:Directory"] ??
+        Path.Combine(builder.Environment.ContentRootPath, "App_Data", "projects")));
+
 
 var app = builder.Build();
 

@@ -31,3 +31,6 @@ dist-ssr
 # .NET user-specific files
 *.user
 *.userosscache
+
+# Locally saved backend projects
+backend/App_Data/

@@ -1,11 +1,16 @@
 import { useRef, useState } from 'react'
-import { Check, ChevronDown, Columns2, Copy, Download, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { Check, ChevronDown, CloudUpload, Columns2, Copy, Download, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { downloadProject, parseProjectFile } from '@/lib/projectFile'
+import {
+  createProjectOnServer,
+  listProjectsFromServer,
+  updateProjectOnServer,
+} from '@/lib/projectApi'
 import { currentProject, usePlanner } from '@/store'
 
 /**
@@ -33,6 +38,11 @@ export function ProjectSwitcher({ onNewProject }: { onNewProject: () => void }) 
   /** Delete was clicked once and waits for the confirming click. */
   const [confirmDelete, setConfirmDelete] = useState(false)
 
+  // BEGIN SERVER SAVE STATE
+  const [savingToServer, setSavingToServer] = useState(false)
+  const [serverMessage, setServerMessage] = useState<string | null>(null)
+  // END SERVER SAVE STATE
+
   if (!floorplan) return null
   const others = [...projects].sort((a, b) => a.floorplan.name.localeCompare(b.floorplan.name))
 
@@ -50,6 +60,36 @@ export function ProjectSwitcher({ onNewProject }: { onNewProject: () => void }) 
     if (floorplan && name) renameProject(floorplan.id, name)
     setRenaming(null)
   }
+
+  // BEGIN SERVER SAVE HANDLER
+  async function saveCurrentToServer() {
+    if (!current) return
+
+    setSavingToServer(true)
+    setServerMessage(null)
+
+    try {
+      const remoteProjects = await listProjectsFromServer()
+      const alreadySaved = remoteProjects.some(
+        (record) => record.id === current.floorplan.id,
+      )
+
+      if (alreadySaved) {
+        await updateProjectOnServer(current)
+      } else {
+        await createProjectOnServer(current)
+      }
+
+      setServerMessage('Saved to server')
+    } catch (error) {
+      setServerMessage(
+        error instanceof Error ? error.message : 'Could not save project',
+      )
+    } finally {
+      setSavingToServer(false)
+    }
+  }
+  // END SERVER SAVE HANDLER
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -131,6 +171,18 @@ export function ProjectSwitcher({ onNewProject }: { onNewProject: () => void }) 
         <MenuItem icon={Copy} onClick={then(duplicateProject)}>
           Duplicate
         </MenuItem>
+        {/* BEGIN SERVER SAVE ACTION */}
+        <MenuItem
+          icon={CloudUpload}
+          disabled={!current || savingToServer}
+          onClick={() => void saveCurrentToServer()}
+        >
+          {savingToServer ? 'Saving…' : 'Save current project to server'}
+        </MenuItem>
+        {serverMessage && (
+          <p className="px-2 py-1.5 text-xs text-muted-foreground">{serverMessage}</p>
+        )}
+        {/* END SERVER SAVE ACTION */}
         <MenuItem icon={Pencil} onClick={() => setRenaming(floorplan.name)}>
           Rename
         </MenuItem>
