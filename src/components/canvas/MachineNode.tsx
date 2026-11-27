@@ -7,7 +7,7 @@ import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/co
 import { SCALE } from '@/constants'
 import { getMachineType, machineTypeFor } from '@/data/catalog'
 import { snapShift } from '@/lib/conveyors'
-import { clearanceBox, footprint } from '@/lib/geometry'
+import { clearanceRect, footprint } from '@/lib/geometry'
 import { machineLabelGroup, machineShortName } from '@/lib/machineLabels'
 import type { Need } from '@/lib/validation'
 import { usePlanner } from '@/store'
@@ -352,14 +352,18 @@ function NeedsBadges({ needs, top, fit }: { needs: Need[]; top: number; fit: num
 export function ClearanceZone({ machine, valid }: { machine: MachineInstance; valid: boolean }) {
     const type = machineTypeFor(machine)
     if (!type) return null
-    const box = clearanceBox(type, machine)
+    // Turned with the machine, around the zone's own centre.
+    const zone = clearanceRect(type, machine)
     const colour = valid ? CANVAS.valid : CANVAS.invalid
     return (
         <Rect
-            x={box.x * SCALE}
-            y={box.y * SCALE}
-            width={box.width * SCALE}
-            height={box.depth * SCALE}
+            x={zone.cx * SCALE}
+            y={zone.cy * SCALE}
+            width={zone.width * SCALE}
+            height={zone.depth * SCALE}
+            offsetX={(zone.width * SCALE) / 2}
+            offsetY={(zone.depth * SCALE) / 2}
+            rotation={zone.rotation}
             fill={colour}
             opacity={0.18}
             stroke={colour}
