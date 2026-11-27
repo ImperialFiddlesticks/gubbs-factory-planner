@@ -7,11 +7,14 @@ export interface MachineInstanceDto {
     xmm: number;
     ymm: number;
     rotationDegrees: number;
+    length?: number | null;
 }
 export interface MachineTypeDto {
     widthMm: number;
     depthMm: number;
     powerKw: number;
+    conveyor?: string | null;
+    clearance: MachineClearance;
     needsWater: boolean;
     needsFireSuppression: boolean;
 }
@@ -19,6 +22,25 @@ export interface MachineTypeDto {
 export interface PlacementCheckRequest {
     hallWidthMm: number;
     hallDepthMm: number;
+    hallOutline?: PlacementPoint[] | null;
+    otherMachines: PlacementCheckMachine[];
+    machine: MachineInstanceDto;
+    machineType: MachineTypeDto;
+}
+
+export interface PlacementPoint {
+    x: number;
+    y: number;
+}
+
+export interface MachineClearance {
+    frontMm: number;
+    backMm: number;
+    leftMm: number;
+    rightMm: number;
+}
+
+export interface PlacementCheckMachine {
     machine: MachineInstanceDto;
     machineType: MachineTypeDto;
 }
