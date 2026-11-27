@@ -54,6 +54,8 @@ export interface MachineType {
   powerKw: number
   needsWater: boolean
   needsFireSuppression: boolean
+  /** Typical height, mm (checked against height-limit zones). */
+  height?: number
 }
 
 /** Rotation in degrees, clockwise. */
@@ -102,6 +104,31 @@ export interface Utility {
   radius?: number
   /** Power available at this point, kW (power utilities only). */
   capacityKw?: number
+}
+
+/**
+ * What a zone means: a plain labelled area, a keep-clear aisle (no machine may stand in it),
+ * or a height limit (machines under it may be no taller than maxHeight).
+ */
+export type ZoneKind = 'area' | 'aisle' | 'height'
+
+/** A marked floor area, e.g. "Zon 2: Svets & plåt", a transport aisle, or a low ceiling. */
+export interface Zone {
+  id: string
+  name: string
+  kind: ZoneKind
+  /** Centre of the zone on the floorplan, mm. */
+  x: number
+  /** Centre of the zone on the floorplan, mm. */
+  y: number
+  /** Size along x, mm. */
+  width: number
+  /** Size along y, mm. */
+  depth: number
+  /** Fill/border colour on the plan, hex (e.g. "#1a9fd9"). */
+  colour: string
+  /** Height limits only: the tallest machine allowed under it, mm. */
+  maxHeight?: number
 }
 
 /** A structural column: a fixed part of the building that machines must avoid. */
@@ -178,6 +205,7 @@ export const MachineTypeSchema = z.object({
   powerKw: z.number().nonnegative(),
   needsWater: z.boolean(),
   needsFireSuppression: z.boolean(),
+  height: z.number().positive().optional(),
 }) satisfies z.ZodType<MachineType>
 
 export const RotationSchema = z
@@ -219,6 +247,18 @@ export const UtilitySchema = z.object({
   radius: z.number().positive().optional(),
   capacityKw: z.number().nonnegative().optional(),
 }) satisfies z.ZodType<Utility>
+
+export const ZoneSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.enum(['area', 'aisle', 'height']),
+  x: z.number(),
+  y: z.number(),
+  width: z.number().positive(),
+  depth: z.number().positive(),
+  colour: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  maxHeight: z.number().positive().optional(),
+}) satisfies z.ZodType<Zone>
 
 export const PillarSchema = z.object({
   id: z.string(),

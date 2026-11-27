@@ -10,6 +10,7 @@ import {
   PillarSchema,
   UtilitySchema,
   WallSchema,
+  ZoneSchema,
 } from '@/types'
 
 /**
@@ -23,7 +24,7 @@ const SAVE_KEY = 'gubbs-factory-planner'
 
 type Saved = Pick<
   PlannerState,
-  'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'comments' | 'setup' | 'projects' | 'layers' | 'conveyorLength'
+  'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'zones' | 'comments' | 'setup' | 'projects' | 'layers' | 'conveyorLength'
 >
 
 /** A saved (not open) project. */
@@ -33,6 +34,7 @@ export const ProjectSchema = z.object({
   utilities: z.array(UtilitySchema),
   pillars: z.array(PillarSchema),
   walls: z.array(WallSchema),
+  zones: z.array(ZoneSchema).default([]),
   comments: z.array(LayoutCommentSchema).default([]),
   setup: z.record(z.string(), z.unknown()).optional(),
 })
@@ -47,6 +49,7 @@ const SavedSchema = z.object({
   utilities: z.array(UtilitySchema),
   pillars: z.array(PillarSchema),
   walls: z.array(WallSchema),
+  zones: z.array(ZoneSchema).optional(),
   comments: z.array(LayoutCommentSchema).optional(),
   // Wizard answers and preferences are merged over the defaults, so a missing field is fine.
   setup: z.record(z.string(), z.unknown()).optional(),
@@ -65,6 +68,7 @@ export const autosave: PersistOptions<PlannerState, Saved> = {
     utilities: s.utilities,
     pillars: s.pillars,
     walls: s.walls,
+    zones: s.zones,
     comments: s.comments,
     setup: s.setup,
     projects: s.projects,
@@ -83,6 +87,7 @@ export const autosave: PersistOptions<PlannerState, Saved> = {
       utilities: saved.utilities,
       pillars: saved.pillars,
       walls: saved.walls,
+      zones: saved.zones ?? [],
       comments: saved.comments ?? [],
       setup: { ...current.setup, ...saved.setup },
       projects: (saved.projects ?? []).flatMap((raw) => {

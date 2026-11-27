@@ -9,6 +9,7 @@ import { Separator } from '@/components/ui/separator'
 import { CATALOG, getMachineType } from '@/data/catalog'
 import { isValidConveyorLength } from '@/data/conveyors'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS } from '@/data/structures'
+import { ZONE_KIND_LIST, type ZoneKindInfo } from '@/data/zones'
 import { EXIT_MAX_DISTANCE, UTILITY_LIST, type UtilityKindInfo } from '@/data/utilities'
 import { cn } from '@/lib/utils'
 import { usePlanner } from '@/store'
@@ -43,6 +44,8 @@ export function CatalogPanel({
   const visibleUtilities = UTILITY_LIST.filter((info) => matches(info.name, info.kind))
   const showPillar = matches('pillar', 'structure')
   const showWall = matches('wall', 'structure')
+  const visibleZones = ZONE_KIND_LIST.filter((info) => matches(info.name, 'zone', 'area', info.description))
+  const showStructures = showPillar || showWall || visibleZones.length > 0
 
   if (collapsed) {
     return (
@@ -100,14 +103,17 @@ export function CatalogPanel({
         </details>
       )}
 
-      {showPillar || showWall ? <Separator className="my-5" /> : null}
+      {showStructures ? <Separator className="my-5" /> : null}
 
-      {(showPillar || showWall) && (
+      {showStructures && (
         <>
           <PanelHeading>Structures</PanelHeading>
           <div className="space-y-2">
             {showPillar && <PillarItem />}
             {showWall && <WallItem />}
+            {visibleZones.map((info) => (
+              <ZoneItem key={info.kind} info={info} />
+            ))}
           </div>
         </>
       )}
@@ -126,7 +132,7 @@ export function CatalogPanel({
           </ul>
         </>
       )}
-      {visibleMine.length === 0 && visibleOther.length === 0 && !showPillar && !showWall && visibleUtilities.length === 0 && (
+      {visibleMine.length === 0 && visibleOther.length === 0 && !showStructures && visibleUtilities.length === 0 && (
         <p className="text-xs text-muted-foreground">No equipment matches “{query}”.</p>
       )}
     </aside>
@@ -331,6 +337,41 @@ function WallItem() {
         <span className="block text-xs text-muted-foreground">
           Click start and end · {metres(DEFAULT_WALL_THICKNESS)} m thick
         </span>
+        {active && <Badge className="mt-1">Drawing</Badge>}
+      </span>
+    </button>
+  )
+}
+
+/** A zone type to draw: press and drag on the floor. */
+function ZoneItem({ info }: { info: ZoneKindInfo }) {
+  const startPlacing = usePlanner((s) => s.startPlacingZone)
+  const active = usePlanner((s) => s.placing?.kind === 'zone' && s.placing.zoneKind === info.kind)
+
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={() => startPlacing(info.kind)}
+      className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}
+    >
+      {/* Mini zone: tinted square with its border style (aisles hatched). */}
+      <span
+        className="size-7 shrink-0 rounded-[3px] border-2"
+        style={{
+          borderColor: info.colour,
+          borderStyle: info.kind === 'area' ? 'solid' : 'dashed',
+          backgroundColor: `${info.colour}26`,
+          backgroundImage:
+            info.kind === 'aisle'
+              ? `repeating-linear-gradient(135deg, ${info.colour}99 0 1px, transparent 1px 5px)`
+              : undefined,
+        }}
+        aria-hidden
+      />
+      <span>
+        <span className="block text-sm font-medium">{info.kind === 'area' ? 'Zone' : info.name}</span>
+        <span className="block text-xs text-muted-foreground">{info.description} · drag to draw</span>
         {active && <Badge className="mt-1">Drawing</Badge>}
       </span>
     </button>

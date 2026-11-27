@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import { getMachineType } from '@/data/catalog'
 import type { EquipmentCategoryId } from '@/data/categories'
 import { DEFAULT_CONVEYOR_LENGTH } from '@/data/conveyors'
+import { DEFAULT_HEIGHT_LIMIT, ZONE_KINDS } from '@/data/zones'
 import { DEFAULT_LAYERS, UTILITY_LAYER, utilityVisible, type LayerId } from '@/data/layers'
 import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
 import { DEFAULT_PILLAR_GRID, type PillarGrid } from '@/lib/pillarGrid'
@@ -11,7 +12,7 @@ import { UTILITY_KINDS } from '@/data/utilities'
 import { autosave } from '@/lib/autosave'
 import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
-import type { Floorplan, LayoutComment, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall } from '@/types'
+import type { Floorplan, LayoutComment, MachineInstance, Pillar, Point, Rotation, Utility, UtilityKind, Wall, Zone, ZoneKind } from '@/types'
 
 export type NewFloorplanInput = Omit<Floorplan, 'id'>
 
@@ -20,6 +21,8 @@ export type Placing =
   | { kind: 'machine'; typeId: string; rotation: Rotation; length?: number }
   | { kind: 'utility'; utilityKind: UtilityKind }
   | { kind: 'pillar' }
+  /** Drawing a zone: `start` is set while the mouse is held down, dragging out the rectangle. */
+  | { kind: 'zone'; zoneKind: ZoneKind; start: Point | null }
   /** Drawing a wall: `start` is null until the first click. */
   | { kind: 'wall'; start: Point | null }
 
@@ -60,6 +63,8 @@ export interface Project {
   utilities: Utility[]
   pillars: Pillar[]
   walls: Wall[]
+  /** Missing in projects saved before zones existed. */
+  zones?: Zone[]
   comments: LayoutComment[]
   setup: SetupAnswers
 }
@@ -95,7 +100,8 @@ export interface PlannerState {
   utilities: Utility[]
   pillars: Pillar[]
   walls: Wall[]
-  /** The selected item (machine, utility, pillar or wall) when exactly one is selected, else null. */
+  zones: Zone[]
+  /** The selected item (machine, utility, pillar, wall or zone) when exactly one is selected, else null. */
   selectedId: string | null
   /** Everything selected (one item, or several from box select / Shift-click). */
   selectedIds: string[]
@@ -173,6 +179,12 @@ export interface PlannerState {
   openCompare: () => void
   closeCompare: () => void
 
+  /** Add a zone from a rectangle (two opposite corners, mm) and select it. */
+  addZone: (kind: ZoneKind, a: Point, b: Point) => void
+  /** Rename, recolour, retype, move or resize a zone (sizes rounded to whole mm). */
+  updateZone: (id: string, patch: Partial<Omit<Zone, 'id'>>) => void
+  removeZone: (id: string) => void
+
   select: (id: string | null) => void
   /** Select several items (box select); with `add`, they're added to the current selection. */
   selectMany: (ids: string[], add?: boolean) => void
@@ -207,6 +219,10 @@ export interface PlannerState {
   startPlacingWall: () => void
   /** First click of a wall: fix its start point. */
   setWallStart: (start: Point) => void
+  /** Pick up a zone type to draw; picking the same one again puts it back. */
+  startPlacingZone: (kind: ZoneKind) => void
+  /** Mouse down (a point) or a drag too small to make a zone (null) while drawing a zone. */
+  setZoneStart: (start: Point | null) => void
   rotatePlacing: () => void
   cancelPlacing: () => void
 }
@@ -232,6 +248,7 @@ export function currentProject(s: PlannerState): Project | null {
     utilities: s.utilities,
     pillars: s.pillars,
     walls: s.walls,
+    zones: s.zones,
     comments: s.comments,
     setup: s.setup,
   }
@@ -251,6 +268,7 @@ function opened(p: Project): Partial<PlannerState> {
     utilities: p.utilities,
     pillars: p.pillars,
     walls: p.walls,
+    zones: p.zones ?? [],
     comments: p.comments ?? [],
     selectedCommentId: null,
     commentDraft: null,
@@ -283,6 +301,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   utilities: [],
   pillars: [],
   walls: [],
+  zones: [],
   comments: [],
   selectedCommentId: null,
   commentDraft: null,
@@ -302,6 +321,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       utilities: [],
       pillars: pillars.map((p) => ({ id: crypto.randomUUID(), ...p })),
       walls: [],
+      zones: [],
       comments: [],
       selectedCommentId: null,
       commentDraft: null,
@@ -364,6 +384,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         utilities: [],
         pillars: [],
         walls: [],
+        zones: [],
         comments: [],
         selectedCommentId: null,
         commentDraft: null,
@@ -563,6 +584,42 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       ...selection(s.selectedIds.filter((x) => x !== id)),
     })),
 
+  addZone: (kind, a, b) =>
+    set((s) => {
+      const info = ZONE_KINDS[kind]
+      const zone: Zone = {
+        id: crypto.randomUUID(),
+        // Numbered per kind: "Area 1", "Aisle 2", …
+        name: `${info.name} ${s.zones.filter((z) => z.kind === kind).length + 1}`,
+        kind,
+        x: Math.round((a.x + b.x) / 2),
+        y: Math.round((a.y + b.y) / 2),
+        width: Math.round(Math.abs(b.x - a.x)),
+        depth: Math.round(Math.abs(b.y - a.y)),
+        colour: info.colour,
+        ...(kind === 'height' && { maxHeight: DEFAULT_HEIGHT_LIMIT }),
+      }
+      return { zones: [...s.zones, zone], ...selection([zone.id]) }
+    }),
+
+  updateZone: (id, patch) =>
+    set((s) => ({
+      zones: s.zones.map((z) => {
+        if (z.id !== id) return z
+        const next = { ...z, ...patch }
+        for (const key of ['x', 'y', 'width', 'depth'] as const) next[key] = Math.round(next[key])
+        if (next.kind !== 'height') delete next.maxHeight
+        else next.maxHeight ??= DEFAULT_HEIGHT_LIMIT
+        return next
+      }),
+    })),
+
+  removeZone: (id) =>
+    set((s) => ({
+      zones: s.zones.filter((z) => z.id !== id),
+      ...selection(s.selectedIds.filter((x) => x !== id)),
+    })),
+
   select: (id) =>
     set((s) => ({ ...selection(id ? [id] : []), ...(id !== s.singlePieceId && { singlePieceId: null }) })),
 
@@ -588,6 +645,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
           moving.has(u.id) && s.floorplan ? { ...u, ...placeUtility(u.kind, u.x + dx, u.y + dy, s.floorplan) } : u,
         ),
         walls: s.walls.map((w) => (moving.has(w.id) ? { ...w, start: shift(w.start), end: shift(w.end) } : w)),
+        zones: s.zones.map(by),
       }
     }),
 
@@ -599,6 +657,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         utilities: s.utilities.filter((u) => !gone.has(u.id)),
         pillars: s.pillars.filter((p) => !gone.has(p.id)),
         walls: s.walls.filter((w) => !gone.has(w.id)),
+        zones: s.zones.filter((z) => !gone.has(z.id)),
         ...selection(s.selectedIds.filter((x) => !gone.has(x))),
       }
     }),
@@ -712,6 +771,23 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       s.placing?.kind === 'wall'
         ? { placing: null }
         : { placing: { kind: 'wall', start: null }, ...selection([]) },
+    ),
+
+  startPlacingZone: (zoneKind) =>
+    set((s) =>
+      s.placing?.kind === 'zone' && s.placing.zoneKind === zoneKind
+        ? { placing: null }
+        : {
+            placing: { kind: 'zone', zoneKind, start: null },
+            ...selection([]),
+            // Drawing something the Zones layer hides turns the layer on, so it doesn't vanish.
+            layers: { ...s.layers, zones: true },
+          },
+    ),
+
+  setZoneStart: (start) =>
+    set((s) =>
+      s.placing?.kind === 'zone' ? { placing: { ...s.placing, start: start && roundPoint(start) } } : s,
     ),
 
   setWallStart: (start) =>

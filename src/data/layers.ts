@@ -2,7 +2,7 @@ import { COLORS } from '@/theme'
 import type { UtilityKind } from '@/types'
 
 /** Toggleable overlays on the floor canvas. Utility icons always stay visible. */
-export type LayerId = 'water' | 'electrical' | 'fire' | 'exits'
+export type LayerId = 'zones' | 'water' | 'electrical' | 'fire' | 'exits'
 
 export interface LayerInfo {
   id: LayerId
@@ -13,6 +13,7 @@ export interface LayerInfo {
 }
 
 export const LAYERS: LayerInfo[] = [
+  { id: 'zones', name: 'Zones', description: 'Areas, keep-clear aisles and height limits', colour: COLORS.blue },
   { id: 'water', name: 'Water', description: 'Reach and pipes to machines', colour: COLORS.cyan },
   { id: 'electrical', name: 'Electrical', description: 'Reach, wires and load per power point', colour: COLORS.yellowDark },
   { id: 'fire', name: 'Fire safety', description: 'Sprinklers (hidden when off), coverage and routes to extinguishers', colour: COLORS.violet },
@@ -20,6 +21,7 @@ export const LAYERS: LayerInfo[] = [
 ]
 
 export const DEFAULT_LAYERS: Record<LayerId, boolean> = {
+  zones: true,
   water: true,
   electrical: true,
   fire: true,

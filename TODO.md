@@ -114,9 +114,14 @@ Decided: the floor name in the header is the project switcher (no new header but
 - [x] Colour per item (a small palette), e.g. to mark which product line it belongs to.
 
 ### Zones (kickoff: "mark floor areas with colours and text"; replaces keep-clear aisles and height limits)
-- Draw a zone as a rectangle (click-drag), with a name, colour and type; the label is drawn in the zone (like "Zon 2: Svets & plåt" in the example layout).
-- Zone types: plain area (labelling only); keep-clear aisle (hatched, no machine body may stand in it — warning); height limit (max height — a taller machine standing in it gets a warning); maybe welding/hazard area.
-- Area shown for each zone (m²), and machines can tell which zone they're in.
+
+Decided: a zone is selected and moved by its name tag (dragging elsewhere inside it still draws the select box, and machines in it stay clickable), resized with corner handles; catalog machines get typical heights (editable per machine) so height limits always work; a "Zones" layer, on by default.
+
+- [x] 43. Data model: `Zone` (id, name, kind: area / aisle / height limit, rectangle x/y/width/depth, colour, maxHeight for height limits) + zod schema; `zones` in the store with add/update/remove; part of projects, autosave, export/import, undo, duplicate and compare previews. Typical heights for every catalog machine.
+- [x] 44. Drawing: a "Zone" item in Structures; click-drag on the floor draws the rectangle (live size shown), Esc cancels; the new zone is selected so it can be named straight away.
+- [x] 45. Canvas: tinted fill and coloured border (aisles hatched); a name tag in the top-left corner with the area in m²; click the tag to select, drag it to move; corner handles resize the selected zone; a "Zones" layer. Drawn under machines.
+- [x] 46. Properties panel: name, type, colour, max height (height limits), position and size, area, delete; Delete key and undo work as for other items.
+- [x] 47. Rules: a machine body in a keep-clear aisle → "CNC 01 stands in the keep-clear aisle "Main aisle"."; a machine taller than a height limit it stands under → "CNC 01 (3.2 m) is taller than the 3.0 m height limit "Mezzanine"."
 
 ### Equipment library (assembly first)
 - Assembly-shop equipment, the hardest case for Saab: assembly jig (large, 2–3 people, clearance all round), work bench, tool cabinet/trolley, storage shelf, EUR-pallet spot, chemicals cabinet, quality-control table, parts washer, welding table, press brake, compressor — sizes from the example layout's legend.

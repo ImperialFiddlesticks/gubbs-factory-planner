@@ -21,7 +21,7 @@ import {
 import { conveyorMachineLinks, conveyorRuns, type ConveyorRun } from '@/lib/conveyors'
 import { machineName } from '@/lib/machineLabels'
 import { walkingRoutes, type WalkingRoute } from '@/lib/walking'
-import type { Floorplan, MachineInstance, MachineType, Pillar, Point, Utility, Wall } from '@/types'
+import type { Floorplan, MachineInstance, MachineType, Pillar, Point, Utility, Wall, Zone } from '@/types'
 
 /**
  * - space:   machines clash with each other or the walls (red outline on the canvas)
@@ -247,6 +247,7 @@ export function findLayoutIssues(
   return [
     ...spaceIssues(resolved, floorplan, runOf, conveyorMachineLinks(machines)),
     ...structureIssues(resolved, boxes, floorplan),
+    ...zoneIssues(resolved, structures.zones ?? []),
     ...utilityIssues(resolved, machines, utilities, structures.walls, floorplan, runs, runOf),
   ]
 }
@@ -255,6 +256,39 @@ export function findLayoutIssues(
 export interface Structures {
   pillars: Pillar[]
   walls: Wall[]
+  /** Keep-clear aisles and height limits; plain areas have no rules. */
+  zones?: Zone[]
+}
+
+/**
+ * Zone rules: nothing may stand in a keep-clear aisle (conveyor pieces included: a belt across
+ * an aisle blocks it), and nothing under a height limit may be taller than its max height.
+ * A machine counts as in a zone if any part of it (its rotated shape) is.
+ */
+function zoneIssues(resolved: Resolved[], zones: Zone[]): LayoutIssue[] {
+  const issues: LayoutIssue[] = []
+  for (const z of zones) {
+    if (z.kind === 'area') continue
+    const area = boxToRect({ x: z.x - z.width / 2, y: z.y - z.depth / 2, width: z.width, depth: z.depth })
+    for (const r of resolved) {
+      if (!rectsOverlap(r.shape, area)) continue
+      const ids = [r.machine.id, z.id]
+      if (z.kind === 'aisle') {
+        issues.push({ key: `aisle:${ids.join('|')}`, category: 'space', ids, message: `${r.name} stands in the keep-clear aisle "${z.name}".` })
+      } else if (z.maxHeight !== undefined) {
+        const height = r.machine.height ?? r.type.height
+        if (height !== undefined && height > z.maxHeight) {
+          issues.push({
+            key: `height:${ids.join('|')}`,
+            category: 'space',
+            ids,
+            message: `${r.name} (${metres(height)} m) is taller than the ${metres(z.maxHeight)} m height limit "${z.name}".`,
+          })
+        }
+      }
+    }
+  }
+  return issues
 }
 
 interface StructureBox {

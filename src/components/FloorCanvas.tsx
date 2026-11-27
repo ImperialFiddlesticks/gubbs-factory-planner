@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type Konva from 'konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
-import { Group, Layer, Line, Rect, Shape, Stage } from 'react-konva'
+import { Group, Label, Layer, Line, Rect, Shape, Stage, Tag, Text } from 'react-konva'
 import { MapToolbar } from '@/components/MapToolbar'
 import { ConveyorEnds } from '@/components/canvas/ConveyorBody'
 import { CommentMarkers } from '@/components/canvas/CommentMarkers'
@@ -9,6 +9,7 @@ import { ClearanceZone, Machine, MachineBody, type Outline } from '@/components/
 import { GHOST_ID, type DragState } from '@/components/canvas/shared'
 import { PillarBody, PillarNode } from '@/components/canvas/PillarNode'
 import { WallBody, WallNode } from '@/components/canvas/WallNode'
+import { ZoneNode, ZoneShape } from '@/components/canvas/ZoneNode'
 import { CoverageCircle, UtilityGlyph, UtilityNode } from '@/components/canvas/UtilityNode'
 import { PowerLoadTags, SupplyLines } from '@/components/canvas/SupplyLines'
 import { WalkingRoutes } from '@/components/canvas/WalkingRoutes'
@@ -17,6 +18,7 @@ import { getMachineType, machineTypeFor } from '@/data/catalog'
 import { UTILITY_LAYER, utilityVisible } from '@/data/layers'
 import { DEFAULT_PILLAR_SIZE, DEFAULT_WALL_THICKNESS, MIN_WALL_LENGTH } from '@/data/structures'
 import { UTILITY_KINDS } from '@/data/utilities'
+import { MIN_ZONE_SIZE, ZONE_KINDS, zoneArea } from '@/data/zones'
 import { conveyorRuns, snapConveyor } from '@/lib/conveyors'
 import { floorCorners } from '@/lib/floorShapes'
 import {
@@ -33,7 +35,7 @@ import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validatio
 import { useElementSize } from '@/lib/useElementSize'
 import { usePlanner, type Placing } from '@/store'
 import { CANVAS } from '@/theme'
-import type { Floorplan, MachineInstance, Pillar, Point, Utility, Wall } from '@/types'
+import type { Floorplan, MachineInstance, Pillar, Point, Utility, Wall, Zone, ZoneKind } from '@/types'
 
 interface FloorCanvasProps {
   floorplan: Floorplan | null
@@ -59,6 +61,7 @@ function placingName(p: Placing) {
   if (p.kind === 'machine') return getMachineType(p.typeId)?.name
   if (p.kind === 'pillar') return 'Pillar'
   if (p.kind === 'wall') return 'Wall'
+  if (p.kind === 'zone') return ZONE_KINDS[p.zoneKind].name
   return UTILITY_KINDS[p.utilityKind].name
 }
 
@@ -74,6 +77,14 @@ function PlacingHint() {
     )
   }
   if (!placing) return null
+  if (placing.kind === 'zone') {
+    return (
+      <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+        Drawing a <span className="font-semibold">{ZONE_KINDS[placing.zoneKind].name}</span> zone · Press and
+        drag on the floor · Esc or right-click to cancel
+      </div>
+    )
+  }
   if (placing.kind === 'wall') {
     return (
       <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
@@ -141,6 +152,7 @@ function FloorStage({
   const utilities = usePlanner((s) => s.utilities)
   const pillars = usePlanner((s) => s.pillars)
   const walls = usePlanner((s) => s.walls)
+  const zones = usePlanner((s) => s.zones)
   const lockStructures = usePlanner((s) => s.lockStructures)
   const selectedId = usePlanner((s) => s.selectedId)
   const selectedIds = usePlanner((s) => s.selectedIds)
@@ -156,6 +168,8 @@ function FloorStage({
   const addPillar = usePlanner((s) => s.addPillar)
   const addWall = usePlanner((s) => s.addWall)
   const setWallStart = usePlanner((s) => s.setWallStart)
+  const setZoneStart = usePlanner((s) => s.setZoneStart)
+  const addZone = usePlanner((s) => s.addZone)
   const cancelPlacing = usePlanner((s) => s.cancelPlacing)
   const addLocationComment = usePlanner((s) => s.addLocationComment)
   const cancelCommentPlacement = usePlanner((s) => s.cancelCommentPlacement)
@@ -199,13 +213,14 @@ function FloorStage({
   const active = activeItem(placing, pointer, drag, machines, utilities, pillars, walls, floorplan)
 
   // Items moving along with the dragged one (multi-selection, conveyor run), at their live spot.
-  const delta = groupDelta(drag, machines, utilities, pillars, walls)
+  const delta = groupDelta(drag, machines, utilities, pillars, walls, zones)
   const moving = new Set(delta ? drag?.group : [])
   const shiftItems = <T extends { id: string; x: number; y: number }>(list: T[]) =>
     delta ? list.map((i) => (moving.has(i.id) ? { ...i, x: i.x + delta.x, y: i.y + delta.y } : i)) : list
   const shiftPoint = (p: Point) => (delta ? { x: p.x + delta.x, y: p.y + delta.y } : p)
   const shownUtilities = shiftItems(utilities)
   const shownPillars = shiftItems(pillars)
+  const shownZones = shiftItems(zones)
   const shownWalls = delta
     ? walls.map((w) => (moving.has(w.id) ? { ...w, start: shiftPoint(w.start), end: shiftPoint(w.end) } : w))
     : walls
@@ -217,7 +232,14 @@ function FloorStage({
   const livePillars = active?.kind === 'pillar' ? withItem(shownPillars, active.item) : shownPillars
   const liveWalls = active?.kind === 'wall' ? withItem(shownWalls, active.item) : shownWalls
 
-  const issues = findLayoutIssues(liveMachines, liveUtilities, floorplan, { pillars: livePillars, walls: liveWalls })
+  // A zone being dragged by its tag, at its live spot.
+  const draggedZone = drag && zones.find((z) => z.id === drag.id)
+  const liveZones = draggedZone ? withItem(shownZones, { ...draggedZone, x: drag.x, y: drag.y }) : shownZones
+  const issues = findLayoutIssues(liveMachines, liveUtilities, floorplan, {
+    pillars: livePillars,
+    walls: liveWalls,
+    zones: layers.zones ? liveZones : zones,
+  })
   const spaceBad = idsWithIssues(issues, 'space')
   const utilityBad = idsWithIssues(issues, 'utility')
   const needs = needsByMachine(issues)
@@ -258,6 +280,8 @@ function FloorStage({
       // Left click (or touch) drops the ghost where it is; right click is handled below.
       if ('button' in e.evt && e.evt.button !== 0) return
       const at = pointerMm()
+      // Zones: press here, drag, release to finish (see finishZone).
+      if (at && placing.kind === 'zone') return setZoneStart(at)
       if (at && placing.kind === 'wall') {
         // Two clicks: the first sets the start, the second (far enough away) finishes the wall.
         if (!placing.start) return setWallStart(at)
@@ -281,7 +305,7 @@ function FloorStage({
     }
     // Pressing empty floor starts a selection box (a plain click clears the selection on release).
     const t = e.target
-    if (['.machine', '.utility', '.pillar', '.wall'].some((n) => t.findAncestor(n, true))) return
+    if (['.machine', '.utility', '.pillar', '.wall', '.zone'].some((n) => t.findAncestor(n, true))) return
     if ('button' in e.evt && e.evt.button !== 0) return
     const at = pointerMm()
     if (at) setBox({ start: at, end: at, add: e.evt.shiftKey })
@@ -299,6 +323,19 @@ function FloorStage({
     const at = pointerMm()
     setPointer(at)
     if (box && at) setBox({ ...box, end: at })
+  }
+
+  /** Release while drawing a zone: create it if it's big enough, or wait for another try. */
+  function finishZone() {
+    if (placing?.kind !== 'zone' || !placing.start) return
+    const at = pointerMm()
+    const r = at && boxRect(placing.start, at)
+    if (at && r && r.width >= MIN_ZONE_SIZE && r.depth >= MIN_ZONE_SIZE) {
+      addZone(placing.zoneKind, placing.start, at)
+      cancelPlacing()
+    } else {
+      setZoneStart(null)
+    }
   }
 
   /** Release: select everything the box touches (added to the selection with Shift). */
@@ -355,9 +392,13 @@ function FloorStage({
       onMouseUp={() => {
         panStart.current = null
         setPanActive(false)
+        finishZone()
         finishBox()
       }}
-      onTouchEnd={finishBox}
+      onTouchEnd={() => {
+        finishZone()
+        finishBox()
+      }}
       onMouseLeave={() => {
         setPointer(null)
         panStart.current = null
@@ -391,6 +432,24 @@ function FloorStage({
           lineJoin="round"
           listening={false}
         />
+
+        {/* Zones are floor markings: under everything else. Only their name tags are clickable. */}
+        {layers.zones &&
+          shownZones.map((z) => (
+            <ZoneNode
+              key={z.id}
+              zone={z}
+              fit={fit}
+              selected={selected.has(z.id)}
+              resizable={selectedId === z.id}
+              interactive={!placing && !spacePan && !commentDraft}
+              onDrag={setDrag}
+            />
+          ))}
+        {/* Zone being drawn: from where the mouse went down to the cursor, with its size. */}
+        {placing?.kind === 'zone' && placing.start && pointer && (
+          <ZoneGhost kind={placing.zoneKind} a={placing.start} b={pointer} fit={fit} />
+        )}
 
         {/* Coverage: utilities whose layer is on, plus the active/selected one. */}
         {/* Clipped to the floor: reach stops at the building walls. */}
@@ -584,12 +643,36 @@ function groupDelta(
   utilities: Utility[],
   pillars: Pillar[],
   walls: Wall[],
+  zones: Zone[],
 ): Point | null {
   if (!drag?.group?.length) return null
   // A wall reports its offset from where it started; everything else its position.
   if (walls.some((w) => w.id === drag.id)) return { x: drag.x, y: drag.y }
-  const from = [...machines, ...utilities, ...pillars].find((i) => i.id === drag.id)
+  const from = [...machines, ...utilities, ...pillars, ...zones].find((i) => i.id === drag.id)
   return from ? { x: drag.x - from.x, y: drag.y - from.y } : null
+}
+
+/** The zone being drawn, with its size in metres. */
+function ZoneGhost({ kind, a, b, fit }: { kind: ZoneKind; a: Point; b: Point; fit: number }) {
+  const r = boxRect(a, b)
+  const zone = { kind, colour: ZONE_KINDS[kind].colour, x: r.x + r.width / 2, y: r.y + r.depth / 2, width: r.width, depth: r.depth }
+  const big = r.width >= MIN_ZONE_SIZE && r.depth >= MIN_ZONE_SIZE
+  return (
+    <Group listening={false} opacity={big ? 0.9 : 0.5}>
+      <ZoneShape zone={zone} fit={fit} selected />
+      <Group x={(r.x + r.width) * SCALE} y={(r.y + r.depth) * SCALE} scaleX={1 / fit} scaleY={1 / fit}>
+        <Label x={6} y={6}>
+          <Tag fill={CANVAS.selected} cornerRadius={3} />
+          <Text
+            text={`${(r.width / 1000).toFixed(1)} × ${(r.depth / 1000).toFixed(1)} m · ${zoneArea(r)} m²`}
+            fontSize={11}
+            padding={4}
+            fill="black"
+          />
+        </Label>
+      </Group>
+    </Group>
+  )
 }
 
 /** Faint yellow fill with a dashed yellow border. */
@@ -713,6 +796,8 @@ function activeItem(
         },
       }
     }
+    // A zone being drawn is shown by the canvas itself (see ZoneShape below).
+    if (placing.kind === 'zone') return null
     const info = UTILITY_KINDS[placing.utilityKind]
     const at = placing.utilityKind === 'exit' ? snapToWall(pointer.x, pointer.y, floorplan) : pointer
     return {
