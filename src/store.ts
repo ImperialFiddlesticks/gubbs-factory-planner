@@ -4,6 +4,7 @@ import { getMachineType } from '@/data/catalog'
 import type { EquipmentCategoryId } from '@/data/categories'
 import { DEFAULT_CONVEYOR_LENGTH } from '@/data/conveyors'
 import { DEFAULT_HEIGHT_LIMIT, ZONE_KINDS } from '@/data/zones'
+import { exampleWorkshop } from '@/data/exampleWorkshop'
 import { DEFAULT_LAYERS, UTILITY_LAYER, utilityVisible, type LayerId } from '@/data/layers'
 import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
 import { DEFAULT_PILLAR_GRID, type PillarGrid } from '@/lib/pillarGrid'
@@ -175,6 +176,8 @@ export interface PlannerState {
    * projects), and "(imported)" is added to its name if a project already has that name.
    */
   importProject: (project: Project) => void
+  /** Open a fresh copy of the example workshop as a new project. */
+  openExample: () => void
   /** Show the compare page / go back to the planner. */
   openCompare: () => void
   closeCompare: () => void
@@ -341,6 +344,12 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         projects: keepOpenProject(s),
       }
     }),
+
+  openExample: () => {
+    const s = get()
+    const names = [...(s.floorplan ? [s.floorplan.name] : []), ...s.projects.map((p) => p.floorplan.name)]
+    s.importProject(exampleWorkshop(names))
+  },
 
   openCompare: () => set((s) => (s.floorplan ? { screen: 'compare', placing: null } : s)),
   closeCompare: () => set({ screen: 'planner' }),
