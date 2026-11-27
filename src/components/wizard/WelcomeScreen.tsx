@@ -1,4 +1,4 @@
-import { ArrowRight, LayoutGrid, Ruler, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Factory, LayoutGrid, Ruler, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { usePlanner } from '@/store'
 
@@ -11,6 +11,7 @@ const HIGHLIGHTS = [
 /** First screen: what the tool is, and a way in. */
 export function WelcomeScreen() {
   const startSetup = usePlanner((s) => s.startSetup)
+  const openExample = usePlanner((s) => s.openExample)
 
   return (
     <div className="theme-dark flex h-screen flex-col">
@@ -33,14 +34,19 @@ export function WelcomeScreen() {
               floor and see straight away what fits and what doesn't.
             </p>
 
-            <Button
-              size="lg"
-              className="mt-8 bg-accent text-accent-foreground hover:bg-(--saab-yellow-dark)"
-              onClick={startSetup}
-              autoFocus
-            >
-              Start planning <ArrowRight />
-            </Button>
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              <Button
+                size="lg"
+                className="bg-accent text-accent-foreground hover:bg-(--saab-yellow-dark)"
+                onClick={startSetup}
+                autoFocus
+              >
+                Start planning <ArrowRight />
+              </Button>
+              <Button size="lg" variant="outline" onClick={openExample}>
+                <Factory /> Open an example workshop
+              </Button>
+            </div>
 
             <ul className="mt-12 grid gap-6 sm:grid-cols-3">
               {HIGHLIGHTS.map(({ icon: Icon, title, text }) => (

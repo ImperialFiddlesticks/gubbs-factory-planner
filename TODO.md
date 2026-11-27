@@ -153,7 +153,7 @@ Decided: a zone is selected and moved by its name tag (dragging elsewhere inside
 - Alignment guides: while dragging, dashed guide lines appear when a machine lines up with another's edge or centre, and it snaps gently onto them; a distance label (e.g. "1.2 m") shows the gap to the nearest neighbour.
 - Drag from the catalog: drag an item straight onto the floor, as well as click-then-place.
 - Quick actions: a small floating bar next to the selected item (Rotate, Duplicate, Comment, Delete), plus shortcuts: R rotate, Ctrl+D duplicate, arrow keys to nudge (Shift for bigger steps).
-- Example floors: ready-made templates in the wizard (e.g. the example 22 × 13 m mechanical workshop, an assembly hall) to start from instead of an empty hall.
+- [x] Example workshop (Saab's 22 × 13 m drawing V-2026-02), opened from the welcome page or the project menu. Still open: more templates (e.g. an assembly hall), and offering them in the wizard. Was: ready-made templates in the wizard (e.g. the example 22 × 13 m mechanical workshop, an assembly hall) to start from instead of an empty hall.
 - First-time hints: two or three short tips the first time someone places a machine (drag to move, R to rotate, red means it needs more space), dismissable and shown once.
 - Wizard "Edit an existing layout": open a saved project or import a project file.
 
