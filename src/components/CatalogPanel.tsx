@@ -7,6 +7,7 @@ import {
   BrickWall,
   ChevronDown,
   ChevronRight,
+  CircleHelp,
   Cog,
   Droplet,
   Factory,
@@ -32,6 +33,7 @@ import { UTILITY_ICONS } from '@/components/utilityIcons'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { CATALOG, getMachineType, isStation } from '@/data/catalog'
 import { EQUIPMENT_CATEGORIES, type EquipmentCategoryId } from '@/data/categories'
 import { FORKLIFT_CATEGORY_NAMES, FORKLIFT_PRESETS } from '@/data/forkliftCatalog'
@@ -54,6 +56,87 @@ const metres = (mm: number) => `${mm / 1000}`
 const cardClass =
   'w-full rounded-xl border bg-card p-3 text-left shadow-soft transition-[translate,box-shadow,border-color] duration-150 hover:-translate-y-0.5 hover:border-(--warm-400) hover:shadow-lift focus-visible:border-ring focus-visible:outline-none active:translate-y-0'
 const activeClass = 'border-accent ring-2 ring-accent/60 hover:border-accent'
+
+
+/** Small, touch-friendly explanation button on a catalog option. */
+function CatalogOption({
+  label,
+  explanation,
+  children,
+  position = 'top-right',
+}: {
+  label: string
+  explanation: string
+  children: ReactNode
+  position?: 'top-right' | 'bottom-right' | 'belt'
+}) {
+  const positionClass = position === 'bottom-right'
+    ? 'right-2 bottom-2'
+    : position === 'belt'
+      ? 'top-2 right-24'
+      : 'top-2 right-2'
+
+  return (
+    <div className="relative h-full w-full">
+      {children}
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label={`What does ${label} do?`}
+            title={`About ${label}`}
+            className={cn(
+              'absolute z-10 grid size-6 place-items-center rounded-full border bg-card text-muted-foreground shadow-soft transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              positionClass,
+            )}
+          >
+            <CircleHelp className="size-4" aria-hidden />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent side="right" align="start" className="w-60 p-3">
+          <p className="text-xs leading-relaxed">
+            <span className="block font-semibold">{label}</span>
+            <span className="mt-1 block text-muted-foreground">{explanation}</span>
+          </p>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}
+
+const MACHINE_PURPOSES: Record<string, string> = {
+  'cnc-mill': 'Uses rotating cutting tools to mill flat or shaped features into a workpiece. Place it where operators can load material and access its working space.',
+  'cnc-lathe': 'Turns a workpiece against a cutting tool to make cylindrical parts such as shafts. Allow room for the operator and material handling.',
+  'hydraulic-press': 'Applies high force to form, press, or shape materials. Keep its working and safety clearance free.',
+  'hydraulic-press-30t': 'Applies controlled force to form or press smaller parts. Keep its working and safety clearance free.',
+  'conveyor-straight': 'Carries parts between work areas. Set the length here, then place it and align its ends with the next conveyor or station.',
+  'conveyor-corner-left': 'Redirects a conveyor line around a left-hand turn. Connect it to straight conveyor sections to keep the material path continuous.',
+  'conveyor-corner-right': 'Redirects a conveyor line around a right-hand turn. Connect it to straight conveyor sections to keep the material path continuous.',
+  'packing-table': 'Provides a surface for packing, labeling, and preparing finished products for shipment.',
+  'air-compressor': 'Produces compressed air for pneumatic tools and equipment. Leave room for service access and ventilation.',
+  'assembly-jig-large': 'Supports and locates large assemblies so parts stay aligned during fitting. Plan space around it for the assembly and operators.',
+  'assembly-jig-small': 'Holds smaller components in position during sub-assembly, helping keep repeated work aligned.',
+  'work-bench': 'Supports manual fitting and repair work. The vice holds parts steady while an operator works.',
+  'assembly-table': 'Provides an open work surface for assembly. Leave access around the table so several sides can be used.',
+  'quality-table': 'Provides a stable surface for checking dimensions and inspecting finished parts before they move on.',
+  'pillar-drill': 'Drills vertical holes using a fixed spindle. Leave room to position workpieces and operate the drill safely.',
+  'band-saw': 'Cuts metal bars, tubes, or stock to length. Allow space to feed and remove long material.',
+  'welding-table': 'Supports parts while they are joined by welding. Its extraction helps remove fumes from the work area.',
+  'grinding-bench': 'Grinds, deburrs, and smooths metal parts. Its extraction helps manage dust and particles.',
+  'press-brake': 'Bends sheet metal into angles and profiles. Leave clear space in front for loading and handling sheets.',
+  'tool-cabinet': 'Keeps tools organized beside a work area. Place it where staff can reach it without blocking routes.',
+  'tool-trolley': 'Stores tools on a cart that can move between work areas. Keep a parking spot when it is not in use.',
+  'storage-shelf': 'Stores parts and materials vertically to reduce floor storage. Leave access for picking and replenishment.',
+  'eur-pallet': 'Marks the floor space used by one standard EUR pallet. Use it to plan storage positions and keep aisles clear.',
+  'chemicals-cabinet': 'Provides fire-rated storage for chemicals. Place it where staff can access it while keeping required routes clear.',
+  'parts-washer': 'Washes oil, dirt, and residue from components before inspection or assembly. Leave room to load and unload parts.',
+}
+
+function machinePurpose(type: MachineType) {
+  return MACHINE_PURPOSES[type.id]
+    ?? EQUIPMENT_CATEGORIES.find((category) => category.id === getMachineType(type.id)?.category)?.description
+    ?? 'Place this equipment on the floor plan.'
+}
 
 type CatalogTab = 'machines' | 'structures' | 'zones' | 'forklifts' | 'utilities'
 
@@ -441,8 +524,9 @@ function MachineItem({ type }: { type: MachineType }) {
   if (getMachineType(type.id)?.conveyor === 'straight') return <BeltItem type={type} active={active} />
 
   return (
-    <InfoCardAnchor typeId={type.id}>
-    <button
+    <CatalogOption label={shortCatalogName(type.id)} explanation={machinePurpose(type)} position="bottom-right">
+      <InfoCardAnchor typeId={type.id}>
+      <button
       type="button"
       aria-pressed={active}
       aria-label={`${type.name}, ${metres(type.width)} × ${metres(type.depth)} m`}
@@ -454,12 +538,13 @@ function MachineItem({ type }: { type: MachineType }) {
     >
       <TileThumbnail typeId={type.id} />
       <span className="mt-1.5 block truncate px-1 text-[13px] leading-tight font-bold">{shortCatalogName(type.id)}</span>
-      <span className="mb-0.5 block px-1 text-[11px] text-muted-foreground">
+      <span className="mb-0.5 block px-1 pr-7 text-[11px] text-muted-foreground">
         {metres(type.width)} × {metres(type.depth)} m
       </span>
       {active && <PlacingRibbon />}
     </button>
-    </InfoCardAnchor>
+      </InfoCardAnchor>
+    </CatalogOption>
   )
 }
 
@@ -624,6 +709,7 @@ function BeltItem({ type, active }: { type: MachineType; active: boolean }) {
   const setLength = usePlanner((s) => s.setConveyorLength)
 
   return (
+    <CatalogOption label={shortCatalogName(type.id)} explanation={machinePurpose(type)} position="belt">
     <div className={cn(tileClass, 'flex-row items-center gap-2 hover:translate-y-0', active && activeClass)}>
       <button
         type="button"
@@ -633,7 +719,7 @@ function BeltItem({ type, active }: { type: MachineType; active: boolean }) {
           playSound('pick')
           startPlacing(type.id)
         }}
-        className="flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none"
+        className="flex min-w-0 flex-1 items-center gap-2 pr-8 text-left focus-visible:outline-none"
       >
         <span className="w-24 shrink-0">
           <TileThumbnail typeId={type.id} />
@@ -660,6 +746,7 @@ function BeltItem({ type, active }: { type: MachineType; active: boolean }) {
       </div>
       {active && <PlacingRibbon />}
     </div>
+    </CatalogOption>
   )
 }
 
@@ -675,11 +762,12 @@ function PillarItem() {
   const size = metres(DEFAULT_PILLAR_SIZE)
 
   return (
+    <CatalogOption label="Pillar" explanation="Represents a structural column that takes up floor space and can affect equipment clearances. Resize it after placement to match the building." position="top-right">
     <button
       type="button"
       aria-pressed={active}
       onClick={startPlacing}
-      className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}
+      className={cn(cardClass, 'flex items-center gap-3 py-2 pr-9', active && activeClass)}
     >
       {/* Mini hatched block, matching the pillar on the canvas. */}
       <span
@@ -691,7 +779,7 @@ function PillarItem() {
         }}
         aria-hidden
       />
-      <span>
+      <span className="min-w-0 pr-7">
         <span className="block text-sm font-medium">Pillar</span>
         <span className="block text-xs text-muted-foreground">
           {size} × {size} m · size editable
@@ -699,6 +787,7 @@ function PillarItem() {
         {active && <Badge className="mt-1">Placing</Badge>}
       </span>
     </button>
+    </CatalogOption>
   )
 }
 
@@ -707,17 +796,18 @@ function WallItem() {
   const active = usePlanner((s) => s.placing?.kind === 'wall')
 
   return (
+    <CatalogOption label="Wall" explanation="Draws a fixed internal wall between two points. The wall becomes part of the floor layout and can restrict access or movement." position="top-right">
     <button
       type="button"
       aria-pressed={active}
       onClick={startPlacing}
-      className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}
+      className={cn(cardClass, 'flex items-center gap-3 py-2 pr-9', active && activeClass)}
     >
       {/* Mini wall bar, matching the wall on the canvas. */}
       <span className="flex size-7 shrink-0 items-center" aria-hidden>
         <span className="h-1.5 w-full rounded-xs" style={{ backgroundColor: CANVAS.wallFill, boxShadow: `0 0 0 1px ${CANVAS.wallStroke}` }} />
       </span>
-      <span>
+      <span className="min-w-0 pr-7">
         <span className="block text-sm font-medium">Wall</span>
         <span className="block text-xs text-muted-foreground">
           Click start and end · {metres(DEFAULT_WALL_THICKNESS)} m thick
@@ -725,6 +815,7 @@ function WallItem() {
         {active && <Badge className="mt-1">Drawing</Badge>}
       </span>
     </button>
+    </CatalogOption>
   )
 }
 
@@ -734,21 +825,23 @@ function LoadingDockItem() {
   const active = usePlanner((s) => s.placing?.kind === 'loadingDock')
 
   return (
+    <CatalogOption label="Loading dock" explanation="Adds a loading opening along the outside boundary of the building. Place it where vehicles can reach the loading area." position="top-right">
     <button
       type="button"
       aria-pressed={active}
       onClick={startPlacing}
-      className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}
+      className={cn(cardClass, 'flex items-center gap-3 py-2 pr-9', active && activeClass)}
     >
       <span className="flex size-7 shrink-0 items-center justify-center rounded-sm border-y-2 border-emerald-500 bg-background" aria-hidden>
         <Truck className="size-4 text-emerald-600" />
       </span>
-      <span>
+      <span className="min-w-0 pr-7">
         <span className="block text-sm font-medium">Loading dock</span>
         <span className="block text-xs text-muted-foreground">Outer boundary · {metres(DEFAULT_LOADING_DOCK_WIDTH_MM)} m opening</span>
         {active && <Badge className="mt-1">Placing</Badge>}
       </span>
     </button>
+    </CatalogOption>
   )
 }
 
@@ -762,7 +855,8 @@ function LoadingBayItem() {
   const active = placing?.kind === 'loadingBay' && placing.loadingDockId === (selectedDockId || undefined) && placing.drawMode === drawMode
 
   return (
-    <div className={cn(cardClass, 'space-y-2', active && activeClass)}>
+    <CatalogOption label="Loading bay" explanation="Marks an outdoor area for staging incoming or outgoing goods. Choose a rectangle or custom outline, and optionally link it to a loading dock." position="top-right">
+    <div className={cn(cardClass, 'space-y-2 pr-9', active && activeClass)}>
       <div className="flex items-center gap-2">
         <Truck className="size-5 shrink-0 text-emerald-600" aria-hidden />
         <span className="text-sm font-medium">Loading bay</span>
@@ -789,20 +883,28 @@ function LoadingBayItem() {
         {active && <Badge className="mt-1">Drawing bay</Badge>}
       </button>
     </div>
+    </CatalogOption>
   )
 }
 
 /** A zone type to draw: press and drag on the floor. */
+function zonePurpose(info: ZoneKindInfo) {
+  if (info.kind === 'aisle') return 'Reserves a route through the factory and flags machines placed in it. Use aisles to preserve access between work areas.'
+  if (info.kind === 'height') return 'Shows an area beneath a low ceiling, duct, or mezzanine. Use it to identify machines that may be too tall for that space.'
+  return 'Marks an area you can name, such as assembly, storage, or inspection. Use zones to organize the floor plan.'
+}
+
 function ZoneItem({ info }: { info: ZoneKindInfo }) {
   const startPlacing = usePlanner((s) => s.startPlacingZone)
   const active = usePlanner((s) => s.placing?.kind === 'zone' && s.placing.zoneKind === info.kind)
 
   return (
+    <CatalogOption label={info.kind === 'area' ? 'Zone' : info.name} explanation={zonePurpose(info)} position="top-right">
     <button
       type="button"
       aria-pressed={active}
       onClick={() => startPlacing(info.kind)}
-      className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}
+      className={cn(cardClass, 'flex items-center gap-3 py-2 pr-9', active && activeClass)}
     >
       {/* Mini zone: tinted square with its border style (aisles hatched). */}
       <span
@@ -818,12 +920,13 @@ function ZoneItem({ info }: { info: ZoneKindInfo }) {
         }}
         aria-hidden
       />
-      <span>
+      <span className="min-w-0 pr-7">
         <span className="block text-sm font-medium">{info.kind === 'area' ? 'Zone' : info.name}</span>
         <span className="block text-xs text-muted-foreground">{info.description} · drag to draw</span>
         {active && <Badge className="mt-1">Drawing</Badge>}
       </span>
     </button>
+    </CatalogOption>
   )
 }
 
@@ -831,21 +934,23 @@ function FloorPlanningTools() {
   const start = usePlanner((s) => s.startPlacingLogistics)
   const placing = usePlanner((s) => s.placing)
   const items = [
-    ['truck-route', 'Forklift route', 'Draw a connected centreline; set its corridor width and assigned forklifts in properties.', Route, '#e87924'],
-    ['pedestrian-route', 'Pedestrian route', 'Draw a standalone walking path or create one parallel to a forklift route.', Footprints, '#8b5cf6'],
-    ['crossing', 'Pedestrian crossing', 'Click a forklift route intersection to mark the crossing.', Signpost, '#dc2626'],
-    ['barrier', 'Safety barrier', 'Draw an editable physical barrier segment or path.', Shield, '#374151'],
+    ['truck-route', 'Forklift route', 'Draw a connected centreline; set its corridor width and assigned forklifts in properties.', Route, '#e87924', 'Shows the path forklifts use through the factory. Set the corridor width and assign forklifts in Properties so routes can be reviewed.'],
+    ['pedestrian-route', 'Pedestrian route', 'Draw a standalone walking path or create one parallel to a forklift route.', Footprints, '#8b5cf6', 'Shows where pedestrians walk. Draw a separate path or make it parallel to a forklift route to clarify shared-floor traffic.'],
+    ['crossing', 'Pedestrian crossing', 'Click a forklift route intersection to mark the crossing.', Signpost, '#dc2626', 'Marks a pedestrian crossing where a walking path meets a forklift route. Use it to make crossing points visible during layout review.'],
+    ['barrier', 'Safety barrier', 'Draw an editable physical barrier segment or path.', Shield, '#374151', 'Draws a barrier line to show where a physical guard or separation is planned. It helps communicate the intended layout.'],
   ] as const
-  return <div className="space-y-2">{items.map(([kind, label, description, Icon, colour]) => {
+  return <div className="space-y-2">{items.map(([kind, label, description, Icon, colour, explanation]) => {
     const active = placing?.kind === 'logistics-path' && placing.logisticsKind === kind || placing?.kind === 'logistics-point' && placing.logisticsKind === kind
-    return <button key={kind} type="button" aria-pressed={active} onClick={() => start(kind)} className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}>
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-[3px] border-2" style={{ borderColor: colour, color: colour, backgroundColor: `${colour}26` }}><Icon className="size-4" aria-hidden /></span>
-      <span className="text-left">
-        <span className="block text-sm font-medium">{label}</span>
-        <span className="block text-xs text-muted-foreground">{description}</span>
-        {active && <Badge className="mt-1">Placing</Badge>}
-      </span>
-    </button>
+    return <CatalogOption key={kind} label={label} explanation={explanation}>
+      <button type="button" aria-pressed={active} onClick={() => start(kind)} className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}>
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-[3px] border-2" style={{ borderColor: colour, color: colour, backgroundColor: `${colour}26` }}><Icon className="size-4" aria-hidden /></span>
+        <span className="min-w-0 pr-7 text-left">
+          <span className="block text-sm font-medium">{label}</span>
+          <span className="block text-xs text-muted-foreground">{description}</span>
+          {active && <Badge className="mt-1">Placing</Badge>}
+        </span>
+      </button>
+    </CatalogOption>
   })}</div>
 }
 
@@ -865,15 +970,17 @@ function TruckInfrastructure() {
   const presetIds = new Set(FORKLIFT_PRESETS.map((preset) => preset.presetId))
   const customTypes = truckTypes.filter((type) => !presetIds.has(type.id) && (instanceCounts.get(type.id) ?? 0) === 0)
   const items = [
-    ['parking', 'Forklift parking spot', 'Drag to draw an editable rectangle; outdoor placement is allowed.'],
-    ['charging', 'Charging station', 'Automatically routed to a reachable power point.'],
-    ['battery-watering', 'Battery-watering station', 'Automatically routed to a reachable water point.'],
+    ['parking', 'Forklift parking spot', 'Drag to draw an editable rectangle; outdoor placement is allowed.', 'Draws an outdoor parking area where forklifts can be left between tasks. The area can be resized after drawing.', ParkingSquare, '#ca8a04'],
+    ['charging', 'Charging station', 'Automatically routed to a reachable power point.', 'Adds a forklift charging location. The planner looks for a reachable power point for its supply.', BatteryCharging, '#2563eb'],
+    ['battery-watering', 'Battery-watering station', 'Automatically routed to a reachable water point.', 'Adds a battery-watering location. The planner looks for a reachable water point for its supply.', Waves, '#0f766e'],
   ] as const
   return <details open className="rounded-xl border bg-card shadow-soft">
     <summary className="cursor-pointer list-none px-2.5 py-2 text-sm font-bold [&::-webkit-details-marker]:hidden">Forklift catalogue & infrastructure</summary>
     <div className="space-y-3 px-2.5 pb-3">
       <div>
-        <button type="button" className={cn(cardClass, 'py-2')} onClick={() => addTruckType()}>Create custom forklift</button>
+        <CatalogOption label="Create custom forklift" explanation="Create a forklift model by entering its dimensions and turning information. The planner uses those details when placing it and reviewing aisle space.">
+          <button type="button" className={cn(cardClass, 'py-2 pr-9')} onClick={() => addTruckType()}>Create custom forklift</button>
+        </CatalogOption>
         <p className="mt-1 text-[11px] text-muted-foreground">Presets are model-specific and sourced; unknown specifications are left blank.</p>
       </div>
       {customTypes.length > 0 && <details className="rounded-sm border">
@@ -881,21 +988,25 @@ function TruckInfrastructure() {
         <div className="space-y-1 px-2 pb-2">
           {customTypes.map((type) => {
             const placeable = type.widthMm !== null && type.widthMm > 0 && type.lengthMm !== null && type.lengthMm > 0
-            return <button key={type.id} type="button" disabled={!placeable} aria-pressed={placing?.kind === 'forklift' && placing.typeId === type.id} onClick={() => startPlacingForklift(type.id)} className={cn(cardClass, 'flex items-center gap-2 py-2 text-left disabled:opacity-50', placing?.kind === 'forklift' && placing.typeId === type.id && activeClass)}>
-              <Truck className="size-4 shrink-0 text-blue-700" aria-hidden />
-              <span className="min-w-0 flex-1 truncate text-xs font-medium">{type.name}</span>
-              <span className="text-[10px] text-muted-foreground">{placeable ? 'Place' : 'Set dimensions'}</span>
-            </button>
+            return <CatalogOption key={type.id} label={type.name} explanation="Select this saved model to add another forklift of the same type. It needs valid length and width before it can be placed." >
+              <button type="button" disabled={!placeable} aria-pressed={placing?.kind === 'forklift' && placing.typeId === type.id} onClick={() => startPlacingForklift(type.id)} className={cn(cardClass, 'flex items-center gap-2 py-2 pr-9 text-left disabled:opacity-50', placing?.kind === 'forklift' && placing.typeId === type.id && activeClass)}>
+                <Truck className="size-4 shrink-0 text-blue-700" aria-hidden />
+                <span className="min-w-0 flex-1 truncate text-xs font-medium">{type.name}</span>
+                <span className="text-[10px] text-muted-foreground">{placeable ? 'Place' : 'Set dimensions'}</span>
+              </button>
+            </CatalogOption>
           })}
         </div>
       </details>}
       {placedModels.length > 0 && <div className="space-y-1">
         <div className="px-1 text-xs font-medium text-muted-foreground">Models in this project</div>
-        {placedModels.map(({ type, count }) => <button key={type.id} type="button" aria-pressed={placing?.kind === 'forklift' && placing.typeId === type.id} onClick={() => startPlacingForklift(type.id)} className={cn(cardClass, 'flex items-center gap-2 py-2 text-left', placing?.kind === 'forklift' && placing.typeId === type.id && activeClass)}>
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-[3px] border-2 border-blue-600 bg-blue-600/10 text-blue-700"><Truck className="size-4" aria-hidden /></span>
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">{type.name} ×{count}</span>
-          <span className="text-[10px] text-muted-foreground">Place</span>
-        </button>)}
+        {placedModels.map(({ type, count }) => <CatalogOption key={type.id} label={type.name} explanation="Select this model to add another forklift of the same type to the floor plan.">
+          <button type="button" aria-pressed={placing?.kind === 'forklift' && placing.typeId === type.id} onClick={() => startPlacingForklift(type.id)} className={cn(cardClass, 'flex items-center gap-2 py-2 pr-9 text-left', placing?.kind === 'forklift' && placing.typeId === type.id && activeClass)}>
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-[3px] border-2 border-blue-600 bg-blue-600/10 text-blue-700"><Truck className="size-4" aria-hidden /></span>
+            <span className="min-w-0 flex-1 truncate text-xs font-medium">{type.name} ×{count}</span>
+            <span className="text-[10px] text-muted-foreground">Place</span>
+          </button>
+        </CatalogOption>)}
       </div>}
       {(Object.entries(FORKLIFT_CATEGORY_NAMES) as [ForkliftCategory, string][]).map(([category, label]) => {
         const presets = FORKLIFT_PRESETS.filter((preset) => preset.category === category).slice(0, 1)
@@ -905,35 +1016,37 @@ function TruckInfrastructure() {
             {presets.length === 0 ? <p className="text-[11px] text-muted-foreground">No verified preset is available yet.</p> : presets.map((preset) => {
               const { presetId, ...type } = preset
               const active = placing?.kind === 'forklift' && (placing.typeId === presetId || truckTypes.some((item) => item.id === placing.typeId && item.sourceUrl === preset.sourceUrl))
-              return <div key={presetId} className={cn(cardClass, 'py-2', active && activeClass)}>
-                <button type="button" aria-pressed={active} className="w-full text-left" onClick={() => startPlacingForklift(presetId, type)}>
-                  <span className="block text-xs font-medium">{preset.name} · place</span>
-                  <span className="block text-[11px] text-muted-foreground">{preset.widthMm ?? '—'} × {preset.lengthMm ?? '—'} mm · {preset.loadCapacityKg ?? '—'} kg</span>
-                  <span className="block text-[11px] text-muted-foreground">Turning {preset.turningRadiusMm ?? 'not listed'} mm · aisle {preset.minimumAisleWidthMm ?? 'not listed'} mm</span>
-                  {active && <Badge className="mt-1">Placing · click multiple locations</Badge>}
-                </button>
-                <div className="mt-1 flex items-center justify-between">
-                  <a className="text-[11px] text-blue-700 underline" href={preset.sourceUrl} target="_blank" rel="noreferrer">Specification source</a>
-                  <button type="button" className="text-[11px] text-muted-foreground underline" onClick={() => addTruckType(type)}>Create editable copy</button>
+              return <CatalogOption key={presetId} label={preset.name} explanation="This preset includes sourced dimensions and turning information. Use it to plan forklift clearances and routes, or create an editable copy.">
+                <div className={cn(cardClass, 'py-2 pr-9', active && activeClass)}>
+                  <button type="button" aria-pressed={active} className="w-full text-left" onClick={() => startPlacingForklift(presetId, type)}>
+                    <span className="block text-xs font-medium">{preset.name} · place</span>
+                    <span className="block text-[11px] text-muted-foreground">{preset.widthMm ?? '—'} × {preset.lengthMm ?? '—'} mm · {preset.loadCapacityKg ?? '—'} kg</span>
+                    <span className="block text-[11px] text-muted-foreground">Turning {preset.turningRadiusMm ?? 'not listed'} mm · aisle {preset.minimumAisleWidthMm ?? 'not listed'} mm</span>
+                    {active && <Badge className="mt-1">Placing · click multiple locations</Badge>}
+                  </button>
+                  <div className="mt-1 flex items-center justify-between">
+                    <a className="text-[11px] text-blue-700 underline" href={preset.sourceUrl} target="_blank" rel="noreferrer">Specification source</a>
+                    <button type="button" className="text-[11px] text-muted-foreground underline" onClick={() => addTruckType(type)}>Create editable copy</button>
+                  </div>
                 </div>
-              </div>
+              </CatalogOption>
             })}
           </div>
         </details>
       })}
       <PanelHeading>Forklift infrastructure</PanelHeading>
-      {items.map(([kind, label, description]) => {
+      {items.map(([kind, label, description, explanation, Icon, colour]) => {
         const active = placing?.kind === 'logistics-rectangle' && placing.logisticsKind === kind || placing?.kind === 'logistics-point' && placing.logisticsKind === kind
-        const Icon = kind === 'parking' ? ParkingSquare : kind === 'charging' ? BatteryCharging : Waves
-        const colour = kind === 'parking' ? '#ca8a04' : kind === 'charging' ? '#2563eb' : '#0f766e'
-        return <button key={kind} type="button" aria-pressed={active} onClick={() => start(kind)} className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}>
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-[3px] border-2" style={{ borderColor: colour, color: colour, backgroundColor: `${colour}26` }}><Icon className="size-4" aria-hidden /></span>
-          <span className="text-left">
-            <span className="block text-sm font-medium">{label}</span>
-            <span className="block text-xs text-muted-foreground">{description}</span>
-            {active && <Badge className="mt-1">Placing</Badge>}
-          </span>
-        </button>
+        return <CatalogOption key={kind} label={label} explanation={explanation}>
+          <button type="button" aria-pressed={active} onClick={() => start(kind)} className={cn(cardClass, 'flex items-center gap-3 py-2 pr-9', active && activeClass)}>
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-[3px] border-2" style={{ borderColor: colour, color: colour, backgroundColor: `${colour}26` }}><Icon className="size-4" aria-hidden /></span>
+            <span className="min-w-0 pr-7 text-left">
+              <span className="block text-sm font-medium">{label}</span>
+              <span className="block text-xs text-muted-foreground">{description}</span>
+              {active && <Badge className="mt-1">Placing</Badge>}
+            </span>
+          </button>
+        </CatalogOption>
       })}
       <p className="text-[11px] text-muted-foreground">Planning checks only; these results do not certify workplace safety.</p>
     </div>
@@ -957,12 +1070,23 @@ function UtilityItem({ info }: { info: UtilityKindInfo }) {
           .filter(Boolean)
           .join(' · ')
 
+  const explanation = info.kind === 'power'
+    ? 'Marks an electrical supply point. The planner checks whether equipment is within its reach and whether the connected load fits its capacity.'
+    : info.kind === 'water'
+      ? 'Marks a water supply point for equipment that needs water. The planner checks whether each machine is within reach.'
+      : info.kind === 'sprinkler'
+        ? 'Marks a sprinkler location and its coverage radius. Use it to see which parts of the floor are covered.'
+        : info.kind === 'extinguisher'
+          ? 'Places a fire extinguisher and checks walking distance from machines. The displayed reach is a planning guide.'
+          : 'Places an exit on a wall and checks how far machines are from it. Use it to review access across the floor plan.'
+
   return (
+    <CatalogOption label={info.name} explanation={explanation}>
     <button
       type="button"
       aria-pressed={active}
       onClick={() => startPlacing(info.kind)}
-      className={cn(cardClass, 'flex items-center gap-3 py-2', active && activeClass)}
+      className={cn(cardClass, 'flex items-center gap-3 py-2 pr-9', active && activeClass)}
     >
       <span
         className="flex size-7 shrink-0 items-center justify-center rounded-full text-white"
@@ -970,11 +1094,12 @@ function UtilityItem({ info }: { info: UtilityKindInfo }) {
       >
         <Icon className="size-4" />
       </span>
-      <span>
+      <span className="min-w-0 pr-7">
         <span className="block text-sm font-medium">{info.name}</span>
         <span className="block text-xs text-muted-foreground">{detail}</span>
         {active && <Badge className="mt-1">Placing</Badge>}
       </span>
     </button>
+    </CatalogOption>
   )
 }
