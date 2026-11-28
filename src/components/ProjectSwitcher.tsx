@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Check, ChevronDown, CloudUpload, Columns2, Copy, Download, Factory, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { Check, ChevronDown, Clapperboard, CloudUpload, Columns2, Copy, Download, Factory, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -27,6 +27,7 @@ export function ProjectSwitcher({ onNewProject }: { onNewProject: () => void }) 
   const deleteProject = usePlanner((s) => s.deleteProject)
   const openCompare = usePlanner((s) => s.openCompare)
   const openExample = usePlanner((s) => s.openExample)
+  const loadDemoProjects = usePlanner((s) => s.loadDemoProjects)
   const importProject = usePlanner((s) => s.importProject)
   const current = usePlanner(useShallow(currentProject))
   const fileInput = useRef<HTMLInputElement>(null)
@@ -171,6 +172,9 @@ export function ProjectSwitcher({ onNewProject }: { onNewProject: () => void }) 
         </MenuItem>
         <MenuItem icon={Factory} onClick={then(openExample)}>
           Open example workshop
+        </MenuItem>
+        <MenuItem icon={Clapperboard} onClick={then(loadDemoProjects)}>
+          Load demo projects (Workshop 3)
         </MenuItem>
         <MenuItem icon={Copy} onClick={then(duplicateProject)}>
           Duplicate

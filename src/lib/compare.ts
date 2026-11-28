@@ -32,7 +32,11 @@ export function projectFigures(p: Project): ProjectFigures {
   })
   const { runs, runOf } = conveyorRuns(p.machines)
   const exits = p.utilities.filter((u) => u.kind === 'exit')
-  const walks = [...walkingRoutes(p.floorplan, exits, bodies, p.walls).values()].map((r) => r.distance)
+  // People walk from workplaces; belts are left out (as in the exit check).
+  const belts = new Set(bodies.filter((b) => b.type.conveyor).map((b) => b.id))
+  const walks = [...walkingRoutes(p.floorplan, exits, bodies, p.walls)]
+    .filter(([id]) => !belts.has(id))
+    .map(([, r]) => r.distance)
 
   return {
     stations: p.machines.filter((m) => isStation(m.typeId)).length,

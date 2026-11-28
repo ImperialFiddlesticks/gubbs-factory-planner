@@ -67,6 +67,8 @@ export const CANVAS = {
   pillarFill: COLORS.charcoal500,
   pillarHatch: COLORS.charcoal900,
   pillarStroke: COLORS.charcoal900,
-  wallFill: COLORS.charcoal,
+  // Inside walls: a warm grey a shade lighter than the building outline, edged in its colour.
+  wallFill: '#a39d92',
+  wallStroke: '#7a7368',
   invalid: COLORS.red,
 } as const

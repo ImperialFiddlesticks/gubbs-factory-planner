@@ -1,4 +1,4 @@
-import { machineTypeFor } from '@/data/catalog'
+import { getMachineType, machineTypeFor } from '@/data/catalog'
 import { EXIT_MAX_DISTANCE, utilityRadius } from '@/data/utilities'
 import {
   bodyBox,
@@ -451,6 +451,9 @@ function utilityIssues(
     if (r.type.powerKw > 0 && !runOf.has(id) && !powered.has(id)) {
       issues.push({ key: `power:${id}`, category: 'utility', need: 'power', ids: [id], message: `${name} has no power point in reach.` })
     }
+    // Nobody works at a belt, so it needs no walking route of its own to an exit or an
+    // extinguisher; a belt linked between two machines often has no free corner to start one.
+    if (getMachineType(r.machine.typeId)?.conveyor) continue
     const walked = walk.get(id)?.distance ?? Infinity
     if (exits.length > 0 && walked > EXIT_MAX_DISTANCE) {
       issues.push({
