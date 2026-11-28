@@ -866,8 +866,8 @@ function TruckInfrastructure() {
   const customTypes = truckTypes.filter((type) => !presetIds.has(type.id) && (instanceCounts.get(type.id) ?? 0) === 0)
   const items = [
     ['parking', 'Forklift parking spot', 'Drag to draw an editable rectangle; outdoor placement is allowed.'],
-    ['charging', 'Charging station', 'Automatically routed to a reachable power point.'],
-    ['battery-watering', 'Battery-watering station', 'Automatically routed to a reachable water point.'],
+    ['charging', 'Charging station', 'Automatically connected to the nearest power point.'],
+    ['battery-watering', 'Battery-watering station', 'Automatically connected to the nearest water point.'],
   ] as const
   return <details open className="rounded-xl border bg-card shadow-soft">
     <summary className="cursor-pointer list-none px-2.5 py-2 text-sm font-bold [&::-webkit-details-marker]:hidden">Forklift catalogue & infrastructure</summary>
@@ -950,8 +950,13 @@ function UtilityItem({ info }: { info: UtilityKindInfo }) {
       ? `On a wall · machines within ${EXIT_MAX_DISTANCE / 1000} m`
       : info.kind === 'extinguisher'
         ? `Machines within ${metres(info.defaultRadius ?? 0)} m walk`
+        : info.kind === 'power' || info.kind === 'water'
+          ? [
+            'Automatic connection to nearest point',
+            info.defaultCapacityKw !== undefined && `${info.defaultCapacityKw} kW`,
+          ].filter(Boolean).join(' · ')
         : [
-          `Reach ${metres(info.defaultRadius ?? 0)} m`,
+          `Coverage ${metres(info.defaultRadius ?? 0)} m`,
           info.defaultCapacityKw !== undefined && `${info.defaultCapacityKw} kW`,
         ]
           .filter(Boolean)

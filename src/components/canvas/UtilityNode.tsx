@@ -169,10 +169,7 @@ function ExitDoor({ x, y, floorplan, fit }: { x: number; y: number; floorplan: F
   )
 }
 
-/**
- * Faint circle showing how far a utility reaches, cut off behind internal walls.
- * Exits have none, and extinguishers go by walking distance, which a circle would misstate.
- */
+/** Faint coverage circle for sprinklers; power and water are automatically connected. */
 export function CoverageCircle({
   utility,
   strong,
@@ -183,7 +180,7 @@ export function CoverageCircle({
   walls: Wall[]
 }) {
   const radius = utilityRadius(utility)
-  if (utility.kind === 'exit' || utility.kind === 'extinguisher' || radius <= 0) return null
+  if (utility.kind !== 'sprinkler' || radius <= 0) return null
   const colour = UTILITY_KINDS[utility.kind].colour
   const shape = coverageShape(utility, radius, walls)
   if (shape) {

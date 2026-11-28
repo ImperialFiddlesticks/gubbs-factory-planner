@@ -48,7 +48,7 @@ interface Resolved {
   type: MachineType
   /** What warnings call it: its own name or its automatic one ("CNC 02"). */
   name: string
-  /** The machine's real shape, turned with it: used for clashes, the floor edge and reach. */
+  /** The machine's real shape, turned with it: used for clashes, the floor edge and sprinkler coverage. */
   shape: Rect
   /** Its clearance zone, turned with it. */
   clearance: Rect
@@ -75,20 +75,20 @@ function resolve(machines: MachineInstance[]): Resolved[] {
 }
 
 /**
- * Utilities of a kind that reach the machine's body, closest first. A utility reaches it when
- * some point of the body (nearest point, a corner or an edge midpoint) is within its radius
- * with no internal wall in between. `at` is the closest such point, where a supply line meets it.
+ * Candidate utilities for a machine, closest first. Power and water connect automatically to
+ * the nearest unobstructed source; sprinklers still use their configured coverage radius.
+ * `at` is the point on the machine body where the supply line meets it.
  */
-function inReach(r: Resolved, utilities: Utility[], kind: Utility['kind'], walls: Wall[]) {
+function availableUtilities(r: Resolved, utilities: Utility[], kind: Utility['kind'], walls: Wall[]) {
   const out: { u: Utility; d: number; at: Point }[] = []
+  const coverageLimited = kind === 'sprinkler'
   for (const u of utilities) {
     if (u.kind !== kind) continue
     const radius = utilityRadius(u)
-    if (distanceToRect(u.x, u.y, r.shape) > radius) continue
-    // The nearest point comes first; with no walls it is always reachable.
+    if (coverageLimited && distanceToRect(u.x, u.y, r.shape) > radius) continue
     const reachable = rectSamplePoints(r.shape, u)
       .map((p) => ({ p, d: Math.hypot(p.x - u.x, p.y - u.y) }))
-      .filter(({ p, d }) => d <= radius && (walls.length === 0 || clearLine(u, p, walls)))
+      .filter(({ p, d }) => (!coverageLimited || d <= radius) && (walls.length === 0 || clearLine(u, p, walls)))
       .sort((a, b) => a.d - b.d)[0]
     if (reachable) out.push({ u, d: reachable.d, at: reachable.p })
   }
@@ -103,7 +103,7 @@ const NEEDS: Record<Exclude<Utility['kind'], 'exit' | 'extinguisher'>, (t: Machi
 }
 
 /**
- * A machine fed by a utility: the nearest one of that kind in reach. A conveyor run gets one
+ * A machine fed by a utility: the nearest unobstructed source. A conveyor run gets one
  * power line, to whichever of its pieces is nearest a power point.
  */
 export interface SupplyLine {
@@ -123,7 +123,7 @@ export interface SupplyLine {
 }
 
 /**
- * One line per machine or station that needs the kind and has a utility in reach; for power,
+ * One line per machine or station that needs a source; for power,
  * one line per conveyor run (its drive) instead of one per piece.
  */
 export function supplyLines(
@@ -140,7 +140,7 @@ export function supplyLines(
   const { runs, runOf } = kind === 'power' ? conveyorRuns(machines) : { runs: [], runOf: new Map<string, ConveyorRun>() }
   const truckById = new Map(truckTypes.map((truck) => [truck.id, truck]))
 
-  const lineTo = (r: Resolved, nearest: ReturnType<typeof inReach>[number], servedIds: string[], powerKw: number) => {
+  const lineTo = (r: Resolved, nearest: ReturnType<typeof availableUtilities>[number], servedIds: string[], powerKw: number) => {
     const from = { x: nearest.u.x, y: nearest.u.y }
     const path = orthogonalRoute(from, r.body, nearest.at, walls, bodies)
     lines.push({ machineId: r.machine.id, servedIds, powerKw, utilityId: nearest.u.id, from, to: path[path.length - 1], path })
@@ -148,15 +148,15 @@ export function supplyLines(
 
   for (const r of resolved) {
     if (runOf.has(r.machine.id) || !NEEDS[kind](r.type)) continue
-    const nearest = inReach(r, utilities, kind, walls)[0]
+    const nearest = availableUtilities(r, utilities, kind, walls)[0]
     if (nearest) lineTo(r, nearest, [r.machine.id], r.type.powerKw)
   }
   for (const run of runs) {
     // The run's drive is fed by the power point nearest to any of its pieces.
-    let best: { r: Resolved; nearest: ReturnType<typeof inReach>[number] } | null = null
+    let best: { r: Resolved; nearest: ReturnType<typeof availableUtilities>[number] } | null = null
     for (const r of resolved) {
       if (runOf.get(r.machine.id) !== run) continue
-      const nearest = inReach(r, utilities, kind, walls)[0]
+      const nearest = availableUtilities(r, utilities, kind, walls)[0]
       if (nearest && (!best || nearest.d < best.nearest.d)) best = { r, nearest }
     }
     if (best) lineTo(best.r, best.nearest, run.pieceIds, run.powerKw)
@@ -172,7 +172,7 @@ export function supplyLines(
     if (!needsUtility) continue
     const endpoint = { x: station.x, y: station.y }
     const reachable = utilities
-      .filter((utility) => utility.kind === kind && Math.hypot(endpoint.x - utility.x, endpoint.y - utility.y) <= utilityRadius(utility) &&
+      .filter((utility) => utility.kind === kind &&
         (walls.length === 0 || clearLine(utility, endpoint, walls)))
       .sort((a, b) => Math.hypot(endpoint.x - a.x, endpoint.y - a.y) - Math.hypot(endpoint.x - b.x, endpoint.y - b.y))[0]
     if (!reachable) continue
@@ -223,7 +223,7 @@ const withoutRepeats = (path: Point[]) =>
   path.filter((p, i) => i === 0 || p.x !== path[i - 1].x || p.y !== path[i - 1].y)
 
 /**
- * Which power point feeds each machine (its nearest one in reach) and the
+ * Which power point feeds each machine (its nearest unobstructed one) and the
  * total load on each power point, kW.
  */
 export function powerAssignments(machines: MachineInstance[], utilities: Utility[], walls: Wall[], serviceStations: TruckServiceStation[] = []) {
@@ -251,10 +251,10 @@ export function powerAssignments(machines: MachineInstance[], utilities: Utility
  * - a structure must be inside the floor.
  * Structures touching each other or utilities are not checked (normal in a building).
  *
- * Utility rules (reach is measured to the nearest edge of the machine):
- * - needsWater -> a water point in reach;
+ * Utility rules:
+ * - needsWater -> an unobstructed water point, connected automatically;
  * - needsFireSuppression -> a sprinkler in reach;
- * - powerKw > 0 -> a power point in reach, and no power point over capacity;
+ * - powerKw > 0 -> an unobstructed power point, connected automatically, and no power point over capacity;
  * - at least one exit, and every machine within EXIT_MAX_DISTANCE walk of one;
  * - at least one fire extinguisher, and every machine within the walking distance of one.
  */
@@ -407,23 +407,23 @@ function utilityIssues(
   const watered = new Set(waterLines.flatMap((l) => l.servedIds))
   for (const station of serviceStations) {
     if (station.kind === 'charging' && !powered.has(station.id)) {
-      issues.push({ key: `power-station:${station.id}`, category: 'utility', need: 'power', ids: [station.id], message: `${station.name} has no power point in reach.` })
+      issues.push({ key: `power-station:${station.id}`, category: 'utility', need: 'power', ids: [station.id], message: `${station.name} has no connectable power point.` })
     }
     const hasCompatibleBattery = station.compatibleTruckTypeIds.some((id) => {
       const truck = truckTypes.find((item) => item.id === id)
       return Boolean(truck?.batteryType && station.compatibleBatteryTypes.includes(truck.batteryType))
     })
     if (station.kind === 'battery-watering' && hasCompatibleBattery && !watered.has(station.id)) {
-      issues.push({ key: `water-station:${station.id}`, category: 'utility', need: 'water', ids: [station.id], message: `${station.name} has no water point in reach.` })
+      issues.push({ key: `water-station:${station.id}`, category: 'utility', need: 'water', ids: [station.id], message: `${station.name} has no connectable water point.` })
     }
     if (station.kind === 'battery-watering' && station.requiresPower && !powered.has(station.id)) {
-      issues.push({ key: `power-station:${station.id}`, category: 'utility', need: 'power', ids: [station.id], message: `${station.name} has no power point in reach.` })
+      issues.push({ key: `power-station:${station.id}`, category: 'utility', need: 'power', ids: [station.id], message: `${station.name} has no connectable power point.` })
     }
   }
   for (const run of runs) {
     if (run.powerKw > 0 && !powered.has(run.id)) {
       const what = run.pieceIds.length > 1 ? 'Conveyor run' : 'Conveyor'
-      issues.push({ key: `power-run:${run.id}`, category: 'utility', need: 'power', ids: run.pieceIds, message: `${what} has no power point in reach.` })
+      issues.push({ key: `power-run:${run.id}`, category: 'utility', need: 'power', ids: run.pieceIds, message: `${what} has no connectable power point.` })
     }
   }
   const exits = utilities.filter((u) => u.kind === 'exit')
@@ -442,14 +442,14 @@ function utilityIssues(
   for (const r of resolved) {
     const id = r.machine.id
     const name = r.name
-    if (r.type.needsWater && inReach(r, utilities, 'water', walls).length === 0) {
-      issues.push({ key: `water:${id}`, category: 'utility', need: 'water', ids: [id], message: `${name} has no water point in reach.` })
+    if (r.type.needsWater && availableUtilities(r, utilities, 'water', walls).length === 0) {
+      issues.push({ key: `water:${id}`, category: 'utility', need: 'water', ids: [id], message: `${name} has no connectable water point.` })
     }
-    if (r.type.needsFireSuppression && inReach(r, utilities, 'sprinkler', walls).length === 0) {
+    if (r.type.needsFireSuppression && availableUtilities(r, utilities, 'sprinkler', walls).length === 0) {
       issues.push({ key: `sprinkler:${id}`, category: 'utility', need: 'sprinkler', ids: [id], message: `${name} is not covered by a sprinkler.` })
     }
     if (r.type.powerKw > 0 && !runOf.has(id) && !powered.has(id)) {
-      issues.push({ key: `power:${id}`, category: 'utility', need: 'power', ids: [id], message: `${name} has no power point in reach.` })
+      issues.push({ key: `power:${id}`, category: 'utility', need: 'power', ids: [id], message: `${name} has no connectable power point.` })
     }
     // Nobody works at a belt, so it needs no walking route of its own to an exit or an
     // extinguisher; a belt linked between two machines often has no free corner to start one.
