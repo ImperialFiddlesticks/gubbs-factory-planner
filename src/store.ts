@@ -52,6 +52,8 @@ export interface SetupAnswers {
   floorName: string
   /** Sizes may be NaN while a field is being typed; see shapeError. */
   floorShape: FloorShape
+  /** The user must actively choose a shape before creating the floor. */
+  floorShapeSelected: boolean
   /** Optional regular grid of pillars created with the floor. */
   pillarGrid: PillarGrid
 }
@@ -62,6 +64,7 @@ export const DEFAULT_SETUP: SetupAnswers = {
   stationTarget: 6,
   floorName: 'New factory',
   floorShape: DEFAULT_SHAPES.rectangle,
+  floorShapeSelected: false,
   pillarGrid: DEFAULT_PILLAR_GRID,
 }
 

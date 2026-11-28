@@ -4,6 +4,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { ChoiceCard } from '@/components/wizard/ChoiceCard'
 import { ShapePreview } from '@/components/wizard/ShapePreview'
+import { EQUIPMENT_CATEGORIES } from '@/data/categories'
 import {
   DEFAULT_SHAPES,
   floorCorners,
@@ -44,6 +45,9 @@ const FIELDS: { [K in FloorShapeKind]: { key: string; label: string }[] } = {
 export function FloorShapeStep() {
   const name = usePlanner((s) => s.wizard.floorName)
   const shape = usePlanner((s) => s.wizard.floorShape)
+  const shapeSelected = usePlanner((s) => s.wizard.floorShapeSelected)
+  const categories = usePlanner((s) => s.wizard.categories)
+  const stationTarget = usePlanner((s) => s.wizard.stationTarget)
   const updateSetup = usePlanner((s) => s.updateSetup)
   const currentName = usePlanner((s) => s.floorplan?.name)
   const hasFloor = usePlanner((s) => s.floorplan !== null)
@@ -53,16 +57,25 @@ export function FloorShapeStep() {
   const bounds = { width: shape.width, depth: shape.depth, outline: shapeOutline(shape) }
   const area = error ? null : polygonArea(floorCorners(bounds)) / 1e6
   const gridError = pillarGridError(grid)
-  const pillarAt = error ? [] : pillarGridPositions(bounds, grid)
+  const pillarAt = !shapeSelected || error ? [] : pillarGridPositions(bounds, grid)
+  const categoryNames = EQUIPMENT_CATEGORIES
+    .filter((category) => categories.includes(category.id))
+    .map((category) => category.name)
+    .join(', ')
+  const shapeName = SHAPE_CARDS.find((card) => card.kind === shape.kind)?.title ?? shape.kind
 
   function setGrid(patch: Partial<PillarGrid>) {
     updateSetup({ pillarGrid: { ...grid, ...patch } })
   }
 
   function pickShape(kind: FloorShapeKind) {
-    if (kind === shape.kind) return
     // Keep the overall size; the shape's own extras start from their defaults.
-    updateSetup({ floorShape: { ...DEFAULT_SHAPES[kind], width: shape.width, depth: shape.depth } })
+    updateSetup({
+      floorShape: kind === shape.kind
+        ? shape
+        : { ...DEFAULT_SHAPES[kind], width: shape.width, depth: shape.depth },
+      floorShapeSelected: true,
+    })
   }
 
   function setSize(key: string, mm: number) {
@@ -89,7 +102,7 @@ export function FloorShapeStep() {
             media={<ShapePreview shape={DEFAULT_SHAPES[card.kind]} boxWidth={96} boxHeight={64} />}
             title={card.title}
             description={card.description}
-            selected={shape.kind === card.kind}
+            selected={shapeSelected && shape.kind === card.kind}
             onSelect={() => pickShape(card.kind)}
           />
         ))}
@@ -108,7 +121,9 @@ export function FloorShapeStep() {
             />
           ))}
           <div className="col-span-2 text-sm">
-            {error ? (
+            {!shapeSelected ? (
+              <p className="text-muted-foreground">Select a floor shape to see the floor area.</p>
+            ) : error ? (
               <p className="text-destructive">{error}</p>
             ) : (
               <p className="text-muted-foreground">
@@ -144,15 +159,55 @@ export function FloorShapeStep() {
           </div>
         </div>
         <div className="rounded-md bg-muted p-2">
-          <ShapePreview
-            shape={shape}
-            boxWidth={360}
-            boxHeight={240}
-            labels
-            pillars={{ at: pillarAt, size: grid.size }}
-          />
+          {shapeSelected ? (
+            <ShapePreview
+              shape={shape}
+              boxWidth={360}
+              boxHeight={240}
+              labels
+              pillars={{ at: pillarAt, size: grid.size }}
+            />
+          ) : (
+            <div className="flex min-h-[256px] items-center justify-center px-6 text-center text-sm text-muted-foreground">
+              Choose a floor shape to preview it.
+            </div>
+          )}
         </div>
       </div>
+
+      <section aria-label="Setup summary" className="!mt-6 space-y-3 rounded-lg border bg-card p-4">
+        <h2 className="text-left text-lg font-semibold">Summary of your factory</h2>
+        <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-muted-foreground">Plan</dt>
+            <dd className="font-medium">New floor</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Floor name</dt>
+            <dd className="font-medium">{name.trim() || 'Not set'}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Equipment</dt>
+            <dd className="font-medium">{categoryNames || 'None selected'}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Stations</dt>
+            <dd className="font-medium">
+              {stationTarget} {stationTarget === 1 ? 'station' : 'stations'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Floor shape</dt>
+            <dd className="font-medium">
+              {shapeSelected ? shapeName : 'Not selected'} · {formatMetres(shape.width)} × {formatMetres(shape.depth)} m
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Pillar grid</dt>
+            <dd className="font-medium">{grid.enabled ? 'On' : 'Off'}</dd>
+          </div>
+        </dl>
+      </section>
 
       {hasFloor && (
         <p className="text-sm text-muted-foreground">
@@ -162,6 +217,10 @@ export function FloorShapeStep() {
       )}
     </div>
   )
+}
+
+function formatMetres(mm: number) {
+  return Number.isFinite(mm) ? String(Number((mm / 1000).toFixed(2))) : '—'
 }
 
 interface MetreFieldProps {
