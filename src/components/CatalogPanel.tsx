@@ -126,8 +126,8 @@ export function CatalogPanel({
   const showLoadingBay = matches('loading bay', 'bay', 'staging area', 'structure')
   const visibleZones = ZONE_KIND_LIST.filter((info) => matches(info.name, 'zone', 'area', info.description))
   const showStructures = showPillar || showWall || showLoadingDock || showLoadingBay
-  const showFloorPlanning = visibleZones.length > 0 || matches('forklift route', 'truck route', 'pedestrian route', 'crossing', 'barrier')
-  const showLogistics = matches('forklift', 'truck', 'parking', 'charging', 'battery', 'pedestrian', 'crossing', 'barrier', 'route')
+  const showFloorPlanning = visibleZones.length > 0 || matches('forklift route', 'truck route', 'pedestrian route', 'crossing', 'barrier', 'access road', 'road')
+  const showLogistics = matches('forklift', 'truck', 'parking', 'charging', 'battery', 'pedestrian', 'crossing', 'barrier', 'route', 'road', 'access')
   // Sections shown, in order; separators go between them while searching.
   const sections = [
     show('machines') && groups.length > 0,
@@ -831,6 +831,7 @@ function FloorPlanningTools() {
   const start = usePlanner((s) => s.startPlacingLogistics)
   const placing = usePlanner((s) => s.placing)
   const items = [
+    ['access-road', 'Access road', 'Draw a road outside the hall up to a door or loading dock; it stops at the outer wall.', Truck, '#57534e'],
     ['truck-route', 'Forklift route', 'Draw a connected centreline; set its corridor width and assigned forklifts in properties.', Route, '#e87924'],
     ['pedestrian-route', 'Pedestrian route', 'Draw a standalone walking path or create one parallel to a forklift route.', Footprints, '#8b5cf6'],
     ['crossing', 'Pedestrian crossing', 'Click a forklift route intersection to mark the crossing.', Signpost, '#dc2626'],

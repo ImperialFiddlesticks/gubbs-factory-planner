@@ -1,9 +1,11 @@
 import { bodyBox, bodyRect, boxToRect, pillarBox, rectCorners, rectInsideFloor, rectsOverlap, wallBox, type Box, type Rect } from '@/lib/geometry'
+import { loadingDockSpans } from '@/lib/loadingDocks'
 import { machineTypeFor } from '@/data/catalog'
 import type {
   Floorplan,
   ForkliftInstance,
   LoadingBay,
+  LoadingDock,
   MachineInstance,
   PedestrianCrossing,
   PedestrianRoute,
@@ -38,6 +40,7 @@ interface TruckLogisticsLayout {
   pillars: Pillar[]
   walls: Wall[]
   loadingBays: LoadingBay[]
+  loadingDocks?: LoadingDock[]
   floorplan?: Floorplan | null
 }
 
@@ -450,10 +453,24 @@ export function findTruckLogisticsIssues(layout: TruckLogisticsLayout): TruckLog
     }
 
     const halfWidth = Math.max(0, route.usableWidthMm) / 2
-    if (layout.floorplan && !routeWithinFloor(route.points, halfWidth, layout.floorplan)) {
+    if (layout.floorplan && !route.access && !routeWithinFloor(route.points, halfWidth, layout.floorplan)) {
       issues.push(issue(`route-boundary:${route.id}`, `${route.name} and its usable width must stay inside the factory boundary.`, [route.id]))
     }
+    const throughWalls = new Set<string>()
+    for (const wall of layout.walls) {
+      if (segments(route.points).some((segment) => segmentsIntersect(segment, { a: wall.start, b: wall.end }))) {
+        throughWalls.add(wall.id)
+        issues.push(issue(`route-wall:${route.id}:${wall.id}`, `${route.name} passes through a wall. Route it around the wall or through an opening.`, [route.id, wall.id]))
+      }
+    }
+    if (layout.floorplan) {
+      const entry = boundaryEntryProblem(route, layout.floorplan, layout.loadingDocks ?? [], layout.utilities)
+      if (entry === 'no-opening') issues.push(issue(`route-entry:${route.id}`, `${route.name} crosses the outer wall without a door or loading dock.`, [route.id]))
+      if (entry === 'never-enters') issues.push(issue(`route-entry:${route.id}`, `${route.name} doesn't reach the factory. End it at a door or loading dock.`, [route.id]))
+      if (route.access && accessRoadInside(route.points, layout.floorplan)) issues.push(issue(`route-inside:${route.id}`, `${route.name} runs inside the factory. Access roads stop at the outer wall; use a forklift route inside.`, [route.id]))
+    }
     for (const obstacle of obstacles) {
+      if (throughWalls.has(obstacle.id)) continue
       const blocked = segments(route.points).some((segment) =>
         obstacle.box ? segmentBoxDistance(segment, obstacle.box) < halfWidth - EPSILON
           : obstacle.outline && obstacle.outline.length >= 3 && segmentPolygonDistance(segment, obstacle.outline) < halfWidth - EPSILON)
@@ -618,6 +635,88 @@ function polygonOverlaps(first: Point[], second: Point[]) {
       { a: point, b: first[(index + 1) % first.length] },
       { a: other, b: second[(otherIndex + 1) % second.length] },
     )))
+}
+
+/** Half the width of a door (exit) opening in the outer wall, mm. */
+const DOOR_HALF_WIDTH_MM = 1000
+
+function segmentIntersectionPoint(first: Segment, second: Segment): Point | null {
+  const d = (first.b.x - first.a.x) * (second.b.y - second.a.y) - (first.b.y - first.a.y) * (second.b.x - second.a.x)
+  if (Math.abs(d) <= EPSILON) return null
+  const t = ((second.a.x - first.a.x) * (second.b.y - second.a.y) - (second.a.y - first.a.y) * (second.b.x - second.a.x)) / d
+  const u = ((second.a.x - first.a.x) * (first.b.y - first.a.y) - (second.a.y - first.a.y) * (first.b.x - first.a.x)) / d
+  if (t < -EPSILON || t > 1 + EPSILON || u < -EPSILON || u > 1 + EPSILON) return null
+  return { x: first.a.x + t * (first.b.x - first.a.x), y: first.a.y + t * (first.b.y - first.a.y) }
+}
+
+function floorOutline(floorplan: Floorplan) {
+  return floorplan.outline ?? [{ x: 0, y: 0 }, { x: floorplan.width, y: 0 }, { x: floorplan.width, y: floorplan.depth }, { x: 0, y: floorplan.depth }]
+}
+
+/** True when a point lies inside the floor, more than 1 mm from the outer wall. */
+function deepInside(point: Point, outline: Point[]) {
+  if (!pointInPolygon(point, outline)) return false
+  return outline.every((a, i) => pointSegmentDistance(point, { a, b: outline[(i + 1) % outline.length] }) > 1)
+}
+
+/**
+ * Access roads run outside the factory only: keep the drawn road up to where it first
+ * reaches the outer wall and drop the rest. Returns null when nothing lies outside.
+ */
+export function clipAccessRoad(points: Point[], floorplan: Floorplan): Point[] | null {
+  const outline = floorOutline(floorplan)
+  const edges = outline.map((a, i) => ({ a, b: outline[(i + 1) % outline.length] }))
+  let path = points
+  if (path.length && deepInside(path[0], outline)) path = [...path].reverse()
+  if (!path.length || deepInside(path[0], outline)) return null
+  const kept: Point[] = [path[0]]
+  for (let i = 1; i < path.length; i++) {
+    const segment = { a: path[i - 1], b: path[i] }
+    const hits = edges.flatMap((edge) => {
+      const hit = segmentIntersectionPoint(segment, edge)
+      return hit && distance(hit, segment.a) > 1 ? [hit] : []
+    })
+    const firstHit = hits.sort((a, b) => distance(a, segment.a) - distance(b, segment.a))[0]
+    kept.push(firstHit ?? segment.b)
+    if (firstHit) break
+  }
+  return kept.length >= 2 && distance(kept[0], kept[kept.length - 1]) > 1 ? kept : null
+}
+
+/** True when part of an access road lies inside the factory. */
+export function accessRoadInside(points: Point[], floorplan: Floorplan) {
+  const outline = floorOutline(floorplan)
+  return points.some((p) => deepInside(p, outline)) ||
+    segments(points).some((seg) => deepInside({ x: (seg.a.x + seg.b.x) / 2, y: (seg.a.y + seg.b.y) / 2 }, outline))
+}
+
+/**
+ * Where a route meets the outer wall it must pass through a loading dock or a door (exit).
+ * An access road that never crosses the outer wall doesn't reach the factory.
+ */
+export function boundaryEntryProblem(
+  route: Pick<TruckRoute, 'points' | 'access'>,
+  floorplan: Floorplan,
+  docks: LoadingDock[],
+  utilities: Utility[],
+): 'no-opening' | 'never-enters' | null {
+  const outline = floorplan.outline ?? [{ x: 0, y: 0 }, { x: floorplan.width, y: 0 }, { x: floorplan.width, y: floorplan.depth }, { x: 0, y: floorplan.depth }]
+  const edges = outline.map((point, index) => ({ a: point, b: outline[(index + 1) % outline.length] }))
+  const spans = docks.flatMap((dock) => loadingDockSpans(dock, floorplan))
+  const doors = utilities.filter((u) => u.kind === 'exit')
+  let crossings = 0
+  for (const segment of segments(route.points)) {
+    for (const edge of edges) {
+      const p = segmentIntersectionPoint(segment, edge)
+      if (!p) continue
+      crossings++
+      const atDock = spans.some((span) => pointSegmentDistance(p, { a: span.start, b: span.end }) <= 1)
+      const atDoor = doors.some((door) => distance(p, door) <= DOOR_HALF_WIDTH_MM)
+      if (!atDock && !atDoor) return 'no-opening'
+    }
+  }
+  if (route.access && crossings === 0) return 'never-enters'
+  return null
 }
 
 function routeWithinFloor(points: Point[], halfWidth: number, floorplan: Floorplan) {

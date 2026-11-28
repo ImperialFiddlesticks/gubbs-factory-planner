@@ -1,3 +1,6 @@
+import { useState } from 'react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { useSupplyChain } from '@/lib/supplyChainStore'
 import { Button } from '@/components/ui/button'
 import { GoalCounter } from '@/components/GoalCounter'
 import { ProjectSwitcher } from '@/components/ProjectSwitcher'
@@ -12,6 +15,9 @@ interface TopBarProps {
   /** Opens the wizard for a new project (from the project menu). */
   onNewFloor: () => void
   onOpenSimulation: () => void
+  onOpenTimeEstimates: () => void
+  onOpenSafetyReports: () => void
+  onOpenRiskOverview: () => void
   onOpenFactoryProperties: () => void
   onOpenHelp: () => void
 }
@@ -19,9 +25,13 @@ interface TopBarProps {
 export function TopBar({
   onNewFloor,
   onOpenSimulation,
+  onOpenTimeEstimates,
+  onOpenSafetyReports,
+  onOpenRiskOverview,
   onOpenFactoryProperties,
   onOpenHelp
 }: TopBarProps) {
+  const [simulationMenuOpen, setSimulationMenuOpen] = useState(false)
   const floorplan = usePlanner((s) => s.floorplan)
 
   return (
@@ -45,17 +55,17 @@ export function TopBar({
         </button>
       )}
 
-      {floorplan && <GoalCounter />}
+      {floorplan && <GoalCounter onOpenRiskOverview={onOpenRiskOverview} onOpenSafetyReports={onOpenSafetyReports} />}
 
       {floorplan && (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onOpenSimulation}
-        >
-          3D &amp; simulation
-        </Button>
+        <Popover open={simulationMenuOpen} onOpenChange={setSimulationMenuOpen}>
+          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm">Simulation</Button></PopoverTrigger>
+          <PopoverContent align="end" className="flex w-52 flex-col gap-1 p-2">
+            <Button variant="ghost" className="justify-start" onClick={() => { setSimulationMenuOpen(false); onOpenSimulation() }}>3D &amp; simulation</Button>
+            <Button variant="ghost" className="justify-start" onClick={() => { setSimulationMenuOpen(false); useSupplyChain.getState().setOpen(true) }}>Supply chain</Button>
+            <Button variant="ghost" className="justify-start" onClick={() => { setSimulationMenuOpen(false); onOpenTimeEstimates() }}>Time estimates</Button>
+          </PopoverContent>
+        </Popover>
       )}
 
       <SoundToggle />

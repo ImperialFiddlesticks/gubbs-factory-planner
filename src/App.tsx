@@ -6,6 +6,10 @@ import { GuidedTour } from '@/components/GuidedTour'
 import { QuickGuide } from '@/components/QuickGuide'
 import { PropertiesPanel } from '@/components/PropertiesPanel'
 import { SimulationView } from '@/components/SimulationView'
+import { SafetyReportsDialog } from '@/components/SafetyReportsDialog'
+import { RiskOverviewDialog } from '@/components/RiskOverviewDialog'
+import { TimeEstimatesDialog } from '@/components/TimeEstimatesDialog'
+import { SupplyChainPanel } from '@/components/SupplyChainPanel'
 import { TopBar } from '@/components/TopBar'
 import { WelcomeScreen } from '@/components/wizard/WelcomeScreen'
 import { Wizard } from '@/components/wizard/Wizard'
@@ -62,6 +66,9 @@ function Planner({ onOpenHelp }: { onOpenHelp: () => void }) {
   const floorplan = usePlanner((s) => s.floorplan)
   const startSetup = usePlanner((s) => s.startSetup)
 
+  const [timeEstimatesOpen, setTimeEstimatesOpen] = useState(false)
+  const [safetyReportsOpen, setSafetyReportsOpen] = useState(false)
+  const [riskOverviewOpen, setRiskOverviewOpen] = useState(false)
   const [simulationOpen, setSimulationOpen] = useState(false)
   const [catalogCollapsed, setCatalogCollapsed] = useState(false)
   const [propertiesCollapsed, setPropertiesCollapsed] = useState(false)
@@ -79,6 +86,9 @@ function Planner({ onOpenHelp }: { onOpenHelp: () => void }) {
           onOpenHelp()
         }}
         onOpenSimulation={() => setSimulationOpen(true)}
+        onOpenTimeEstimates={() => setTimeEstimatesOpen(true)}
+        onOpenSafetyReports={() => setSafetyReportsOpen(true)}
+        onOpenRiskOverview={() => setRiskOverviewOpen(true)}
       />
 
       <CatalogPanel
@@ -96,6 +106,11 @@ function Planner({ onOpenHelp }: { onOpenHelp: () => void }) {
           onClose={() => setSimulationOpen(false)}
         />
       )}
+
+      <SupplyChainPanel />
+      {timeEstimatesOpen && <TimeEstimatesDialog open onOpenChange={setTimeEstimatesOpen} />}
+      {safetyReportsOpen && floorplan && <SafetyReportsDialog projectId={floorplan.id} open onOpenChange={setSafetyReportsOpen} />}
+      {riskOverviewOpen && <RiskOverviewDialog open onOpenChange={setRiskOverviewOpen} />}
 
       <PropertiesPanel
         showFactoryProperties={factoryPropertiesOpen}

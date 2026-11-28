@@ -247,6 +247,8 @@ export interface TruckRoute {
   usableWidthMm: number
   allowedTruckTypeIds: string[]
   direction: TruckRouteDirection
+  /** Access road: a transport route from outside the factory in through an opening; may run outside the floor. */
+  access?: boolean
 }
 
 export interface PedestrianRoute {
@@ -488,6 +490,7 @@ export const TruckRouteSchema = z.object({
   usableWidthMm: z.number().finite().nonnegative(),
   allowedTruckTypeIds: IdListSchema,
   direction: z.enum(['one-way', 'two-way']),
+  access: z.boolean().optional(),
 }) satisfies z.ZodType<TruckRoute>
 
 export const PedestrianRouteSchema = z.object({

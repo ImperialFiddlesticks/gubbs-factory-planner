@@ -8,6 +8,9 @@ import { UtilityIcon } from '@/components/canvas/UtilityNode'
 import { barrierCollisionSegments } from '@/lib/truckLogistics'
 import type { ForkliftInstance, PedestrianCrossing, PedestrianRoute, Point, SafetyBarrier, TruckParkingSpot, TruckRoute, TruckServiceStation, TruckType } from '@/types'
 
+/** Access roads from outside: asphalt grey so they read as outdoor roads. */
+export const ACCESS_ROAD_COLOUR = '#57534e'
+
 export function TruckLogisticsNodes({
   parkingSpots,
   forkliftInstances,
@@ -41,7 +44,7 @@ export function TruckLogisticsNodes({
 }) {
   return (
     <>
-      {truckRoutes.map((route) => <PathNode key={route.id} id={route.id} name="truck-route" label={route.name} points={route.points} color="#e87924" width={route.usableWidthMm} direction={route.direction} fit={fit} selected={selectedIds.includes(route.id)} interactive={interactive} />)}
+      {truckRoutes.map((route) => <PathNode key={route.id} id={route.id} name="truck-route" label={route.name} points={route.points} color={route.access ? ACCESS_ROAD_COLOUR : '#e87924'} width={route.usableWidthMm} direction={route.direction} fit={fit} selected={selectedIds.includes(route.id)} interactive={interactive} />)}
       {forkliftInstances.filter((instance) => instance.id !== GHOST_ID).map((instance) => {
         const type = truckTypes.find((item) => item.id === instance.typeId)
         return type && <ForkliftInstanceNode key={instance.id} instance={instance} type={type} fit={fit} selected={selectedIds.includes(instance.id)} invalid={invalidForkliftIds.has(instance.id)} interactive={interactive} onDrag={onDrag} />

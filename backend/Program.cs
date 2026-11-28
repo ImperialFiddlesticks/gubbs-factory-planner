@@ -42,6 +42,12 @@ builder.Services.AddSingleton<backend.Services.IProjectRepository>(_ =>
     new backend.Services.FileProjectRepository(projectStoreDirectory));
 
 
+builder.Services.AddHttpClient("SafetyReportAi", client => client.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddSingleton(provider => new backend.Services.SafetyReportService(
+    projectStoreDirectory, provider.GetRequiredService<IConfiguration>(),
+    provider.GetRequiredService<IHttpClientFactory>(),
+    provider.GetRequiredService<ILogger<backend.Services.SafetyReportService>>()));
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

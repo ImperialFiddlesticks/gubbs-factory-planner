@@ -13,7 +13,12 @@ const CONFETTI = ['var(--saab-yellow)', 'var(--saab-blue)', 'var(--feedback-gree
 const PIECES = 14
 
 /** Top-bar goal: placed stations against the wizard's target, plus the warning count. */
-export function GoalCounter() {
+interface SafetyActions {
+  onOpenRiskOverview: () => void
+  onOpenSafetyReports: () => void
+}
+
+export function GoalCounter(actions: SafetyActions) {
   const floorplan = usePlanner((s) => s.floorplan)
   const machines = usePlanner((s) => s.machines)
   const utilities = usePlanner((s) => s.utilities)
@@ -79,7 +84,7 @@ export function GoalCounter() {
         )}
       </div>
 
-      <WarningsMenu issues={issues} />
+      <WarningsMenu issues={issues} {...actions} />
 
       {burst > 0 && reached && <Confetti key={`c${burst}`} />}
     </div>
@@ -96,7 +101,7 @@ const ISSUE_GROUPS: { category: IssueCategory; title: string }[] = [
  * one selects what it is about and brings it into view on the floor; warnings about the whole
  * floor (no items) are listed but not clickable.
  */
-function WarningsMenu({ issues }: { issues: LayoutIssue[] }) {
+function WarningsMenu({ issues, onOpenRiskOverview, onOpenSafetyReports }: SafetyActions & { issues: LayoutIssue[] }) {
   const focusItems = usePlanner((s) => s.focusItems)
   const [open, setOpen] = useState(false)
   const count = issues.length
@@ -130,6 +135,10 @@ function WarningsMenu({ issues }: { issues: LayoutIssue[] }) {
           >
             {count === 0 ? 'All checks pass' : `${count} flagged`}
           </span>
+        </div>
+        <div className="flex gap-2 border-b px-3 py-2">
+          <button type="button" className="rounded px-2 py-1 text-sm hover:bg-muted" onClick={() => { setOpen(false); onOpenRiskOverview() }}>Risk overview</button>
+          <button type="button" className="rounded px-2 py-1 text-sm hover:bg-muted" onClick={() => { setOpen(false); onOpenSafetyReports() }}>Safety reports</button>
         </div>
         {count === 0 ? (
           <p className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
