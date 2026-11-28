@@ -206,8 +206,8 @@ export function Machine({
             onTouchStart={(e) => pressItem(machine.id, e)}
             onClick={(e) => clickItem(machine.id, e)}
             onTap={(e) => clickItem(machine.id, e)}
-            onDblClick={() => isConveyor && selectSinglePiece(machine.id)}
-            onDblTap={() => isConveyor && selectSinglePiece(machine.id)}
+            onDblClick={() => isConveyor && !machine.groupId && selectSinglePiece(machine.id)}
+            onDblTap={() => isConveyor && !machine.groupId && selectSinglePiece(machine.id)}
             onDragStart={(e) => {
                 const ids = dragGroup(machine.id)
                 const { machines } = usePlanner.getState()
