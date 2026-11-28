@@ -13,6 +13,14 @@ import {
   ZoneSchema,
   LoadingDockSchema,
   LoadingBaySchema,
+  TruckTypeSchema,
+  ForkliftInstanceSchema,
+  TruckParkingSpotSchema,
+  TruckServiceStationSchema,
+  TruckRouteSchema,
+  PedestrianRouteSchema,
+  PedestrianCrossingSchema,
+  SafetyBarrierSchema,
 } from '@/types'
 
 /**
@@ -26,7 +34,7 @@ const SAVE_KEY = 'gubbs-factory-planner'
 
 type Saved = Pick<
   PlannerState,
-  'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'zones' | 'loadingDocks' | 'loadingBays' | 'comments' | 'setup' | 'projects' | 'layers' | 'conveyorLength'
+  'floorplan' | 'machines' | 'utilities' | 'pillars' | 'walls' | 'zones' | 'loadingDocks' | 'loadingBays' | 'truckTypes' | 'forkliftInstances' | 'truckParkingSpots' | 'truckServiceStations' | 'truckRoutes' | 'pedestrianRoutes' | 'pedestrianCrossings' | 'safetyBarriers' | 'comments' | 'setup' | 'projects' | 'layers' | 'conveyorLength'
 >
 
 /** A saved (not open) project. */
@@ -39,6 +47,14 @@ export const ProjectSchema = z.object({
   zones: z.array(ZoneSchema).default([]),
   loadingDocks: z.array(LoadingDockSchema).default([]),
   loadingBays: z.array(LoadingBaySchema).default([]),
+  truckTypes: z.array(TruckTypeSchema).default([]),
+  forkliftInstances: z.array(ForkliftInstanceSchema).default([]),
+  truckParkingSpots: z.array(TruckParkingSpotSchema).default([]),
+  truckServiceStations: z.array(TruckServiceStationSchema).default([]),
+  truckRoutes: z.array(TruckRouteSchema).default([]),
+  pedestrianRoutes: z.array(PedestrianRouteSchema).default([]),
+  pedestrianCrossings: z.array(PedestrianCrossingSchema).default([]),
+  safetyBarriers: z.array(SafetyBarrierSchema).default([]),
   comments: z.array(LayoutCommentSchema).default([]),
   setup: z.record(z.string(), z.unknown()).optional(),
 })
@@ -56,6 +72,14 @@ const SavedSchema = z.object({
   zones: z.array(ZoneSchema).optional(),
   loadingDocks: z.array(LoadingDockSchema).optional(),
   loadingBays: z.array(LoadingBaySchema).optional(),
+  truckTypes: z.array(TruckTypeSchema).optional(),
+  forkliftInstances: z.array(ForkliftInstanceSchema).optional(),
+  truckParkingSpots: z.array(TruckParkingSpotSchema).optional(),
+  truckServiceStations: z.array(TruckServiceStationSchema).optional(),
+  truckRoutes: z.array(TruckRouteSchema).optional(),
+  pedestrianRoutes: z.array(PedestrianRouteSchema).optional(),
+  pedestrianCrossings: z.array(PedestrianCrossingSchema).optional(),
+  safetyBarriers: z.array(SafetyBarrierSchema).optional(),
   comments: z.array(LayoutCommentSchema).optional(),
   // Wizard answers and preferences are merged over the defaults, so a missing field is fine.
   setup: z.record(z.string(), z.unknown()).optional(),
@@ -77,6 +101,14 @@ export const autosave: PersistOptions<PlannerState, Saved> = {
     zones: s.zones,
     loadingDocks: s.loadingDocks,
     loadingBays: s.loadingBays,
+    truckTypes: s.truckTypes,
+    forkliftInstances: s.forkliftInstances,
+    truckParkingSpots: s.truckParkingSpots,
+    truckServiceStations: s.truckServiceStations,
+    truckRoutes: s.truckRoutes,
+    pedestrianRoutes: s.pedestrianRoutes,
+    pedestrianCrossings: s.pedestrianCrossings,
+    safetyBarriers: s.safetyBarriers,
     comments: s.comments,
     setup: s.setup,
     projects: s.projects,
@@ -98,6 +130,14 @@ export const autosave: PersistOptions<PlannerState, Saved> = {
       zones: saved.zones ?? [],
       loadingDocks: saved.loadingDocks ?? [],
       loadingBays: saved.loadingBays ?? [],
+      truckTypes: saved.truckTypes ?? [],
+      forkliftInstances: saved.forkliftInstances ?? [],
+      truckParkingSpots: saved.truckParkingSpots ?? [],
+      truckServiceStations: saved.truckServiceStations ?? [],
+      truckRoutes: saved.truckRoutes ?? [],
+      pedestrianRoutes: saved.pedestrianRoutes ?? [],
+      pedestrianCrossings: saved.pedestrianCrossings ?? [],
+      safetyBarriers: saved.safetyBarriers ?? [],
       comments: saved.comments ?? [],
       setup: { ...current.setup, ...saved.setup },
       projects: (saved.projects ?? []).flatMap((raw) => {
@@ -107,6 +147,7 @@ export const autosave: PersistOptions<PlannerState, Saved> = {
           {
             ...p.data,
             machines: p.data.machines.filter((m) => getMachineType(m.typeId)),
+            forkliftInstances: (p.data.forkliftInstances ?? []).filter((instance) => p.data.truckTypes.some((type) => type.id === instance.typeId)),
             // current.setup is the default answers when loading.
             setup: { ...current.setup, ...p.data.setup },
           },

@@ -33,7 +33,7 @@ export function FloorPreview({
   const x = Math.round((width - floorplan.width * pxPerMm) / 2)
   const y = Math.round((height - floorplan.depth * pxPerMm) / 2)
   const floorPoints = floorCorners(floorplan).flatMap((p) => [p.x * SCALE, p.y * SCALE])
-  const clashes = idsWithIssues(findLayoutIssues(machines, utilities, floorplan, { pillars, walls, zones: project.zones ?? [] }), 'space')
+  const clashes = idsWithIssues(findLayoutIssues(machines, utilities, floorplan, { pillars, walls, zones: project.zones ?? [] }, project.truckServiceStations ?? [], project.truckTypes ?? []), 'space')
 
   return (
     <Stage width={width} height={height} listening={false}>

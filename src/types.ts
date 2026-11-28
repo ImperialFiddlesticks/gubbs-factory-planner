@@ -25,6 +25,8 @@ export interface Floorplan {
   width: number
   /** Size along y, mm. For a shaped floor, the depth of its bounding box. */
   depth: number
+  /** Factory height, mm. Optional for layouts saved before height was introduced. */
+  height?: number
   /** Snap grid spacing, mm. */
   gridSize: number
   /**
@@ -177,6 +179,112 @@ export interface LoadingBay {
   outline: Point[]
 }
 
+export type TruckEnergyType = 'electric' | 'combustion' | 'other'
+export type ForkliftCategory = 'pallet-truck' | 'stacker' | 'reach-truck' | 'counterbalance-forklift'
+export type TruckServiceKind = 'charging' | 'battery-watering'
+export type TruckRouteDirection = 'one-way' | 'two-way'
+export type SafetyBarrierPurpose = 'pedestrian-separation' | 'machine-protection' | 'other'
+
+export interface TruckType {
+  id: string
+  name: string
+  widthMm: number | null
+  lengthMm: number | null
+  turningRadiusMm: number | null
+  minimumAisleWidthMm: number | null
+  loadCapacityKg: number | null
+  energyType: TruckEnergyType
+  batteryType?: string
+  compatibleChargerTypes: string[]
+  category?: ForkliftCategory
+  manufacturer?: string
+  model?: string
+  configuration?: string
+  sourceUrl?: string
+}
+
+/** A forklift model placed on the floor; distinct from its reusable catalogue type. */
+export interface ForkliftInstance {
+  id: string
+  typeId: string
+  x: number
+  y: number
+  rotation: Rotation
+}
+
+export interface TruckParkingSpot {
+  id: string
+  name: string
+  outline: Point[]
+  compatibleTruckTypeIds: string[]
+}
+
+export interface TruckServiceStation {
+  id: string
+  name: string
+  x: number
+  y: number
+  kind: TruckServiceKind
+  chargerType?: string
+  serviceCapacity: number
+  compatibleTruckTypeIds: string[]
+  compatibleBatteryTypes: string[]
+  connectedPowerUtilityId?: string
+  connectedWaterUtilityId?: string
+  chargerPowerKw?: number
+  powerDemandKw?: number
+  requiresPower?: boolean
+}
+
+export interface TruckRoute {
+  id: string
+  name: string
+  points: Point[]
+  usableWidthMm: number
+  allowedTruckTypeIds: string[]
+  direction: TruckRouteDirection
+}
+
+export interface PedestrianRoute {
+  id: string
+  name: string
+  points: Point[]
+  usableWidthMm: number
+  parallel?: {
+    truckRouteId: string
+    side: 'left' | 'right'
+    offsetMm: number
+  }
+}
+
+export interface PedestrianCrossing {
+  id: string
+  name: string
+  x: number
+  y: number
+  truckRouteId: string
+  pedestrianRouteId: string
+  pedestrianRouteIds?: string[]
+}
+
+export interface SafetyBarrierOpening {
+  crossingId: string
+  distanceMm: number
+  widthMm: number
+}
+
+export interface SafetyBarrier {
+  id: string
+  name: string
+  points: Point[]
+  thicknessMm: number
+  purpose: SafetyBarrierPurpose
+  protectedTargetId?: string
+  keepClearOutline?: Point[]
+  generatedForPedestrianRouteId?: string
+  openings?: SafetyBarrierOpening[]
+}
+
 /** A local discussion note anchored to a layout item or a floor location. */
 export interface LayoutComment {
   id: string
@@ -204,6 +312,7 @@ export const FloorplanSchema = z.object({
   name: z.string(),
   width: z.number().positive(),
   depth: z.number().positive(),
+  height: z.number().positive().optional(),
   gridSize: z.number().positive(),
   outline: z.array(PointSchema).min(3).optional(),
 }) satisfies z.ZodType<Floorplan>
@@ -312,6 +421,101 @@ export const LoadingBaySchema = z.object({
   loadingDockId: z.string(),
   outline: z.array(PointSchema).min(3),
 }) satisfies z.ZodType<LoadingBay>
+
+const IdListSchema = z.array(z.string())
+
+export const TruckTypeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  widthMm: z.number().finite().nonnegative().nullable(),
+  lengthMm: z.number().finite().nonnegative().nullable(),
+  turningRadiusMm: z.number().finite().nonnegative().nullable(),
+  minimumAisleWidthMm: z.number().finite().nonnegative().nullable(),
+  loadCapacityKg: z.number().finite().nonnegative().nullable(),
+  energyType: z.enum(['electric', 'combustion', 'other']),
+  batteryType: z.string().optional(),
+  compatibleChargerTypes: IdListSchema,
+  category: z.enum(['pallet-truck', 'stacker', 'reach-truck', 'counterbalance-forklift']).optional(),
+  manufacturer: z.string().optional(),
+  model: z.string().optional(),
+  configuration: z.string().optional(),
+  sourceUrl: z.string().url().optional(),
+}) satisfies z.ZodType<TruckType>
+
+export const ForkliftInstanceSchema = z.object({
+  id: z.string(),
+  typeId: z.string(),
+  x: z.number().finite(),
+  y: z.number().finite(),
+  rotation: z.number().finite(),
+}) satisfies z.ZodType<ForkliftInstance>
+
+export const TruckParkingSpotSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  outline: z.array(PointSchema).min(3),
+  compatibleTruckTypeIds: IdListSchema,
+}) satisfies z.ZodType<TruckParkingSpot>
+
+export const TruckServiceStationSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  x: z.number().finite(),
+  y: z.number().finite(),
+  kind: z.enum(['charging', 'battery-watering']),
+  chargerType: z.string().optional(),
+  serviceCapacity: z.number().finite().nonnegative(),
+  compatibleTruckTypeIds: IdListSchema,
+  compatibleBatteryTypes: z.array(z.string()),
+  connectedPowerUtilityId: z.string().optional(),
+  connectedWaterUtilityId: z.string().optional(),
+  chargerPowerKw: z.number().finite().nonnegative().optional(),
+  powerDemandKw: z.number().finite().nonnegative().optional(),
+  requiresPower: z.boolean().optional(),
+}) satisfies z.ZodType<TruckServiceStation>
+
+export const TruckRouteSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  points: z.array(PointSchema).min(2),
+  usableWidthMm: z.number().finite().nonnegative(),
+  allowedTruckTypeIds: IdListSchema,
+  direction: z.enum(['one-way', 'two-way']),
+}) satisfies z.ZodType<TruckRoute>
+
+export const PedestrianRouteSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  points: z.array(PointSchema).min(2),
+  usableWidthMm: z.number().finite().nonnegative(),
+  parallel: z.object({
+    truckRouteId: z.string(),
+    side: z.enum(['left', 'right']),
+    offsetMm: z.number().finite().nonnegative(),
+  }).optional(),
+}) satisfies z.ZodType<PedestrianRoute>
+
+export const PedestrianCrossingSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  x: z.number().finite(),
+  y: z.number().finite(),
+  truckRouteId: z.string(),
+  pedestrianRouteId: z.string(),
+  pedestrianRouteIds: z.array(z.string()).optional(),
+}) satisfies z.ZodType<PedestrianCrossing>
+
+export const SafetyBarrierSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  points: z.array(PointSchema).min(2),
+  thicknessMm: z.number().finite().nonnegative(),
+  purpose: z.enum(['pedestrian-separation', 'machine-protection', 'other']),
+  protectedTargetId: z.string().optional(),
+  keepClearOutline: z.array(PointSchema).min(3).optional(),
+  generatedForPedestrianRouteId: z.string().optional(),
+  openings: z.array(z.object({ crossingId: z.string(), distanceMm: z.number().finite().nonnegative(), widthMm: z.number().finite().positive() })).optional(),
+}) satisfies z.ZodType<SafetyBarrier>
 
 export const LayoutCommentSchema = z.object({
   id: z.string(),

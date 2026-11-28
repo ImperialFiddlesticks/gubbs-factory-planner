@@ -11,9 +11,11 @@ import { PillarBody, PillarNode } from '@/components/canvas/PillarNode'
 import { WallBody, WallNode } from '@/components/canvas/WallNode'
 import { LoadingDockGlyph, LoadingDockNode } from '@/components/canvas/LoadingDockNode'
 import { LoadingBayNode } from '@/components/canvas/LoadingBayNode'
+import { ForkliftGlyph, TruckLogisticsNodes } from '@/components/canvas/TruckLogisticsNodes'
 import { ZoneNode, ZoneShape } from '@/components/canvas/ZoneNode'
 import { CoverageCircle, UtilityGlyph, UtilityNode } from '@/components/canvas/UtilityNode'
 import { PowerLoadTags, SupplyLines } from '@/components/canvas/SupplyLines'
+import { supplyLines } from '@/lib/validation'
 import { WalkingRoutes } from '@/components/canvas/WalkingRoutes'
 import { SCALE } from '@/constants'
 import { getMachineType, machineTypeFor } from '@/data/catalog'
@@ -26,6 +28,7 @@ import { keepOnFloor } from '@/lib/placement'
 import { floorCorners } from '@/lib/floorShapes'
 import { DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockBounds, loadingDockIssue, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
 import { loadingBayBounds, loadingBayCentroid, loadingBayIssue, loadingBayWorldBounds } from '@/lib/loadingBays'
+import { DEFAULT_BARRIER_THICKNESS_MM, DEFAULT_FORKLIFT_ROUTE_WIDTH_MM, DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM, crossingPlacementAt, findTruckLogisticsIssues, forkliftFootprint, isValidLogisticsPolygon } from '@/lib/truckLogistics'
 import {
   bodyBox,
   boxesOverlap,
@@ -40,40 +43,65 @@ import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validatio
 import { useElementSize } from '@/lib/useElementSize'
 import { usePlanner, type Placing } from '@/store'
 import { CANVAS } from '@/theme'
-import type { Floorplan, LoadingBay, LoadingDock, MachineInstance, Pillar, Point, Utility, Wall, Zone, ZoneKind } from '@/types'
+import type { Floorplan, ForkliftInstance, LoadingBay, LoadingDock, MachineInstance, Pillar, Point, TruckType, Utility, Wall, Zone, ZoneKind } from '@/types'
 
 interface FloorCanvasProps {
   floorplan: Floorplan | null
+  onboardingMessage: string | null
+  onSkipOnboarding: () => void
 }
 
-export function FloorCanvas({ floorplan }: FloorCanvasProps) {
+export function FloorCanvas({ floorplan, onboardingMessage, onSkipOnboarding }: FloorCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const size = useElementSize(containerRef)
+  const placing = usePlanner((s) => s.placing)
+  const [placementError, setPlacementError] = useState<{ placing: Placing; message: string } | null>(null)
 
   return (
     <main
       ref={containerRef}
-      className="relative overflow-hidden"
+      className="planner-canvas relative min-h-0 min-w-0 overflow-hidden"
       style={{ backgroundColor: CANVAS.background }}
     >
-      {floorplan && size.width > 0 && <FloorStage key={floorplan.id} floorplan={floorplan} size={size} />}
-      <PlacingHint />
+      {floorplan && size.width > 0 && <FloorStage key={floorplan.id} floorplan={floorplan} size={size} onPlacementError={(message) => { if (placing) setPlacementError({ placing, message }) }} />}
+      <PlacingHint error={placementError?.placing === placing ? placementError.message : null} />
+      {onboardingMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="theme-dark pointer-events-auto absolute top-4 left-1/2 z-50 flex w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 items-start justify-between gap-4 rounded-md border bg-background/95 p-3 shadow-lg backdrop-blur max-[579px]:top-20"
+        >
+          <p className="text-sm leading-relaxed">{onboardingMessage}</p>
+          <button
+            type="button"
+            onClick={onSkipOnboarding}
+            className="shrink-0 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Skip
+          </button>
+        </div>
+      )}
     </main>
   )
 }
 
 function placingName(p: Placing) {
   if (p.kind === 'machine') return getMachineType(p.typeId)?.name
+  if (p.kind === 'forklift') return 'forklift'
   if (p.kind === 'pillar') return 'Pillar'
   if (p.kind === 'wall') return 'Wall'
   if (p.kind === 'zone') return ZONE_KINDS[p.zoneKind].name
   if (p.kind === 'loadingDock') return 'Loading dock'
   if (p.kind === 'loadingBay') return 'Loading bay'
+  if (p.kind === 'logistics-path') return p.logisticsKind === 'truck-route' ? 'forklift route' : p.logisticsKind === 'pedestrian-route' ? 'pedestrian route' : 'safety barrier'
+  if (p.kind === 'logistics-rectangle') return 'forklift parking spot'
+  if (p.kind === 'barrier-clearance') return 'protected keep-clear area'
+  if (p.kind === 'logistics-point') return p.logisticsKind === 'crossing' ? 'pedestrian crossing' : `${p.logisticsKind.replaceAll('-', ' ')} station`
   return UTILITY_KINDS[p.utilityKind].name
 }
 
 /** Instruction strip shown at the top of the work area while placing. */
-function PlacingHint() {
+function PlacingHint({ error }: { error: string | null }) {
   const placing = usePlanner((s) => s.placing)
   const commentDraft = usePlanner((s) => s.commentDraft)
   if (commentDraft) {
@@ -115,10 +143,25 @@ function PlacingHint() {
       </div>
     )
   }
+  if (placing.kind === 'logistics-path') {
+    return <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">Drawing <span className="font-semibold">{placingName(placing)}</span> · Click vertices, press Enter to finish · Esc to cancel</div>
+  }
+  if (placing.kind === 'logistics-rectangle') {
+    return <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">Draw a forklift parking rectangle · Press and drag · Esc to cancel</div>
+  }
+  if (placing.kind === 'barrier-clearance') {
+    return <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">Draw the protected keep-clear outline · Click corners, then the first point to finish · Enter to finish · Esc to cancel</div>
+  }
+  if (placing.kind === 'logistics-point') {
+    return <div className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md px-3 py-1.5 text-xs shadow ${error ? 'bg-destructive text-destructive-foreground' : 'bg-foreground/90 text-background'}`}>
+      {placing.logisticsKind === 'crossing' ? 'Click a forklift route with an adjacent pedestrian route to place a crossing' : <>Placing <span className="font-semibold">{placingName(placing)}</span> · Click to place · Esc to cancel</>}
+      {error && <span className="ml-2">{error}</span>}
+    </div>
+  }
   return (
     <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
       Placing <span className="font-semibold">{placingName(placing)}</span> · Click to place
-      {placing.kind === 'machine' && ' · R to rotate'}
+      {(placing.kind === 'machine' || placing.kind === 'forklift') && ' · R to rotate'}
       {placing.kind === 'utility' && placing.utilityKind === 'exit' && ' on a wall'} · Esc or
       right-click to cancel
     </div>
@@ -128,6 +171,7 @@ function PlacingHint() {
 /** What is being moved right now (ghost or drag), at its live position. */
 type Active =
   | { kind: 'machine'; item: MachineInstance }
+  | { kind: 'forklift'; item: ForkliftInstance }
   | { kind: 'utility'; item: Utility }
   | { kind: 'pillar'; item: Pillar }
   | { kind: 'wall'; item: Wall }
@@ -137,31 +181,63 @@ type Active =
 function FloorStage({
   floorplan,
   size,
+  onPlacementError,
 }: {
   floorplan: Floorplan
   size: { width: number; height: number }
+  onPlacementError: (message: string) => void
 }) {
   const loadingBays = usePlanner((s) => s.loadingBays)
+  const truckTypes = usePlanner((s) => s.truckTypes)
+  const forkliftInstances = usePlanner((s) => s.forkliftInstances)
+  const truckParkingSpots = usePlanner((s) => s.truckParkingSpots)
+  const truckServiceStations = usePlanner((s) => s.truckServiceStations)
+  const truckRoutes = usePlanner((s) => s.truckRoutes)
+  const pedestrianRoutes = usePlanner((s) => s.pedestrianRoutes)
+  const pedestrianCrossings = usePlanner((s) => s.pedestrianCrossings)
+  const safetyBarriers = usePlanner((s) => s.safetyBarriers)
   const placing = usePlanner((s) => s.placing)
+  const availableTruckTypes = placing?.kind === 'forklift' && placing.preset && !truckTypes.some((item) => item.id === placing.typeId)
+    ? [...truckTypes, { ...placing.preset, id: placing.typeId }]
+    : truckTypes
   const draftBays = placing?.kind === 'loadingBay' && placing.outline.length > 0
     ? [{ id: GHOST_ID, name: 'Loading bay', loadingDockId: placing.loadingDockId, outline: placing.outline }]
     : []
-  const worldBounds = loadingBayWorldBounds(floorplan, [...loadingBays, ...draftBays])
+  const bayBounds = loadingBayWorldBounds(floorplan, [...loadingBays, ...draftBays])
+  const logisticsPoints = [
+    ...forkliftInstances.flatMap((instance) => {
+      const type = availableTruckTypes.find((item) => item.id === instance.typeId)
+      return type ? forkliftFootprint(type, instance) ?? [] : []
+    }),
+    ...truckParkingSpots.flatMap((item) => item.outline),
+    ...truckRoutes.flatMap((item) => expandPoints(item.points, item.usableWidthMm / 2)),
+    ...pedestrianRoutes.flatMap((item) => expandPoints(item.points, item.usableWidthMm / 2)),
+    ...safetyBarriers.flatMap((item) => [...expandPoints(item.points, item.thicknessMm / 2), ...(item.keepClearOutline ?? [])]),
+    ...truckServiceStations.map(({ x, y }) => ({ x, y })),
+    ...pedestrianCrossings.map(({ x, y }) => ({ x, y })),
+  ].filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+  const worldBounds = logisticsPoints.length ? {
+    minX: Math.min(bayBounds.minX, ...logisticsPoints.map((point) => point.x)),
+    minY: Math.min(bayBounds.minY, ...logisticsPoints.map((point) => point.y)),
+    maxX: Math.max(bayBounds.maxX, ...logisticsPoints.map((point) => point.x)),
+    maxY: Math.max(bayBounds.maxY, ...logisticsPoints.map((point) => point.y)),
+  } : bayBounds
   const worldW = (worldBounds.maxX - worldBounds.minX) * SCALE
   const worldH = (worldBounds.maxY - worldBounds.minY) * SCALE
   // The map toolbar sits at the bottom, so the floor uses the space above it.
   const viewH = size.height - TOOLBAR_SPACE
   // Fit the hall and any exterior bays together without moving their shared world coordinates.
   const baseFit = Math.min(
-    1,
     (size.width - 2 * VIEW_PADDING) / worldW,
     (viewH - 2 * VIEW_PADDING) / worldH,
   )
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [panActive, setPanActive] = useState(false)
+  const [navigationTool, setNavigationTool] = useState<'select' | 'hand'>('select')
   const panStart = useRef<{ pointer: Point; pan: Point } | null>(null)
   const spacePan = useSpacePan()
+  const panningEnabled = navigationTool === 'hand' || spacePan
   const fit = baseFit * zoom
   // Keep the full world bounds centred at the current zoom, then apply any user panning.
   const originX = Math.round((size.width - worldW * fit) / 2 - worldBounds.minX * SCALE * fit + pan.x)
@@ -193,6 +269,7 @@ function FloorStage({
   const commentDraft = usePlanner((s) => s.commentDraft)
   const select = usePlanner((s) => s.select)
   const addMachine = usePlanner((s) => s.addMachine)
+  const addForkliftInstance = usePlanner((s) => s.addForkliftInstance)
   const addUtility = usePlanner((s) => s.addUtility)
   const addPillar = usePlanner((s) => s.addPillar)
   const addWall = usePlanner((s) => s.addWall)
@@ -202,6 +279,12 @@ function FloorStage({
   const addLoadingDock = usePlanner((s) => s.addLoadingDock)
   const addLoadingBay = usePlanner((s) => s.addLoadingBay)
   const setLoadingBayPoints = usePlanner((s) => s.setLoadingBayPoints)
+  const setLogisticsPoints = usePlanner((s) => s.setLogisticsPoints)
+  const addLogisticsPoint = usePlanner((s) => s.addLogisticsPoint)
+  const addLogisticsRectangle = usePlanner((s) => s.addLogisticsRectangle)
+  const setLogisticsRectangleStart = usePlanner((s) => s.setLogisticsRectangleStart)
+  const setBarrierKeepClearPoints = usePlanner((s) => s.setBarrierKeepClearPoints)
+  const updateSafetyBarrier = usePlanner((s) => s.updateSafetyBarrier)
   const cancelPlacing = usePlanner((s) => s.cancelPlacing)
   const addLocationComment = usePlanner((s) => s.addLocationComment)
   const cancelCommentPlacement = usePlanner((s) => s.cancelCommentPlacement)
@@ -224,7 +307,8 @@ function FloorStage({
   } | null>(null)
 
   function zoomAround(nextZoom: number, anchor: Point) {
-    const boundedZoom = Math.max(1, Math.min(4, nextZoom))
+    const boundedZoom = Math.max(0.25, Math.min(4, nextZoom))
+    if (boundedZoom === zoom) return
     const oldFit = baseFit * zoom
     const nextFit = baseFit * boundedZoom
     const oldOriginX = (size.width - worldW * oldFit) / 2 - worldBounds.minX * SCALE * oldFit + pan.x
@@ -249,21 +333,33 @@ function FloorStage({
     setPan({ x: 0, y: 0 })
   }
 
+  function changeNavigationTool(tool: 'select' | 'hand') {
+    if (tool === 'hand') {
+      if (placing) cancelPlacing()
+      if (commentDraft) cancelCommentPlacement()
+    }
+    setNavigationTool(tool)
+  }
+
   usePlacingKeys()
   useSelectionKeys()
 
   const active = keepGhostOnFloor(
-    activeItem(placing, pointer, drag, machines, utilities, pillars, walls, loadingDocks, loadingBays, floorplan),
+    activeItem(placing, pointer, drag, machines, forkliftInstances, availableTruckTypes, utilities, pillars, walls, loadingDocks, loadingBays, floorplan),
     floorplan,
   )
 
   // Items moving along with the dragged one (multi-selection, conveyor run), at their live spot.
-  const delta = groupDelta(drag, machines, utilities, pillars, walls, zones, loadingDocks, loadingBays, floorplan)
+  const delta = groupDelta(drag, machines, forkliftInstances, utilities, pillars, walls, zones, loadingDocks, loadingBays, floorplan)
   const moving = new Set(delta ? drag?.group : [])
   const shiftItems = <T extends { id: string; x: number; y: number }>(list: T[]) =>
     delta ? list.map((i) => (moving.has(i.id) ? { ...i, x: i.x + delta.x, y: i.y + delta.y } : i)) : list
   const shiftPoint = (p: Point) => (delta ? { x: p.x + delta.x, y: p.y + delta.y } : p)
   const shownUtilities = shiftItems(utilities)
+  const shownForkliftInstances = shiftItems(forkliftInstances)
+  const liveForkliftInstances = active?.kind === 'forklift'
+    ? withItem(shownForkliftInstances, active.item)
+    : shownForkliftInstances
   const shownPillars = shiftItems(pillars)
   const shownZones = shiftItems(zones)
   const shownLoadingDocks = delta
@@ -301,10 +397,23 @@ function FloorStage({
     pillars: livePillars,
     walls: liveWalls,
     zones: layers.zones ? liveZones : zones,
-  })
+  }, truckServiceStations, availableTruckTypes)
   const spaceBad = idsWithIssues(issues, 'space')
   const utilityBad = idsWithIssues(issues, 'utility')
   const needs = needsByMachine(issues)
+  const activeForkliftType = active?.kind === 'forklift' ? availableTruckTypes.find((item) => item.id === active.item.typeId) : undefined
+  const logisticsIssues = findTruckLogisticsIssues({
+    truckTypes: availableTruckTypes, utilities: liveUtilities, parkingSpots: truckParkingSpots, serviceStations: truckServiceStations,
+    truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines: liveMachines,
+    forkliftInstances: liveForkliftInstances, pillars: livePillars, walls: liveWalls, loadingBays: liveLoadingBays, floorplan,
+  })
+  const invalidForkliftIds = new Set(logisticsIssues.filter((item) => item.key.startsWith('forklift-') || item.key.startsWith('route-instance-fit:')).flatMap((item) => item.ids))
+  const barrierMachineIds = new Set(logisticsIssues.filter((item) => item.key.startsWith('barrier-machine:')).flatMap((item) => item.ids))
+  const stationIds = new Set(truckServiceStations.map((station) => station.id))
+  const connectedStationUtilities = new Set((['power', 'water'] as const).flatMap((kind) =>
+    supplyLines(liveMachines, liveUtilities, kind, liveWalls, truckServiceStations, availableTruckTypes)
+      .flatMap((line) => line.servedIds.filter((id) => stationIds.has(id)).map((id) => `${id}:${kind}`)),
+  ))
 
   // Clearance zones: the active/selected machine plus anything it physically clashes with.
   const focusId = active?.item.id ?? selectedId
@@ -330,7 +439,7 @@ function FloorStage({
       if (at) addLocationComment(at.x, at.y)
       return
     }
-    if (spacePan && !placing && 'button' in e.evt && e.evt.button === 0) {
+    if (panningEnabled && !placing && (!('button' in e.evt) || e.evt.button === 0)) {
       const pointer = e.target.getStage()?.getPointerPosition()
       if (pointer) {
         panStart.current = { pointer, pan }
@@ -372,6 +481,7 @@ function FloorStage({
       const at = pointerMm()
       // Zones: press here, drag, release to finish (see finishZone).
       if (at && placing.kind === 'zone') return setZoneStart(at)
+      if (at && placing.kind === 'logistics-rectangle') return setLogisticsRectangleStart(at)
       if (at && placing.kind === 'wall') {
         // Two clicks: the first sets the start, the second (far enough away) finishes the wall.
         if (!placing.start) return setWallStart(at)
@@ -379,6 +489,11 @@ function FloorStage({
         if (wallLength({ start: placing.start, end }) < MIN_WALL_LENGTH) return
         addWall(placing.start, end)
         cancelPlacing()
+        return
+      }
+      if (at && placing.kind === 'forklift') {
+        if (invalidForkliftIds.has(GHOST_ID)) return
+        addForkliftInstance(placing.typeId, active?.kind === 'forklift' ? active.item : at, placing.rotation)
         return
       }
       if (at && placing.kind === 'machine') {
@@ -415,6 +530,30 @@ function FloorStage({
         }
         setLoadingBayPoints([...points, at])
         return
+      } else if (at && placing.kind === 'barrier-clearance') {
+        const points = placing.outline
+        if (points.length >= 3 && Math.hypot(at.x - points[0].x, at.y - points[0].y) <= 500) {
+          if (isValidLogisticsPolygon(points)) {
+            updateSafetyBarrier(placing.barrierId, { keepClearOutline: points })
+            cancelPlacing()
+          }
+          return
+        }
+        setBarrierKeepClearPoints([...points, at])
+        return
+      } else if (at && placing.kind === 'logistics-path') {
+        const points = placing.points
+        if (points.length && Math.hypot(at.x - points[points.length - 1].x, at.y - points[points.length - 1].y) <= 50) return
+        setLogisticsPoints([...points, at])
+        return
+      } else if (at && placing.kind === 'logistics-point') {
+        if (placing.logisticsKind === 'crossing' && !crossingPlacementAt(at, truckRoutes, pedestrianRoutes)) {
+          onPlacementError('No crossing created: click on a forklift route corridor that has an adjacent pedestrian route.')
+          return
+        }
+        if (addLogisticsPoint(placing.logisticsKind, at)) cancelPlacing()
+        else if (placing.logisticsKind === 'crossing') onPlacementError('No crossing created. Check the route and pedestrian-route geometry, then try again.')
+        return
       } else if (at && placing.kind === 'pillar') {
         addPillar(at.x, at.y)
       }
@@ -423,7 +562,7 @@ function FloorStage({
     }
     // Pressing empty floor starts a selection box (a plain click clears the selection on release).
     const t = e.target
-    if (['.machine', '.utility', '.pillar', '.wall', '.zone', '.loading-dock', '.loading-bay'].some((n) => t.findAncestor(n, true))) return
+    if (['.machine', '.forklift-instance', '.utility', '.pillar', '.wall', '.zone', '.loading-dock', '.loading-bay', '.truck-route', '.pedestrian-route', '.safety-barrier', '.truck-parking', '.truck-service-station', '.pedestrian-crossing'].some((n) => t.findAncestor(n, true))) return
     if ('button' in e.evt && e.evt.button !== 0) return
     const at = pointerMm()
     if (at) setBox({ start: at, end: at, add: e.evt.shiftKey })
@@ -467,6 +606,13 @@ function FloorStage({
     }
   }
 
+  function finishLogisticsRectangle() {
+    if (placing?.kind !== 'logistics-rectangle' || !placing.start) return
+    const at = pointerMm()
+    if (at && addLogisticsRectangle(placing.start, at)) cancelPlacing()
+    else setLogisticsRectangleStart(null)
+  }
+
   /** Release: select everything the box touches (added to the selection with Shift). */
   function finishBox() {
     if (!box) return
@@ -483,6 +629,12 @@ function FloorStage({
         const type = machineTypeFor(m)
         return type && hit(bodyBox(type, m)) ? [m.id] : []
       }),
+      ...forkliftInstances.flatMap((instance) => {
+        const type = truckTypes.find((item) => item.id === instance.typeId)
+        const footprint = type && forkliftFootprint(type, instance)
+        const bounds = footprint && pointsBounds(footprint)
+        return bounds && hit(bounds) ? [instance.id] : []
+      }),
       ...utilities
         .filter((u) => utilityVisible(u.kind, layers))
         .filter((u) => u.x >= r.x && u.x <= r.x + r.width && u.y >= r.y && u.y <= r.y + r.depth)
@@ -498,6 +650,12 @@ function FloorStage({
         const bounds = loadingBayBounds(bay)
         return bounds && hit({ ...bounds, depth: bounds.depth }) ? [bay.id] : []
       })),
+      ...truckParkingSpots.flatMap((spot) => { const bounds = pointsBounds(spot.outline); return bounds && hit(bounds) ? [spot.id] : [] }),
+      ...truckRoutes.flatMap((route) => { const bounds = pointsBounds(route.points); return bounds && hit(bounds) ? [route.id] : [] }),
+      ...pedestrianRoutes.flatMap((route) => { const bounds = pointsBounds(route.points); return bounds && hit(bounds) ? [route.id] : [] }),
+      ...safetyBarriers.flatMap((barrier) => { const bounds = pointsBounds(barrier.points); return bounds && hit(bounds) ? [barrier.id] : [] }),
+      ...truckServiceStations.filter((station) => station.x >= r.x && station.x <= r.x + r.width && station.y >= r.y && station.y <= r.y + r.depth).map((station) => station.id),
+      ...pedestrianCrossings.filter((crossing) => crossing.x >= r.x && crossing.x <= r.x + r.width && crossing.y >= r.y && crossing.y <= r.y + r.depth).map((crossing) => crossing.id),
     ]
     selectMany(ids, box.add)
   }
@@ -511,9 +669,10 @@ function FloorStage({
   }
 
   function outlineFor(id: string): Outline {
-    if (id === active?.item.id) return spaceBad.has(id) ? 'invalid' : 'valid'
-    if (selected.has(id)) return 'selected'
-    return spaceBad.has(id) ? 'invalid' : 'none'
+    const invalid = spaceBad.has(id) || barrierMachineIds.has(id)
+    if (id === active?.item.id) return invalid ? 'invalid' : 'valid'
+    if (selected.has(id)) return invalid ? 'invalid' : 'selected'
+    return invalid ? 'invalid' : 'none'
   }
 
   const measureTo = measureEnd ?? (measuring && measureStart ? pointer : null)
@@ -546,11 +705,13 @@ function FloorStage({
         setPanActive(false)
         setMeasureDrag(null)
         finishZone()
+        finishLogisticsRectangle()
         finishBox()
       }}
       onTouchEnd={() => {
         setMeasureDrag(null)
         finishZone()
+        finishLogisticsRectangle()
         finishBox()
       }}
       onMouseLeave={() => {
@@ -611,6 +772,27 @@ function FloorStage({
             onDrag={setDrag}
           />
         ))}
+        <TruckLogisticsNodes
+          parkingSpots={truckParkingSpots}
+          forkliftInstances={liveForkliftInstances}
+          truckTypes={availableTruckTypes}
+          invalidForkliftIds={invalidForkliftIds}
+          onDrag={setDrag}
+          stations={truckServiceStations}
+          connectedStationUtilities={connectedStationUtilities}
+          truckRoutes={truckRoutes}
+          pedestrianRoutes={pedestrianRoutes}
+          crossings={pedestrianCrossings}
+          barriers={safetyBarriers}
+          selectedIds={selectedIds}
+          fit={fit}
+          interactive={!placing && !panningEnabled && !commentDraft}
+        />
+        {placing?.kind === 'logistics-path' && placing.points.length > 0 && pointer && (
+          <Line points={[...placing.points.flatMap((point) => [point.x * SCALE, point.y * SCALE]), pointer.x * SCALE, pointer.y * SCALE]} stroke={placing.logisticsKind === 'truck-route' ? '#e87924' : placing.logisticsKind === 'pedestrian-route' ? '#8b5cf6' : '#374151'} strokeWidth={(placing.logisticsKind === 'truck-route' ? DEFAULT_FORKLIFT_ROUTE_WIDTH_MM : placing.logisticsKind === 'pedestrian-route' ? DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM : DEFAULT_BARRIER_THICKNESS_MM) * SCALE} opacity={0.65} lineCap="round" lineJoin="round" dash={placing.logisticsKind === 'barrier' ? [10 / fit, 5 / fit] : undefined} listening={false} />
+        )}
+        {placing?.kind === 'logistics-rectangle' && placing.start && pointer && <ParkingRectangleGhost start={placing.start} end={pointer} fit={fit} />}
+        {placing?.kind === 'barrier-clearance' && placing.outline.length > 0 && pointer && <Line points={[...placing.outline.flatMap((point) => [point.x * SCALE, point.y * SCALE]), pointer.x * SCALE, pointer.y * SCALE]} closed={placing.outline.length >= 3} fill={placing.outline.length >= 3 ? '#dc262622' : undefined} stroke="#dc2626" strokeWidth={2 / fit} dash={[8 / fit, 5 / fit]} listening={false} />}
 
         {/* Zones are floor markings: under everything else. Only their name tags are clickable. */}
         {layers.zones &&
@@ -701,6 +883,8 @@ function FloorStage({
           machines={liveMachines}
           utilities={liveUtilities}
           walls={liveWalls}
+          serviceStations={truckServiceStations}
+          truckTypes={availableTruckTypes}
           fit={fit}
         />
         <SupplyLines
@@ -710,6 +894,8 @@ function FloorStage({
           machines={liveMachines}
           utilities={liveUtilities}
           walls={liveWalls}
+          serviceStations={truckServiceStations}
+          truckTypes={availableTruckTypes}
           fit={fit}
         />
         <WalkingRoutes
@@ -753,6 +939,7 @@ function FloorStage({
           machines={liveMachines}
           utilities={liveUtilities}
           walls={liveWalls}
+          serviceStations={truckServiceStations}
           fit={fit}
         />
 
@@ -820,6 +1007,14 @@ function FloorStage({
                 fit={fit}
                 dashed
               />
+            ) : active.kind === 'forklift' ? (
+              activeForkliftType ? <ForkliftGlyph
+                type={activeForkliftType}
+                rotation={active.item.rotation}
+                fit={fit}
+                selected
+                invalid={invalidForkliftIds.has(active.item.id)}
+              /> : null
             ) : active.kind === 'pillar' ? (
               <PillarBody
                 width={active.item.width}
@@ -884,6 +1079,7 @@ function keepGhostOnFloor(active: Active | null, floorplan: Floorplan): Active |
 function groupDelta(
   drag: DragState | null,
   machines: MachineInstance[],
+  forkliftInstances: ForkliftInstance[],
   utilities: Utility[],
   pillars: Pillar[],
   walls: Wall[],
@@ -895,7 +1091,7 @@ function groupDelta(
   if (!drag?.group?.length) return null
   // A wall reports its offset from where it started; everything else its position.
   if (walls.some((w) => w.id === drag.id)) return { x: drag.x, y: drag.y }
-  const from = [...machines, ...utilities, ...pillars, ...zones].find((i) => i.id === drag.id)
+  const from = [...machines, ...forkliftInstances, ...utilities, ...pillars, ...zones].find((i) => i.id === drag.id)
   if (from) return { x: drag.x - from.x, y: drag.y - from.y }
   const dock = loadingDocks.find((item) => item.id === drag.id)
   const point = dock && loadingDockPointAt(floorplan, dock.boundaryOffsetMm)
@@ -944,6 +1140,32 @@ function boxRect(a: Point, b: Point): Box {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), depth: Math.abs(b.y - a.y) }
 }
 
+function ParkingRectangleGhost({ start, end, fit }: { start: Point; end: Point; fit: number }) {
+  const rect = boxRect(start, end)
+  const px = { x: rect.x * SCALE, y: rect.y * SCALE, width: rect.width * SCALE, height: rect.depth * SCALE }
+  return <Group listening={false}>
+    <Rect {...px} fill="#facc1533" stroke="#ca8a04" strokeWidth={2 / fit} dash={[8 / fit, 4 / fit]} />
+    <Text text={`${(rect.width / 1000).toFixed(1)} × ${(rect.depth / 1000).toFixed(1)} m`} x={px.x + 5 / fit} y={px.y + 5 / fit} fontSize={11 / fit} fill="#854d0e" />
+  </Group>
+}
+
+function expandPoints(points: Point[], padding: number): Point[] {
+  const safePadding = Number.isFinite(padding) ? Math.max(0, padding) : 0
+  return points.flatMap(({ x, y }) => [
+    { x: x - safePadding, y: y - safePadding }, { x: x + safePadding, y: y - safePadding },
+    { x: x + safePadding, y: y + safePadding }, { x: x - safePadding, y: y + safePadding },
+  ])
+}
+
+function pointsBounds(points: Point[]): Box | null {
+  if (points.length === 0 || points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return null
+  const xs = points.map((point) => point.x)
+  const ys = points.map((point) => point.y)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  return { x, y, width: Math.max(...xs) - x, depth: Math.max(...ys) - y }
+}
+
 /**
  * Delete / Backspace removes the selection (one undo step); Esc clears it. Ignored while
  * placing (Esc cancels that instead) or typing in a field.
@@ -956,6 +1178,19 @@ function useSelectionKeys() {
       const s = usePlanner.getState()
       if (s.commentDraft) {
         s.cancelCommentPlacement()
+        return
+      }
+      if (s.placing?.kind === 'logistics-path' && e.key === 'Enter') {
+        e.preventDefault()
+        s.addLogisticsPath(s.placing.logisticsKind, s.placing.points)
+        return
+      }
+      if (s.placing?.kind === 'barrier-clearance' && e.key === 'Enter') {
+        e.preventDefault()
+        if (isValidLogisticsPolygon(s.placing.outline)) {
+          s.updateSafetyBarrier(s.placing.barrierId, { keepClearOutline: s.placing.outline })
+          s.cancelPlacing()
+        }
         return
       }
       if (s.placing || s.selectedIds.length === 0) return
@@ -1013,6 +1248,8 @@ function activeItem(
   pointer: { x: number; y: number } | null,
   drag: DragState | null,
   machines: MachineInstance[],
+  forkliftInstances: ForkliftInstance[],
+  truckTypes: TruckType[],
   utilities: Utility[],
   pillars: Pillar[],
   walls: Wall[],
@@ -1031,6 +1268,11 @@ function activeItem(
       }
       // Conveyor pieces snap onto a nearby free end; other machines onto the end of a belt.
       return { kind: 'machine', item: { ...item, ...snapConveyor(item, machines), ...snapMachineToConveyor(item, machines) } }
+    }
+    if (placing.kind === 'forklift') {
+      const type = truckTypes.find((item) => item.id === placing.typeId)
+      if (!type || type.widthMm === null || type.widthMm <= 0 || type.lengthMm === null || type.lengthMm <= 0) return null
+      return { kind: 'forklift', item: { id: GHOST_ID, typeId: placing.typeId, rotation: placing.rotation, ...pointer } }
     }
     if (placing.kind === 'pillar') {
       return {
@@ -1073,6 +1315,7 @@ function activeItem(
         },
       }
     }
+    if (placing.kind !== 'utility') return null
     const info = UTILITY_KINDS[placing.utilityKind]
     const at = placing.utilityKind === 'exit' ? snapToWall(pointer.x, pointer.y, floorplan) : pointer
     return {
@@ -1089,6 +1332,8 @@ function activeItem(
   if (!drag) return null
   const m = machines.find((m) => m.id === drag.id)
   if (m) return { kind: 'machine', item: { ...m, x: drag.x, y: drag.y, ...(drag.rotation !== undefined && { rotation: drag.rotation }) } }
+  const forklift = forkliftInstances.find((item) => item.id === drag.id)
+  if (forklift) return { kind: 'forklift', item: { ...forklift, x: drag.x, y: drag.y } }
   const u = utilities.find((u) => u.id === drag.id)
   if (u) return { kind: 'utility', item: { ...u, x: drag.x, y: drag.y } }
   const p = pillars.find((p) => p.id === drag.id)

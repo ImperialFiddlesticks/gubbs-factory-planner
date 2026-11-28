@@ -6,44 +6,55 @@ export interface PlacementCheckResponse {
   code: string | null
 }
 
-interface ApiMachineInstance {
-  id: string
+export interface MachineInstanceDto {
   xmm: number
   ymm: number
   rotationDegrees: number
-  length?: number
+  length?: number | null
 }
 
-interface ApiMachineType {
-  name: string
+export interface MachineClearance {
+  frontMm: number
+  backMm: number
+  leftMm: number
+  rightMm: number
+}
+
+export interface MachineTypeDto {
   widthMm: number
   depthMm: number
-  clearance: {
-    frontMm: number
-    backMm: number
-    leftMm: number
-    rightMm: number
-  }
-  conveyor?: string
   powerKw: number
+  conveyor?: string | null
+  clearance: MachineClearance
   needsWater: boolean
   needsFireSuppression: boolean
 }
 
-interface ApiPlacementCheckRequest {
-  hallWidthMm: number
-  hallDepthMm: number
-  hallOutline?: { x: number; y: number }[]
-  machine: ApiMachineInstance
-  machineType: ApiMachineType
-  otherMachines: { machine: ApiMachineInstance; machineType: ApiMachineType }[]
+export interface PlacementPoint {
+  x: number
+  y: number
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:5116').replace(/\/$/, '')
+export interface PlacementCheckMachine {
+  machine: MachineInstanceDto
+  machineType: MachineTypeDto
+}
 
-function toApiMachine(machine: MachineInstance): ApiMachineInstance {
+export interface PlacementCheckRequest {
+  hallWidthMm: number
+  hallDepthMm: number
+  hallOutline?: PlacementPoint[] | null
+  otherMachines: PlacementCheckMachine[]
+  machine: MachineInstanceDto
+  machineType: MachineTypeDto
+}
+
+const API_BASE_URL = (
+  import.meta.env.VITE_API_URL ?? 'http://localhost:5116'
+).replace(/\/$/, '')
+
+function toMachineInstanceDto(machine: MachineInstance): MachineInstanceDto {
   return {
-    id: machine.id,
     xmm: machine.x,
     ymm: machine.y,
     rotationDegrees: machine.rotation,
@@ -51,20 +62,23 @@ function toApiMachine(machine: MachineInstance): ApiMachineInstance {
   }
 }
 
-function toApiMachineType(type: CatalogMachine, machine: MachineInstance): ApiMachineType {
+function toMachineTypeDto(
+  type: CatalogMachine,
+  machine: MachineInstance,
+): MachineTypeDto {
   const clearance = machine.clearance ?? type.clearance
+
   return {
-    name: type.name,
     widthMm: machine.width ?? type.width,
     depthMm: machine.depth ?? type.depth,
+    powerKw: type.powerKw,
+    ...(type.conveyor && { conveyor: type.conveyor }),
     clearance: {
       frontMm: clearance.front,
       backMm: clearance.back,
       leftMm: clearance.left,
       rightMm: clearance.right,
     },
-    ...(type.conveyor && { conveyor: type.conveyor }),
-    powerKw: type.powerKw,
     needsWater: type.needsWater,
     needsFireSuppression: type.needsFireSuppression,
   }
@@ -76,16 +90,18 @@ export async function checkPlacement(
   machineType: CatalogMachine,
   otherMachines: { machine: MachineInstance; machineType: CatalogMachine }[],
 ): Promise<PlacementCheckResponse> {
-  const request: ApiPlacementCheckRequest = {
+  const request: PlacementCheckRequest = {
     hallWidthMm: floorplan.width,
     hallDepthMm: floorplan.depth,
     ...(floorplan.outline && { hallOutline: floorplan.outline }),
-    machine: toApiMachine(machine),
-    machineType: toApiMachineType(machineType, machine),
-    otherMachines: otherMachines.map(({ machine: other, machineType: otherType }) => ({
-      machine: toApiMachine(other),
-      machineType: toApiMachineType(otherType, other),
-    })),
+    machine: toMachineInstanceDto(machine),
+    machineType: toMachineTypeDto(machineType, machine),
+    otherMachines: otherMachines.map(
+      ({ machine: other, machineType: otherType }) => ({
+        machine: toMachineInstanceDto(other),
+        machineType: toMachineTypeDto(otherType, other),
+      }),
+    ),
   }
 
   const response = await fetch(`${API_BASE_URL}/api/placement-checks`, {
@@ -100,10 +116,14 @@ export async function checkPlacement(
   }
 
   const result: unknown = await response.json()
+
   if (
-    typeof result !== 'object' || result === null ||
-    !('canPlace' in result) || typeof result.canPlace !== 'boolean' ||
-    !('code' in result) || (result.code !== null && typeof result.code !== 'string')
+    typeof result !== 'object' ||
+    result === null ||
+    !('canPlace' in result) ||
+    typeof result.canPlace !== 'boolean' ||
+    !('code' in result) ||
+    (result.code !== null && typeof result.code !== 'string')
   ) {
     throw new Error('The placement-check API returned an unexpected response.')
   }

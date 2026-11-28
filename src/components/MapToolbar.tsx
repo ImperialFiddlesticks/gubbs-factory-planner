@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Layers as LayersIcon, Lock, LockOpen, Maximize, Redo2, Ruler, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Hand, Layers as LayersIcon, Lock, LockOpen, Maximize, MousePointer2, Redo2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
@@ -10,8 +10,7 @@ import { cn } from '@/lib/utils'
 import { usePlanner } from '@/store'
 
 /**
- * Floating control bar at the bottom of the map: undo/redo, lock structures and layers.
- * Keeps the map's own controls next to the map instead of in the crowded header.
+ * Floating control bar for zoom, navigation, undo/redo, structures and layers.
  */
 export function MapToolbar({
   zoom,
@@ -20,13 +19,15 @@ export function MapToolbar({
   onFit,
   measuring,
   onToggleMeasure,
+  navigationTool,
+  onNavigationToolChange,
 }: {
   zoom: number
   onZoomIn: () => void
   onZoomOut: () => void
   onFit: () => void
-  measuring: boolean
-  onToggleMeasure: () => void
+  navigationTool: 'select' | 'hand'
+  onNavigationToolChange: (tool: 'select' | 'hand') => void
 }) {
   return (
     <TooltipProvider>
@@ -37,15 +38,39 @@ export function MapToolbar({
       >
         <UndoRedo />
         <Divider />
-        <ToolButton label="Zoom out" onClick={onZoomOut} disabled={zoom <= 1}>
+        <ToolButton
+          label="Fit to view"
+          onClick={onFit}
+          size="sm"
+          className="rounded-full bg-accent/20 px-3 text-foreground hover:bg-accent/30"
+        >
+          <Maximize />
+          <span className="text-xs">Fit</span>
+        </ToolButton>
+        <Divider />
+        <ToolButton label="Zoom out" onClick={onZoomOut} disabled={zoom <= 0.25}>
           <ZoomOut />
         </ToolButton>
         <span className="min-w-10 text-center text-[10px] tabular-nums text-muted-foreground">{Math.round(zoom * 100)}%</span>
         <ToolButton label="Zoom in" onClick={onZoomIn} disabled={zoom >= 4}>
           <ZoomIn />
         </ToolButton>
-        <ToolButton label="Fit to view" onClick={onFit}>
-          <Maximize />
+        <Divider />
+        <ToolButton
+          label="Select tool"
+          aria-pressed={navigationTool === 'select'}
+          onClick={() => onNavigationToolChange('select')}
+          className={cn(navigationTool === 'select' && 'bg-accent text-accent-foreground hover:bg-accent/90 hover:text-accent-foreground')}
+        >
+          <MousePointer2 />
+        </ToolButton>
+        <ToolButton
+          label="Hand tool"
+          aria-pressed={navigationTool === 'hand'}
+          onClick={() => onNavigationToolChange('hand')}
+          className={cn(navigationTool === 'hand' && 'bg-accent text-accent-foreground hover:bg-accent/90 hover:text-accent-foreground')}
+        >
+          <Hand />
         </ToolButton>
         <ToolButton
           label={measuring ? 'Exit measuring mode' : 'Measure distance'}
