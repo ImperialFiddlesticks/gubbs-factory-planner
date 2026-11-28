@@ -509,8 +509,8 @@ function warningGuidance(issue: LayoutIssue) {
   if (issue.key.startsWith('overload:')) return 'Reduce connected loads or update the power point capacity.'
   if (issue.key === 'no-exit') return 'Add an exit to the floor plan.'
   if (issue.key === 'no-extinguisher') return 'Place a fire extinguisher and check its configured reach.'
-  if (issue.need === 'water') return 'Place or move a water point within reach of this machine.'
-  if (issue.need === 'power') return 'Place or move a power point within reach, and check its capacity.'
+  if (issue.need === 'water') return 'Add a water point or check whether a wall blocks its connection.'
+  if (issue.need === 'power') return 'Add a power point, check for blocking walls, and review its capacity.'
   if (issue.need === 'sprinkler') return 'Place or move a sprinkler so its configured coverage reaches this machine.'
   if (issue.need === 'exit') return 'Add an exit or review the walking route and configured distance.'
   if (issue.need === 'extinguisher') return 'Place or move a fire extinguisher, and check the walking route.'
@@ -1266,19 +1266,19 @@ function UtilityProperties({ utility }: { utility: Utility }) {
         </p>
       )}
 
-      {utility.kind !== 'exit' && (
+      {(utility.kind === 'sprinkler' || utility.kind === 'extinguisher' || utility.kind === 'power') && (
         <div className="grid grid-cols-2 gap-3">
-          <Field id="utility-radius" label={utility.kind === 'extinguisher' ? 'Walking distance (m)' : 'Reach (m)'}>
-            <CommitInput
-              id="utility-radius"
-              className="h-8"
-              min={0}
-              step={0.5}
-              value={utilityRadius(utility) / 1000}
-              isValid={(m) => m > 0}
-              onCommit={(m) => updateUtility(utility.id, { radius: Math.round(m * 1000) })}
-            />
-          </Field>
+          {(utility.kind === 'sprinkler' || utility.kind === 'extinguisher') && <Field id="utility-radius" label={utility.kind === 'extinguisher' ? 'Walking distance (m)' : 'Coverage radius (m)'}>
+              <CommitInput
+                id="utility-radius"
+                className="h-8"
+                min={0}
+                step={0.5}
+                value={utilityRadius(utility) / 1000}
+                isValid={(m) => m > 0}
+                onCommit={(m) => updateUtility(utility.id, { radius: Math.round(m * 1000) })}
+              />
+            </Field>}
           {utility.kind === 'power' && (
             <Field id="utility-capacity" label="Capacity (kW)">
               <CommitInput

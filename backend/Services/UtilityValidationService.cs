@@ -32,8 +32,9 @@ internal sealed class UtilityValidationService
     private const double DirectionTolerance = 1e-6;
 
     /// <summary>
-    /// Validates utility reach and assigned power capacity. Wall blocking and walking-distance
-    /// checks are intentionally deferred to a later milestone.
+    /// Assigns power and water to the nearest source, checks sprinkler reach, and validates
+    /// assigned power capacity. Wall blocking and walking-distance checks are intentionally
+    /// deferred to a later milestone.
     /// </summary>
     internal IReadOnlyList<UtilityValidationIssue> Validate(
         IReadOnlyList<MachineInstance> machines,
@@ -137,14 +138,14 @@ internal sealed class UtilityValidationService
                 continue;
             }
 
-            var nearest = NearestReachableUtility(machine, validUtilities, UtilityPointKind.Power);
+            var nearest = NearestUtility(machine, validUtilities, UtilityPointKind.Power);
             if (nearest is null)
             {
                 issues.Add(new UtilityValidationIssue(
                     "POWER_OUT_OF_REACH",
                     new[] { machine.Machine.Id },
                     null,
-                    "Machine has no power point in reach."));
+                    "Machine has no power point to connect to."));
                 continue;
             }
 
@@ -159,7 +160,7 @@ internal sealed class UtilityValidationService
             }
 
             var nearest = run.Machines
-                .Select(machine => (Machine: machine, Utility: NearestReachableUtility(machine, validUtilities, UtilityPointKind.Power)))
+                .Select(machine => (Machine: machine, Utility: NearestUtility(machine, validUtilities, UtilityPointKind.Power)))
                 .Where(candidate => candidate.Utility is not null)
                 .OrderBy(candidate => candidate.Utility!.DistanceMm)
                 .FirstOrDefault();
@@ -169,7 +170,7 @@ internal sealed class UtilityValidationService
                     "POWER_OUT_OF_REACH",
                     run.Machines.Select(machine => machine.Machine.Id).ToArray(),
                     null,
-                    "Conveyor run has no power point in reach."));
+                    "Conveyor run has no power point to connect to."));
                 continue;
             }
 
@@ -184,23 +185,23 @@ internal sealed class UtilityValidationService
         foreach (var machine in resolved)
         {
             if (machine.Type.NeedsWater &&
-                NearestReachableUtility(machine, validUtilities, UtilityPointKind.Water) is null)
+                NearestUtility(machine, validUtilities, UtilityPointKind.Water) is null)
             {
                 issues.Add(new UtilityValidationIssue(
                     "WATER_OUT_OF_REACH",
                     new[] { machine.Machine.Id },
                     null,
-                    "Machine has no water point in reach."));
+                    "Machine has no water point to connect to."));
             }
 
             if (machine.Type.NeedsFireSuppression &&
-                NearestReachableUtility(machine, validUtilities, UtilityPointKind.Sprinkler) is null)
+                NearestUtility(machine, validUtilities, UtilityPointKind.Sprinkler) is null)
             {
                 issues.Add(new UtilityValidationIssue(
                     "SPRINKLER_OUT_OF_REACH",
                     new[] { machine.Machine.Id },
                     null,
-                    "Machine has no sprinkler in reach."));
+                    "Machine is not covered by a sprinkler."));
             }
         }
 
@@ -247,12 +248,12 @@ internal sealed class UtilityValidationService
         return true;
     }
 
-    private static ReachableUtility? NearestReachableUtility(
+    private static UtilityCandidate? NearestUtility(
         ResolvedMachine machine,
         IReadOnlyList<UtilityPoint> utilities,
         UtilityPointKind kind)
     {
-        ReachableUtility? nearest = null;
+        UtilityCandidate? nearest = null;
         foreach (var utility in utilities)
         {
             if (utility.Kind != kind)
@@ -261,10 +262,10 @@ internal sealed class UtilityValidationService
             }
 
             var distance = DistanceToMachine(utility.Xmm, utility.Ymm, machine);
-            var radius = utility.RadiusMm ?? DefaultRadiusMm(kind);
-            if (distance <= radius && (nearest is null || distance < nearest.DistanceMm))
+            var withinCoverage = kind != UtilityPointKind.Sprinkler || distance <= (utility.RadiusMm ?? DefaultRadiusMm(kind));
+            if (withinCoverage && (nearest is null || distance < nearest.DistanceMm))
             {
-                nearest = new ReachableUtility(utility, distance);
+                nearest = new UtilityCandidate(utility, distance);
             }
         }
 
@@ -273,8 +274,6 @@ internal sealed class UtilityValidationService
 
     private static double DefaultRadiusMm(UtilityPointKind kind) => kind switch
     {
-        UtilityPointKind.Power => 8000,
-        UtilityPointKind.Water => 6000,
         UtilityPointKind.Sprinkler => 3000,
         _ => 0
     };
@@ -403,7 +402,7 @@ internal sealed class UtilityValidationService
         double WidthMm,
         double DepthMm);
 
-    private sealed record ReachableUtility(UtilityPoint Utility, double DistanceMm);
+    private sealed record UtilityCandidate(UtilityPoint Utility, double DistanceMm);
 
     private sealed record ConveyorRun(IReadOnlyList<ResolvedMachine> Machines, double PowerKw);
 

@@ -82,14 +82,14 @@ public sealed class TruckLogisticsValidationService
                 Add(issues, station.Id, station.Kind == "charging" ? "ChargerPowerKw" : "PowerDemandKw", "The station needs a finite, positive power demand in kW.");
             if (needsPower)
             {
-                var powerPoint = NearestReachableUtility(station, "power", layout);
+                var powerPoint = NearestAvailableUtility(station, "power", layout);
                 if (powerPoint is null)
-                    Add(issues, station.Id, "PowerReach", "The station has no power point in reach.");
+                    Add(issues, station.Id, "PowerReach", "The station has no power point to connect to.");
                 else if (demand is > 0 && double.IsFinite(demand.Value) && double.IsFinite(station.ServiceCapacity) && station.ServiceCapacity > 0)
                     powerLoads[powerPoint.Id] = powerLoads.GetValueOrDefault(powerPoint.Id) + demand.Value * station.ServiceCapacity;
             }
-            if (station.Kind == "battery-watering" && NearestReachableUtility(station, "water", layout) is null)
-                Add(issues, station.Id, "WaterReach", "The battery-watering station has no water point in reach.");
+            if (station.Kind == "battery-watering" && NearestAvailableUtility(station, "water", layout) is null)
+                Add(issues, station.Id, "WaterReach", "The battery-watering station has no water point to connect to.");
             if (station.Kind is not ("charging" or "battery-watering"))
                 Add(issues, station.Id, "Kind", "The service station kind is not supported.");
         }
@@ -98,7 +98,7 @@ public sealed class TruckLogisticsValidationService
         {
             var point = utilities[utilityId];
             if (point.CapacityKw is not double capacity || !double.IsFinite(capacity))
-                Add(issues, utilityId, "CapacityKw", "The reachable power point needs a configured capacity in kW.");
+                Add(issues, utilityId, "CapacityKw", "The assigned power point needs a configured capacity in kW.");
             else if (load > capacity + Epsilon)
                 Add(issues, utilityId, "CapacityKw", $"Automatically assigned charging stations require {load} kW but the power point provides {capacity} kW.");
         }
@@ -261,20 +261,17 @@ public sealed class TruckLogisticsValidationService
         return issues;
     }
 
-    private static TruckLogisticsUtilityPoint? NearestReachableUtility(TruckServiceStation station, string kind, TruckLogisticsLayout layout)
+    private static TruckLogisticsUtilityPoint? NearestAvailableUtility(TruckServiceStation station, string kind, TruckLogisticsLayout layout)
     {
         var stationPoint = new TruckLogisticsPoint(station.Xmm, station.Ymm);
-        var defaultRadius = kind == "power" ? 8000d : 6000d;
         return layout.Utilities
             .Where(point => point.Kind == kind && Finite(new TruckLogisticsPoint(point.Xmm, point.Ymm)))
             .Select(point => new
             {
                 Point = point,
-                Distance = Distance(stationPoint, new TruckLogisticsPoint(point.Xmm, point.Ymm)),
-                Radius = defaultRadius
+                Distance = Distance(stationPoint, new TruckLogisticsPoint(point.Xmm, point.Ymm))
             })
-            .Where(candidate => double.IsFinite(candidate.Radius) && candidate.Radius >= 0 && candidate.Distance <= candidate.Radius &&
-                !UtilityLineBlocked(stationPoint, new TruckLogisticsPoint(candidate.Point.Xmm, candidate.Point.Ymm), layout.Walls))
+            .Where(candidate => !UtilityLineBlocked(stationPoint, new TruckLogisticsPoint(candidate.Point.Xmm, candidate.Point.Ymm), layout.Walls))
             .OrderBy(candidate => candidate.Distance)
             .Select(candidate => candidate.Point)
             .FirstOrDefault();

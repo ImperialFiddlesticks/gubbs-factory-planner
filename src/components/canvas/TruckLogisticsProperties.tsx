@@ -205,7 +205,7 @@ function AutomaticUtilityStatus({ stationId, kind, stations, machines, utilities
   }))
   const line = batteryApplicable ? supplyLines(machines, utilities, kind, walls, stations, truckTypes).find((item) => item.servedIds.includes(stationId)) : undefined
   const utility = utilities.find((item) => item.id === line?.utilityId)
-  const message = !batteryApplicable ? 'Assign a forklift with a matching battery type to require water routing.' : utility ? `Automatically routed to ${kind} point ${utility.id.slice(0, 6)}.` : `No ${kind} point is currently in reach.`
+  const message = !batteryApplicable ? 'Assign a forklift with a matching battery type to require water routing.' : utility ? `Automatically connected to nearest ${kind} point ${utility.id.slice(0, 6)}.` : `No connectable ${kind} point is available; check for blocking walls.`
   return <div className="text-xs text-muted-foreground" role="status">{message}</div>
 }
 

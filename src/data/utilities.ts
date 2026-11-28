@@ -20,7 +20,6 @@ export const UTILITY_KINDS: Record<UtilityKind, UtilityKindInfo> = {
   power: {
     kind: 'power',
     name: 'Power point',
-    defaultRadius: 8000,
     defaultCapacityKw: 63,
     colour: COLORS.yellowDark,
     // lucide "zap"
@@ -30,7 +29,6 @@ export const UTILITY_KINDS: Record<UtilityKind, UtilityKindInfo> = {
   water: {
     kind: 'water',
     name: 'Water point',
-    defaultRadius: 6000,
     colour: COLORS.cyan,
     // lucide "droplet"
     iconPath:
