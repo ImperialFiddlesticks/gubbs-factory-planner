@@ -45,7 +45,7 @@ import { EXIT_MAX_DISTANCE, UTILITY_LIST, type UtilityKindInfo } from '@/data/ut
 import { playSound } from '@/lib/sound'
 import { cn } from '@/lib/utils'
 import { usePlanner } from '@/store'
-import { COLORS, mixColours } from '@/theme'
+import { CANVAS, COLORS, mixColours } from '@/theme'
 import type { MachineType } from '@/types'
 
 const metres = (mm: number) => `${mm / 1000}`
@@ -715,7 +715,7 @@ function WallItem() {
     >
       {/* Mini wall bar, matching the wall on the canvas. */}
       <span className="flex size-7 shrink-0 items-center" aria-hidden>
-        <span className="h-1.5 w-full rounded-[1px] bg-(--saab-charcoal) ring-1 ring-(--saab-grey-500)" />
+        <span className="h-1.5 w-full rounded-xs" style={{ backgroundColor: CANVAS.wallFill, boxShadow: `0 0 0 1px ${CANVAS.wallStroke}` }} />
       </span>
       <span>
         <span className="block text-sm font-medium">Wall</span>

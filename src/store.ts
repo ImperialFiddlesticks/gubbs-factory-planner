@@ -5,6 +5,7 @@ import type { EquipmentCategoryId } from '@/data/categories'
 import { DEFAULT_CONVEYOR_LENGTH } from '@/data/conveyors'
 import { DEFAULT_FACTORY_HEIGHT_MM } from '@/data/defaults'
 import { DEFAULT_HEIGHT_LIMIT, ZONE_KINDS } from '@/data/zones'
+import { demoProjects } from '@/data/demoProjects'
 import { exampleWorkshop } from '@/data/exampleWorkshop'
 import { DEFAULT_LAYERS, UTILITY_LAYER, utilityVisible, type LayerId } from '@/data/layers'
 import { DEFAULT_SHAPES, type FloorShape } from '@/lib/floorShapes'
@@ -247,6 +248,8 @@ export interface PlannerState {
   importProject: (project: Project) => void
   /** Open a fresh copy of the example workshop as a new project. */
   openExample: () => void
+  /** Add the demo video's projects (Workshop 3: Monday, Option B, Friday) and open Monday. */
+  loadDemoProjects: () => void
   /** Show the compare page / go back to the planner. */
   openCompare: () => void
   closeCompare: () => void
@@ -460,6 +463,11 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
     const s = get()
     const names = [...(s.floorplan ? [s.floorplan.name] : []), ...s.projects.map((p) => p.floorplan.name)]
     s.importProject(exampleWorkshop(names))
+  },
+
+  // Each import keeps the open project and opens the new one; Monday comes last, so it is open.
+  loadDemoProjects: () => {
+    for (const project of demoProjects()) get().importProject(project)
   },
 
   openCompare: () => set((s) => (s.floorplan ? { screen: 'compare', placing: null } : s)),

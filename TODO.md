@@ -2,6 +2,35 @@
 
 Work through one item at a time. Tick items off as they are done.
 
+## Demo video: "Friday at Ten" (decided 2026-11-28, due 16:30)
+
+English voice-over over screen captures, recorded scene by scene. Focus: simplicity, safety, iteration. About 5:00; the last ~20 s are a Lovable 3D teaser.
+
+| Time | Scene | Shows |
+|---|---|---|
+| 0:00–0:20 | Cold open: e-mail card, Monday 07:42, Erik: two new assembly jigs must fit into Workshop 3, layout Friday 10:00. | (video editor) |
+| 0:20–0:35 | Act 1: "The old way: CAD models, consultants, weeks." Victoria opens "Workshop 3 – Monday": goal 18 / 19, legend "All checks pass". | look, legend |
+| 0:35–1:05 | Build mode: Machines tab → Assembly filter → hovers the large jig; info card (6 × 3 m, 3.5 m, 3 people, counts toward goal). | tabs, filter, info card |
+| 1:05–1:30 | Drop: thunk + dust; lands on a bench, which shakes red with a buzz; legend "1 check flagged". Box-select the benches, slide them away; undo / redo. | juice, live checks, iteration |
+| 1:30–1:50 | Twist 1: jig 2 touches the Main aisle → aisle warning; measure the gap with the ruler. | aisle zone, measure |
+| 1:50–2:10 | Twist 2: draw a 3.0 m height limit (crane runway); the 3.5 m jig shakes red. | height zones |
+| 2:10–2:30 | Twist 3: exit-routes layer on; squeezing near the office cuts it off from its exit. | safety layer |
+| 2:30–2:55 | Breakthrough: move the QC table, place jig 2, a belt snaps on (click) and the table turns to face it; work text, people, colour; labels stay upright. | conveyors, station details |
+| 2:55–3:25 | Wednesday (open "Workshop 3 – Friday"): blue chat bubble on J2's corner from Magnus (maintenance): "J2 sticks into the main aisle – our forklifts need the full width." Nudge J2 0.25 m down; Mark as resolved (ding, mint). | chat bubbles |
+| 3:25–4:05 | Thursday: Option B ("keep the pallets inside") vs A in Compare; A wins: 0 vs 13 warnings, B cuts the office off from its exit. | compare |
+| 4:05–4:25 | Friday 10:00: goal 19 / 19 with no warnings, confetti + fanfare (fires at the nudge above; cut it in here). | goal |
+| 4:25–4:40 | Close: "Simple. Safe. Iterative. From Monday's e-mail to Friday's decision." | (video editor) |
+| 4:40–5:00 | Teaser: "Next: walk through it in 3D" with a short Lovable 3D clip. | (video editor) |
+
+Preparation:
+- [x] 1. Demo layouts (`src/data/demoProjects.ts`), loaded with one click ("Load demo projects (Workshop 3)" in the project menu, and a small link on the welcome page). Decided trade-off: the workshop is full, so the two jigs replace the pre-assembly table and the pallet spots move out to an outdoor loading bay at the folding door. Goal 19 stations.
+  - "Workshop 3 – Monday": the example workshop, 0 warnings, 18 / 19.
+  - "Workshop 3 – Friday": J2 large jig (6 × 3 m, 3.5 m) in the middle of Zone 4 where the tables were; J3 small jig at the top of Zone 5, a 1.5 m belt down to the QC table; a new power point; the 3.0 m crane runway over Zone 5; loading dock + outdoor pallet bay. One warning: J2 is 0.25 m into the main aisle (Magnus's open comment); moving it down clears it and reaches the goal.
+  - "Workshop 3 – Option B": same jigs, pallets kept inside along the bottom wall, QC table by the office door: 13 warnings, the office has no route to an exit.
+  - Rule fix found on the way: conveyor belts no longer need their own walking route to an exit or extinguisher (nobody works at a belt; a belt linked between two machines has no free corner), also left out of the compare table's longest walk.
+- [ ] 2. Twist check script: confirm each scripted spot triggers its warning in the Monday layout, and list the exact positions to aim for while recording.
+- [ ] 3. Cards (e-mail, old way, close) and the Lovable 3D clip: in the video editor.
+
 ## Setup wizard
 
 Full-page steps, IKEA-planner style: Welcome → New vs. existing → Equipment → Stations → Floor shape → Planner.
@@ -132,7 +161,7 @@ Decided: a zone is selected and moved by its name tag (dragging elsewhere inside
 
 ### View and measure (kickoff: "pan, zoom", "measure between points")
 - Zoom (scroll, +/− in the map toolbar, zoom level, fit-to-screen) and pan (drag with Space held or the middle mouse button).
-- Measure tool: click two points to see the distance; snaps to item edges and corners. Optionally the area of a rectangle.
+- Measure tool: click two points to see the distance; snaps to item edges and corners. Optionally the area of a rectangle. (A distance tool with a ruler button in the map toolbar is on master, PR #35, by teammates; edge snapping and area not checked.)
 - Dimension rulers along the floor edges.
 
 ### Drawing underlay (kickoff: "start from a 2D drawing of the building")
@@ -191,7 +220,7 @@ Inspiration (Factory Runs screenshot): light, schematic look instead of solid bl
 
 ### Fun
 - Layout score: a live grade (S/A/B/…) in the top bar from warnings, floor-space use, walking and flow distances; tells you what would raise it.
-- Juice and sound: soft "thunk" on placing, a click when conveyors snap, a small wobble on a clash, a chime when the goal is reached; a mute toggle.
+- [x] Juice and sound: soft "thunk" on placing, a click when conveyors snap, a small wobble on a clash, a chime when the goal is reached; a mute toggle (done in Design rework step 5).
 - Achievements: small badges with the confetti, e.g. "Zero warnings", "Fire marshal" (every machine within 15 m of an exit), "Lean line" (one continuous conveyor run).
 
 ### Bonus (only if there's time)

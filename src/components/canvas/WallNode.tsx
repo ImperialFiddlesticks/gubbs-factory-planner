@@ -103,7 +103,7 @@ export function WallBody({
         ? CANVAS.selected
         : outline === 'valid'
           ? CANVAS.valid
-          : CANVAS.wallFill
+          : CANVAS.wallStroke
 
   return (
     <>

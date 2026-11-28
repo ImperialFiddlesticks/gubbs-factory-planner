@@ -12,6 +12,7 @@ const HIGHLIGHTS = [
 export function WelcomeScreen() {
   const startSetup = usePlanner((s) => s.startSetup)
   const openExample = usePlanner((s) => s.openExample)
+  const loadDemoProjects = usePlanner((s) => s.loadDemoProjects)
 
   return (
     <div className="theme-chrome flex h-screen flex-col">
@@ -47,6 +48,13 @@ export function WelcomeScreen() {
                 <Factory /> Open an example workshop
               </Button>
             </div>
+            <button
+              type="button"
+              onClick={loadDemoProjects}
+              className="mt-3 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              Load the demo projects (Workshop 3)
+            </button>
 
             <ul className="mt-12 grid gap-6 sm:grid-cols-3">
               {HIGHLIGHTS.map(({ icon: Icon, title, text }) => (
