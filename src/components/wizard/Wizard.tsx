@@ -49,6 +49,7 @@ const STEPS: StepDef[] = [
     content: <FloorShapeStep />,
     isValid: (s) =>
       s.floorName.trim() !== '' &&
+      s.floorShapeSelected &&
       shapeError(s.floorShape) === null &&
       pillarGridError(s.pillarGrid) === null,
   },

@@ -756,9 +756,10 @@ function LoadingBayItem() {
   const docks = usePlanner((s) => s.loadingDocks)
   const placing = usePlanner((s) => s.placing)
   const startPlacing = usePlanner((s) => s.startPlacingLoadingBay)
-  const [dockId, setDockId] = useState(docks[0]?.id ?? '')
-  const selectedDockId = docks.some((dock) => dock.id === dockId) ? dockId : (docks[0]?.id ?? '')
-  const active = placing?.kind === 'loadingBay' && placing.loadingDockId === selectedDockId
+  const [dockId, setDockId] = useState('')
+  const selectedDockId = docks.some((dock) => dock.id === dockId) ? dockId : ''
+  const [drawMode, setDrawMode] = useState<'rectangle' | 'polygon'>('rectangle')
+  const active = placing?.kind === 'loadingBay' && placing.loadingDockId === (selectedDockId || undefined) && placing.drawMode === drawMode
 
   return (
     <div className={cn(cardClass, 'space-y-2', active && activeClass)}>
@@ -766,25 +767,27 @@ function LoadingBayItem() {
         <Truck className="size-5 shrink-0 text-emerald-600" aria-hidden />
         <span className="text-sm font-medium">Loading bay</span>
       </div>
-      {docks.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Add a loading dock before creating its outdoor bay.</p>
-      ) : (
-        <>
-          <label className="sr-only" htmlFor="loading-bay-dock">Connected loading dock</label>
-          <select
-            id="loading-bay-dock"
-            value={selectedDockId}
-            onChange={(event) => setDockId(event.target.value)}
-            className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
-          >
-            {docks.map((dock) => <option key={dock.id} value={dock.id}>{dock.name}</option>)}
-          </select>
-          <button type="button" aria-pressed={active} onClick={() => startPlacing(selectedDockId)} className={cn(cardClass, 'py-2')}>
-            <span className="block text-xs text-muted-foreground">Click outline vertices; click the first point to finish.</span>
-            {active && <Badge className="mt-1">Drawing bay</Badge>}
+      <div className="grid grid-cols-2 gap-1 rounded-md bg-muted p-1">
+        {(['rectangle', 'polygon'] as const).map((mode) => (
+          <button key={mode} type="button" aria-pressed={drawMode === mode} onClick={() => setDrawMode(mode)} className={cn('rounded px-2 py-1 text-xs capitalize', drawMode === mode ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground')}>
+            {mode === 'polygon' ? 'Custom shape' : mode}
           </button>
-        </>
-      )}
+        ))}
+      </div>
+      <label className="sr-only" htmlFor="loading-bay-dock">Optional connected loading dock</label>
+      <select
+        id="loading-bay-dock"
+        value={selectedDockId}
+        onChange={(event) => setDockId(event.target.value)}
+        className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+      >
+        <option value="">No connected dock</option>
+        {docks.map((dock) => <option key={dock.id} value={dock.id}>{dock.name}</option>)}
+      </select>
+      <button type="button" aria-pressed={active} onClick={() => startPlacing(selectedDockId || undefined, drawMode)} className={cn(cardClass, 'py-2')}>
+        <span className="block text-xs text-muted-foreground">{drawMode === 'rectangle' ? 'Press and drag to draw an outdoor rectangle.' : 'Click outline corners, then press Enter to finish.'}</span>
+        {active && <Badge className="mt-1">Drawing bay</Badge>}
+      </button>
     </div>
   )
 }
