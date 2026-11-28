@@ -51,11 +51,9 @@ import type { Floorplan, ForkliftInstance, LoadingBay, LoadingDock, MachineInsta
 
 interface FloorCanvasProps {
   floorplan: Floorplan | null
-  onboardingMessage: string | null
-  onSkipOnboarding: () => void
 }
 
-export function FloorCanvas({ floorplan, onboardingMessage, onSkipOnboarding }: FloorCanvasProps) {
+export function FloorCanvas({ floorplan }: FloorCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const size = useElementSize(containerRef)
   const placing = usePlanner((s) => s.placing)
@@ -64,27 +62,12 @@ export function FloorCanvas({ floorplan, onboardingMessage, onSkipOnboarding }: 
   return (
     <main
       ref={containerRef}
+      data-guide-target="floor"
       className="planner-canvas relative min-h-0 min-w-0 overflow-hidden"
       style={{ backgroundColor: CANVAS.background }}
     >
       {floorplan && size.width > 0 && <FloorStage key={floorplan.id} floorplan={floorplan} size={size} onPlacementError={(message) => { if (placing) setPlacementError({ placing, message }) }} />}
       <PlacingHint error={placementError?.placing === placing ? placementError.message : null} />
-      {onboardingMessage && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="theme-chrome pointer-events-auto absolute top-4 left-1/2 z-50 flex w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 items-start justify-between gap-4 rounded-md border bg-background/95 p-3 shadow-lg backdrop-blur max-[579px]:top-20"
-        >
-          <p className="text-sm leading-relaxed">{onboardingMessage}</p>
-          <button
-            type="button"
-            onClick={onSkipOnboarding}
-            className="shrink-0 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-          >
-            Skip
-          </button>
-        </div>
-      )}
     </main>
   )
 }

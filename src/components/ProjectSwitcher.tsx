@@ -114,6 +114,7 @@ export function ProjectSwitcher({ onNewProject }: { onNewProject: () => void }) 
       <PopoverTrigger asChild>
         <button
           type="button"
+          data-guide-target="projects"
           className="flex min-w-0 items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label={`Project: ${floorplan.name}. Open projects menu`}
         >
