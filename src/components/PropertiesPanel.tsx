@@ -55,11 +55,12 @@ export function PropertiesPanel({
   const pedestrianCrossings = usePlanner((s) => s.pedestrianCrossings)
   const safetyBarriers = usePlanner((s) => s.safetyBarriers)
   const loadingBays = usePlanner((s) => s.loadingBays)
+  const loadingDocks = usePlanner((s) => s.loadingDocks)
   const selectedCount = usePlanner((s) => s.selectedIds.length)
   const selectedMachine = usePlanner((s) =>
     s.selectedIds.length === 1 ? s.machines.find((machine) => machine.id === s.selectedId) : undefined,
   )
-  const logisticsIssues = useMemo(() => findTruckLogisticsIssues({ truckTypes, utilities, parkingSpots, serviceStations, truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines, pillars, walls, loadingBays, floorplan }), [truckTypes, utilities, parkingSpots, serviceStations, truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines, pillars, walls, loadingBays, floorplan])
+  const logisticsIssues = useMemo(() => findTruckLogisticsIssues({ truckTypes, utilities, parkingSpots, serviceStations, truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines, pillars, walls, loadingBays, loadingDocks, floorplan }), [truckTypes, utilities, parkingSpots, serviceStations, truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines, pillars, walls, loadingBays, loadingDocks, floorplan])
   const issues = useMemo(
     () => (floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls, zones }, serviceStations, truckTypes) : []),
     [machines, utilities, floorplan, pillars, walls, zones, serviceStations, truckTypes],
@@ -1536,4 +1537,3 @@ function PropertyValue({ label, value }: { label: string; value: string }) {
 function formatMetres(mm: number) {
   return String(Number((mm / 1000).toFixed(2)))
 }
-

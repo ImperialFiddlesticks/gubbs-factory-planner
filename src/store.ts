@@ -15,8 +15,11 @@ import { UTILITY_KINDS } from '@/data/utilities'
 import { autosave } from '@/lib/autosave'
 import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
+
+/** Default lane width for an access road from outside (lorry lane), mm. */
+export const ACCESS_ROAD_WIDTH_MM = 3500
 import type { Floorplan, ForkliftInstance, LayoutComment, LoadingBay, LoadingDock, MachineInstance, PedestrianCrossing, PedestrianRoute, Pillar, Point, Rotation, SafetyBarrier, TruckParkingSpot, TruckRoute, TruckServiceKind, TruckServiceStation, TruckType, Utility, UtilityKind, Wall, Zone, ZoneKind } from '@/types'
-import { DEFAULT_BARRIER_THICKNESS_MM, DEFAULT_FORKLIFT_ROUTE_WIDTH_MM, DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM, GENERATED_BARRIER_CLEARANCE_MM, crossingPlacementAt, distanceAlongPath, parallelRoutePoints } from '@/lib/truckLogistics'
+import { DEFAULT_BARRIER_THICKNESS_MM, DEFAULT_FORKLIFT_ROUTE_WIDTH_MM, DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM, GENERATED_BARRIER_CLEARANCE_MM, clipAccessRoad, crossingPlacementAt, distanceAlongPath, parallelRoutePoints } from '@/lib/truckLogistics'
 import { DEFAULT_LOADING_DOCK_DEPTH_MM, DEFAULT_LOADING_DOCK_HEIGHT_MM, DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockIssue, loadingDockPerimeter, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
 import { loadingBayIssue } from '@/lib/loadingBays'
 
@@ -35,7 +38,7 @@ export type Placing =
   | { kind: 'loadingDock' }
   | { kind: 'loadingBay'; loadingDockId?: string; drawMode: 'rectangle' | 'polygon'; start: Point | null; outline: Point[] }
   | { kind: 'logistics-rectangle'; logisticsKind: 'parking'; start: Point | null }
-  | { kind: 'logistics-path'; logisticsKind: 'truck-route' | 'pedestrian-route' | 'barrier'; points: Point[] }
+  | { kind: 'logistics-path'; logisticsKind: 'truck-route' | 'access-road' | 'pedestrian-route' | 'barrier'; points: Point[] }
   | { kind: 'logistics-point'; logisticsKind: 'charging' | 'battery-watering' | 'crossing' }
   | { kind: 'barrier-clearance'; barrierId: string; outline: Point[] }
 
@@ -222,11 +225,11 @@ export interface PlannerState {
   rotateForkliftInstance: (id: string) => void
   updateTruckType: (id: string, patch: Partial<Omit<TruckType, 'id'>>) => void
   removeTruckType: (id: string) => void
-  startPlacingLogistics: (kind: 'parking' | 'truck-route' | 'pedestrian-route' | 'barrier' | TruckServiceKind | 'crossing') => void
+  startPlacingLogistics: (kind: 'parking' | 'truck-route' | 'access-road' | 'pedestrian-route' | 'barrier' | TruckServiceKind | 'crossing') => void
   setLogisticsRectangleStart: (start: Point | null) => void
   addLogisticsRectangle: (start: Point, end: Point) => boolean
   setLogisticsPoints: (points: Point[]) => void
-  addLogisticsPath: (kind: 'truck-route' | 'pedestrian-route' | 'barrier', points: Point[]) => boolean
+  addLogisticsPath: (kind: 'truck-route' | 'access-road' | 'pedestrian-route' | 'barrier', points: Point[]) => boolean
   addLogisticsPoint: (kind: TruckServiceKind | 'crossing', point: Point, truckRouteId?: string) => boolean
   addParallelPedestrianRoute: (truckRouteId: string, side: 'left' | 'right' | 'both', offsetMm: number, usableWidthMm: number) => boolean
   startPlacingBarrierKeepClear: (barrierId: string) => void
@@ -871,7 +874,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
     ? { placing: null }
     : { placing: kind === 'parking'
       ? { kind: 'logistics-rectangle', logisticsKind: 'parking', start: null }
-      : kind === 'truck-route' || kind === 'pedestrian-route' || kind === 'barrier'
+      : kind === 'truck-route' || kind === 'access-road' || kind === 'pedestrian-route' || kind === 'barrier'
         ? { kind: 'logistics-path', logisticsKind: kind, points: [] }
         : { kind: 'logistics-point', logisticsKind: kind }, ...selection([]) }),
   setLogisticsRectangleStart: (start) => set((s) => s.placing?.kind === 'logistics-rectangle' ? { placing: { ...s.placing, start: start ? roundPoint(start) : null } } : s),
@@ -899,8 +902,16 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
     if (points.length < 2 || points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return false
     const id = crypto.randomUUID()
     set((s) => {
+      if (kind === 'access-road') {
+        const clipped = s.floorplan ? clipAccessRoad(points, s.floorplan) : points
+        if (!clipped) return { placing: null }
+        points = clipped
+        const count = s.truckRoutes.filter((r) => r.access).length
+        const item: TruckRoute = { id, name: `Access road ${count + 1}`, points: points.map(roundPoint), usableWidthMm: ACCESS_ROAD_WIDTH_MM, allowedTruckTypeIds: [], direction: 'two-way', access: true }
+        return { truckRoutes: [...s.truckRoutes, item], ...selection([id]), placing: null }
+      }
       if (kind === 'truck-route') {
-        const item: TruckRoute = { id, name: `Forklift route ${s.truckRoutes.length + 1}`, points: points.map(roundPoint), usableWidthMm: DEFAULT_FORKLIFT_ROUTE_WIDTH_MM, allowedTruckTypeIds: [], direction: 'two-way' }
+        const item: TruckRoute = { id, name: `Forklift route ${s.truckRoutes.filter((r) => !r.access).length + 1}`, points: points.map(roundPoint), usableWidthMm: DEFAULT_FORKLIFT_ROUTE_WIDTH_MM, allowedTruckTypeIds: [], direction: 'two-way' }
         return { truckRoutes: [...s.truckRoutes, item], ...selection([id]), placing: null }
       }
       if (kind === 'pedestrian-route') {

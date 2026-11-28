@@ -1,3 +1,5 @@
+import { ACCESS_ROAD_WIDTH_MM } from '@/store'
+import { ACCESS_ROAD_COLOUR } from '@/components/canvas/TruckLogisticsNodes'
 import { useEffect, useRef, useState } from 'react'
 import type Konva from 'konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
@@ -44,6 +46,7 @@ import { useElementSize } from '@/lib/useElementSize'
 import { markPlaced, wobble } from '@/lib/animations'
 import { CommentBubble } from '@/components/CommentBubble'
 import { MapLegend } from '@/components/MapLegend'
+import { SupplyChainOverlay } from '@/components/canvas/SupplyChainOverlay'
 import { playSound } from '@/lib/sound'
 import { usePlanner, type Placing, type PlannerState } from '@/store'
 import { CANVAS, CANVAS_FONT } from '@/theme'
@@ -80,7 +83,7 @@ function placingName(p: Placing) {
   if (p.kind === 'zone') return ZONE_KINDS[p.zoneKind].name
   if (p.kind === 'loadingDock') return 'Loading dock'
   if (p.kind === 'loadingBay') return 'Loading bay'
-  if (p.kind === 'logistics-path') return p.logisticsKind === 'truck-route' ? 'forklift route' : p.logisticsKind === 'pedestrian-route' ? 'pedestrian route' : 'safety barrier'
+  if (p.kind === 'logistics-path') return p.logisticsKind === 'truck-route' ? 'forklift route' : p.logisticsKind === 'access-road' ? 'access road' : p.logisticsKind === 'pedestrian-route' ? 'pedestrian route' : 'safety barrier'
   if (p.kind === 'logistics-rectangle') return 'forklift parking spot'
   if (p.kind === 'barrier-clearance') return 'protected keep-clear area'
   if (p.kind === 'logistics-point') return p.logisticsKind === 'crossing' ? 'pedestrian crossing' : `${p.logisticsKind.replaceAll('-', ' ')} station`
@@ -453,7 +456,7 @@ function FloorStage({
   const logisticsIssues = findTruckLogisticsIssues({
     truckTypes: availableTruckTypes, utilities: liveUtilities, parkingSpots: truckParkingSpots, serviceStations: truckServiceStations,
     truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines: liveMachines,
-    forkliftInstances: liveForkliftInstances, pillars: livePillars, walls: liveWalls, loadingBays: liveLoadingBays, floorplan,
+    forkliftInstances: liveForkliftInstances, pillars: livePillars, walls: liveWalls, loadingBays: liveLoadingBays, loadingDocks: liveLoadingDocks, floorplan,
   })
   const invalidForkliftIds = new Set(logisticsIssues.filter((item) => item.key.startsWith('forklift-') || item.key.startsWith('route-instance-fit:')).flatMap((item) => item.ids))
   const barrierMachineIds = new Set(logisticsIssues.filter((item) => item.key.startsWith('barrier-machine:')).flatMap((item) => item.ids))
@@ -879,7 +882,7 @@ function FloorStage({
           interactive={!placing && !panningEnabled && !commentDraft}
         />
         {placing?.kind === 'logistics-path' && placing.points.length > 0 && pointer && (
-          <Line points={[...placing.points.flatMap((point) => [point.x * SCALE, point.y * SCALE]), pointer.x * SCALE, pointer.y * SCALE]} stroke={placing.logisticsKind === 'truck-route' ? '#e87924' : placing.logisticsKind === 'pedestrian-route' ? '#8b5cf6' : '#374151'} strokeWidth={(placing.logisticsKind === 'truck-route' ? DEFAULT_FORKLIFT_ROUTE_WIDTH_MM : placing.logisticsKind === 'pedestrian-route' ? DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM : DEFAULT_BARRIER_THICKNESS_MM) * SCALE} opacity={0.65} lineCap="round" lineJoin="round" dash={placing.logisticsKind === 'barrier' ? [10 / fit, 5 / fit] : undefined} listening={false} />
+          <Line points={[...placing.points.flatMap((point) => [point.x * SCALE, point.y * SCALE]), pointer.x * SCALE, pointer.y * SCALE]} stroke={placing.logisticsKind === 'access-road' ? ACCESS_ROAD_COLOUR : placing.logisticsKind === 'truck-route' ? '#e87924' : placing.logisticsKind === 'pedestrian-route' ? '#8b5cf6' : '#374151'} strokeWidth={(placing.logisticsKind === 'access-road' ? ACCESS_ROAD_WIDTH_MM : placing.logisticsKind === 'truck-route' ? DEFAULT_FORKLIFT_ROUTE_WIDTH_MM : placing.logisticsKind === 'pedestrian-route' ? DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM : DEFAULT_BARRIER_THICKNESS_MM) * SCALE} opacity={0.65} lineCap="round" lineJoin="round" dash={placing.logisticsKind === 'barrier' ? [10 / fit, 5 / fit] : undefined} listening={false} />
         )}
         {placing?.kind === 'logistics-rectangle' && placing.start && pointer && <ParkingRectangleGhost start={placing.start} end={pointer} fit={fit} />}
         {placing?.kind === 'barrier-clearance' && placing.outline.length > 0 && pointer && <Line points={[...placing.outline.flatMap((point) => [point.x * SCALE, point.y * SCALE]), pointer.x * SCALE, pointer.y * SCALE]} closed={placing.outline.length >= 3} fill={placing.outline.length >= 3 ? '#dc262622' : undefined} stroke="#dc2626" strokeWidth={2 / fit} dash={[8 / fit, 5 / fit]} listening={false} />}
@@ -956,6 +959,8 @@ function FloorStage({
               onDrag={setDrag}
             />
           ))}
+
+        <SupplyChainOverlay machines={liveMachines.filter((m) => m.id !== GHOST_ID)} />
 
         {/* Free conveyor ends, where a run can continue (includes the piece being moved), */}
         {/* and free machine fronts while a conveyor piece is being moved. */}

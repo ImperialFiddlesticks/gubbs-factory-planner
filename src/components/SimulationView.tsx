@@ -6,6 +6,7 @@ import { bodyRect, boxToRect, pillarBox, rectCorners, wallBox } from '@/lib/geom
 import { flowPaths, flowPosition, trafficCells, type FlowKind } from '@/lib/simulation'
 import { crossingPoints } from '@/lib/truckLogistics'
 import { usePlanner } from '@/store'
+import { WorkerView } from '@/components/WorkerView'
 import type { Floorplan, Point } from '@/types'
 
 const colors: Record<FlowKind, string> = { material: '#f4a83b', worker: '#2ce0bd', truck: '#5ca7ff' }
@@ -27,6 +28,7 @@ export function SimulationView({ floor, onClose }: { floor: Floorplan; onClose: 
   const [threeD, setThreeD] = useState(true)
   const [camera, setCamera] = useState({ angle: -0.55, tilt: 0.55, zoom: 1 })
   const [reset, setReset] = useState(0)
+  const [workerMode, setWorkerMode] = useState(false)
 
   const paths = useMemo(() => flowPaths(machines, workers, trucks), [machines, workers, trucks])
   const crossings = useMemo(() => trucks.flatMap((truck) => workers.flatMap((worker) => crossingPoints(truck, worker))), [trucks, workers])
@@ -37,9 +39,9 @@ export function SimulationView({ floor, onClose }: { floor: Floorplan; onClose: 
       const type = machineTypeFor(machine)
       return type ? [{ corners: rectCorners(bodyRect(type, machine)), height: machine.height ?? type.height ?? 1000, color: machine.colour ?? (type.conveyor ? '#b8874d' : '#668ab5') }] : []
     }),
-    ...walls.map((wall) => ({ corners: rectCorners(boxToRect(wallBox(wall))), height: 3000, color: '#667582' })),
-    ...pillars.map((pillar) => ({ corners: rectCorners(boxToRect(pillarBox(pillar))), height: 3000, color: '#8293a1' })),
-  ], [machines, walls, pillars])
+    ...walls.map((wall) => ({ corners: rectCorners(boxToRect(wallBox(wall))), height: floor.height ?? 3000, color: '#667582' })),
+    ...pillars.map((pillar) => ({ corners: rectCorners(boxToRect(pillarBox(pillar))), height: floor.height ?? 3000, color: '#8293a1' })),
+  ], [machines, walls, pillars, floor.height])
 
   useEffect(() => { dialog.current?.showModal() }, [])
 
@@ -50,6 +52,8 @@ export function SimulationView({ floor, onClose }: { floor: Floorplan; onClose: 
     const outline = floorCorners(floor)
     let frame = 0
     let last: number | undefined
+    let project3d: (p: Point, z?: number) => { x: number; y: number } = (p) => p
+    let scaleNow = 0.01
 
     function render() {
       if (!element || !ctx) return
@@ -78,6 +82,8 @@ export function SimulationView({ floor, onClose }: { floor: Floorplan; onClose: 
         x: width / 2 + ((p.x - floor.width / 2) * c - (p.y - floor.depth / 2) * s) * scale,
         y: height / 2 + (depth(p) * flatten + (maxHeight / 2 - z) * raise) * scale,
       })
+      project3d = project
+      scaleNow = scale
       function polygon(points: Point[], color: string, stroke?: string) {
         if (!ctx || points.length === 0) return
         ctx.beginPath()
@@ -129,19 +135,82 @@ export function SimulationView({ floor, onClose }: { floor: Floorplan; onClose: 
         ctx.setLineDash([5, 4])
         ctx.stroke()
         ctx.setLineDash([])
-        const marker = project(flowPosition(path, elapsed.current * speeds[path.kind]), z + (threeD ? 180 : 0))
-        ctx.fillStyle = colors[path.kind]
-        if (path.kind === 'worker') {
-          ctx.beginPath()
-          ctx.arc(marker.x, marker.y, 5, 0, Math.PI * 2)
-          ctx.fill()
-        } else {
-          const size = path.kind === 'truck' ? 7 : 5
-          ctx.fillRect(marker.x - size, marker.y - 4, size * 2, 8)
+        const travelled = elapsed.current * speeds[path.kind]
+        const here = flowPosition(path, travelled)
+        if (path.kind === 'material') {
+          const marker = project(here, z + (threeD ? 180 : 0))
+          ctx.fillStyle = colors.material
+          ctx.fillRect(marker.x - 5, marker.y - 4, 10, 8)
+          continue
         }
+        const ahead = flowPosition(path, travelled + 50)
+        const back = flowPosition(path, Math.max(0, travelled - 50))
+        const dir = Math.atan2(ahead.y - back.y, ahead.x - back.x) || 0
+        const fx = Math.cos(dir), fy = Math.sin(dir)
+        const at = (along: number, side: number) => ({ x: here.x + fx * along - fy * side, y: here.y + fy * along + fx * side })
+        if (path.kind === 'worker') drawWorker(at, travelled)
+        else drawForklift(at)
       }
     }
 
+    /** A person: legs swinging with each step, body, arms and a head with a hard hat. */
+    function drawWorker(at: (along: number, side: number) => Point, travelled: number) {
+      if (!ctx) return
+      const swing = Math.sin(travelled / 260) * 220
+      const project3 = (along: number, side: number, h: number) => project3d(at(along, side), h)
+      const line = (a: { x: number; y: number }, b: { x: number; y: number }, color: string, width: number) => {
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.stroke()
+      }
+      const w = Math.max(2, scaleNow * 160)
+      const hip = project3(0, 0, 900)
+      line(project3(swing, -110, 0), hip, '#334155', w)
+      line(project3(-swing, 110, 0), hip, '#334155', w)
+      const shoulder = project3(0, 0, 1450)
+      line(project3(-swing * 0.8, -230, 850), shoulder, '#2ce0bd', w * 0.8)
+      line(project3(swing * 0.8, 230, 850), shoulder, '#2ce0bd', w * 0.8)
+      line(hip, shoulder, '#2ce0bd', w * 1.7)
+      const head = project3(0, 0, 1650)
+      ctx.beginPath(); ctx.arc(head.x, head.y, Math.max(2.5, scaleNow * 120), 0, Math.PI * 2); ctx.fillStyle = '#f2c9a0'; ctx.fill()
+      ctx.beginPath(); ctx.arc(head.x, head.y - Math.max(1, scaleNow * 50), Math.max(2.5, scaleNow * 125), Math.PI, 0); ctx.fillStyle = '#facc15'; ctx.fill()
+    }
+
+    /** A forklift: body, overhead guard, mast and forks pointing the way it drives. */
+    function drawForklift(at: (along: number, side: number) => Point) {
+      if (!ctx) return
+      const boxAt = (a0: number, a1: number, s0: number, s1: number, z0: number, z1: number, side: string, top: string) => {
+        const base = [at(a0, s0), at(a1, s0), at(a1, s1), at(a0, s1)]
+        const bottom = base.map((p) => project3d(p, z0))
+        const upper = base.map((p) => project3d(p, z1))
+        const fill = (pts: { x: number; y: number }[], color: string) => {
+          ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath()
+          ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 0.6; ctx.stroke()
+        }
+        if (threeD) for (let i = 0; i < 4; i++) { const j = (i + 1) % 4; fill([bottom[i], bottom[j], upper[j], upper[i]], side) }
+        fill(upper, top)
+      }
+      boxAt(-1300, 300, -550, 550, 0, 1100, '#b45309', '#f59e0b')       // body
+      boxAt(-1350, -900, -550, 550, 0, 1250, '#44403c', '#57534e')    // counterweight
+      // seated driver: torso, arms to the wheel, head with hard hat
+      const seat = project3d(at(-500, 0), 1150)
+      const shoulder = project3d(at(-480, 0), 1700)
+      const w = Math.max(2, scaleNow * 160)
+      const stroke = (a: { x: number; y: number }, b: { x: number; y: number }, color: string, width: number) => {
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.stroke()
+      }
+      stroke(seat, shoulder, '#2ce0bd', w * 1.7)
+      for (const s of [-200, 200]) stroke(project3d(at(-480, s), 1650), project3d(at(-50, s * 0.6), 1350), '#2ce0bd', w * 0.8)
+      const head = project3d(at(-480, 0), 1880)
+      ctx.beginPath(); ctx.arc(head.x, head.y, Math.max(2.5, scaleNow * 120), 0, Math.PI * 2); ctx.fillStyle = '#f2c9a0'; ctx.fill()
+      ctx.beginPath(); ctx.arc(head.x, head.y - Math.max(1, scaleNow * 50), Math.max(2.5, scaleNow * 125), Math.PI, 0); ctx.fillStyle = '#facc15'; ctx.fill()
+      if (threeD) {
+        for (const s of [-500, 450]) {
+          boxAt(-700, -620, s, s + 50, 1100, 2100, '#1f2937', '#1f2937') // guard posts
+        }
+        boxAt(-750, 150, -550, 550, 2100, 2160, '#1f2937', '#374151')   // roof
+      }
+      boxAt(300, 400, -450, 450, 0, 2400, '#374151', '#4b5563')         // mast
+      for (const s of [-380, 260]) boxAt(400, 1500, s, s + 120, 80, 160, '#9ca3af', '#d1d5db') // forks
+    }
     const resize = new ResizeObserver(render)
     resize.observe(element)
     render()
@@ -166,12 +235,16 @@ export function SimulationView({ floor, onClose }: { floor: Floorplan; onClose: 
       <div className="flex h-full min-h-0 flex-col">
         <header className="flex flex-wrap items-center gap-2 border-b p-3 sm:px-5">
           <h1 id="simulation-title" className="mr-auto text-sm font-semibold">Factory simulation</h1>
+          <Button variant={workerMode ? 'secondary' : 'outline'} size="sm" aria-pressed={workerMode} onClick={() => setWorkerMode((value) => !value)}>Worker view</Button>
+          {!workerMode && <>
           <Button variant="outline" size="sm" onClick={() => setThreeD((value) => !value)}>{threeD ? '2D view' : '3D view'}</Button>
           <Button variant="secondary" size="sm" disabled={!paths.length} onClick={() => setPlaying((value) => !value)}>{playing ? 'Pause' : 'Play'}</Button>
           <Button variant="outline" size="sm" onClick={() => { elapsed.current = 0; setPlaying(false); setReset((value) => value + 1) }}>Reset playback</Button>
           <Button variant={heat ? 'secondary' : 'outline'} size="sm" aria-pressed={heat} onClick={() => setHeat((value) => !value)}>Heatmap</Button>
+          </>}
           <Button variant="outline" size="sm" onClick={onClose}>Back to planner</Button>
         </header>
+        {workerMode ? <div className="min-h-0 flex-1"><WorkerView floor={floor} /></div> : <>
         <div className="relative min-h-0 flex-1 bg-[#132431]">
           <canvas
             ref={canvas}
@@ -206,6 +279,7 @@ export function SimulationView({ floor, onClose }: { floor: Floorplan; onClose: 
           </label>
           {threeD && <Button variant="ghost" size="sm" onClick={() => setCamera((current) => ({ ...current, angle: current.angle + Math.PI / 4 }))}>Rotate camera</Button>}
         </footer>
+        </>}
       </div>
     </dialog>
   )
