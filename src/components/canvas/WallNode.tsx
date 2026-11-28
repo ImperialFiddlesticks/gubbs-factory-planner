@@ -6,7 +6,7 @@ import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/co
 import { SCALE } from '@/constants'
 import { wallBox, wallLength } from '@/lib/geometry'
 import { usePlanner } from '@/store'
-import { CANVAS } from '@/theme'
+import { CANVAS, CANVAS_FONT, COLORS } from '@/theme'
 import type { Point, Wall } from '@/types'
 
 type WallShape = Pick<Wall, 'start' | 'end' | 'thickness'>
@@ -128,8 +128,20 @@ export function WallBody({
           listening={false}
         >
           <Label y={-14}>
-            <Tag fill={CANVAS.wallFill} cornerRadius={3} pointerDirection="down" pointerWidth={8} pointerHeight={5} />
-            <Text text={metres(wallLength(wall))} fontSize={12} padding={4} fill="white" />
+            <Tag
+              fill={COLORS.white}
+              stroke={COLORS.warm300}
+              strokeWidth={1}
+              cornerRadius={8}
+              pointerDirection="down"
+              pointerWidth={8}
+              pointerHeight={5}
+              shadowColor={COLORS.charcoal900}
+              shadowOpacity={0.14}
+              shadowBlur={10}
+              shadowOffsetY={3}
+            />
+            <Text fontFamily={CANVAS_FONT} text={metres(wallLength(wall))} fontSize={12} fontStyle="bold" padding={5} fill={COLORS.charcoal} />
           </Label>
         </Group>
       )}

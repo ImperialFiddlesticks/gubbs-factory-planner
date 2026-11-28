@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Hand, Layers as LayersIcon, Lock, LockOpen, Maximize, MousePointer2, Redo2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Hand, Layers as LayersIcon, Lock, LockOpen, Maximize, MousePointer2, Redo2, Ruler, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
@@ -26,6 +26,9 @@ export function MapToolbar({
   onZoomIn: () => void
   onZoomOut: () => void
   onFit: () => void
+  /** The distance-measuring tape is on. */
+  measuring: boolean
+  onToggleMeasure: () => void
   navigationTool: 'select' | 'hand'
   onNavigationToolChange: (tool: 'select' | 'hand') => void
 }) {
@@ -34,7 +37,7 @@ export function MapToolbar({
       <div
         role="toolbar"
         aria-label="Map controls"
-        className="theme-dark absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border bg-background/95 px-2 py-1 text-foreground shadow-lg backdrop-blur"
+        className="theme-chrome absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border bg-background/95 px-2 py-1 text-foreground shadow-lg backdrop-blur"
       >
         <UndoRedo />
         <Divider />

@@ -1,7 +1,8 @@
 import { Arc, Arrow, Circle, Group, Line, Rect } from 'react-konva'
 import { SCALE } from '@/constants'
 import type { ConveyorPiece } from '@/data/conveyors'
-import { COLORS } from '@/theme'
+import { CATEGORY_COLOURS } from '@/data/machineColours'
+import { COLORS, mixColours } from '@/theme'
 import { freeEnds } from '@/lib/conveyors'
 import type { MachineInstance, Rotation } from '@/types'
 
@@ -10,7 +11,20 @@ const ROLLER_PITCH = 250
 /** Roughly one flow chevron per this much belt, mm. */
 const CHEVRON_PITCH = 1000
 /** Side rails take this share of the belt width on each side. */
-const RAIL = 0.1
+const RAIL = 0.14
+
+/**
+ * The light, friendly belt look, derived from one station colour like the machine cards:
+ * tinted rails, a pale belt, faint rollers and flow arrows in the colour itself.
+ */
+function conveyorColours(colour: string) {
+  return {
+    rail: mixColours(colour, COLORS.white, 0.62),
+    belt: mixColours(colour, COLORS.white, 0.9),
+    roller: mixColours(colour, COLORS.white, 0.45),
+    arrow: colour,
+  }
+}
 
 /**
  * A conveyor piece drawn centred on (0, 0): side rails, belt, rollers and flow arrows.
@@ -22,66 +36,81 @@ export function ConveyorBody({
   length,
   width,
   rotation,
+  colour,
   stroke,
   strokeWidth,
   dashed,
+  lifted = false,
   fit,
 }: {
   piece: ConveyorPiece
   length: number
   width: number
   rotation: Rotation
+  /** Station colour the belt is tinted with. */
+  colour: string
   stroke: string
   strokeWidth: number
   dashed: boolean
+  /** Raised off the floor (bigger shadow): selected or hovered. */
+  lifted?: boolean
   fit: number
 }) {
   const w = length * SCALE
   const h = width * SCALE
+  const c = conveyorColours(colour)
   return (
     <Group rotation={rotation}>
-      {/* Frame (side rails); carries the selection/clash outline. */}
+      {/* Frame (side rails); carries the selection/clash outline and the soft shadow. */}
       <Rect
         x={-w / 2}
         y={-h / 2}
         width={w}
         height={h}
-        fill={COLORS.grey500}
+        cornerRadius={Math.min(h * 0.28, 6)}
+        fill={c.rail}
         stroke={stroke}
         strokeWidth={strokeWidth}
         strokeScaleEnabled={false}
         hitStrokeWidth={12 / fit}
         dash={dashed ? [6, 4] : undefined}
+        shadowColor={COLORS.charcoal900}
+        shadowOpacity={lifted ? 0.24 : 0.12}
+        shadowBlur={(lifted ? 12 : 5) / fit}
+        shadowOffsetY={(lifted ? 4 : 1.5) / fit}
       />
       {piece === 'straight' ? (
-        <StraightBelt w={w} h={h} fit={fit} />
+        <StraightBelt w={w} h={h} fit={fit} c={c} />
       ) : (
-        <CornerBelt s={h} turn={piece === 'corner-left' ? 'left' : 'right'} fit={fit} />
+        <CornerBelt s={h} turn={piece === 'corner-left' ? 'left' : 'right'} fit={fit} c={c} />
       )}
     </Group>
   )
 }
 
-function StraightBelt({ w, h, fit }: { w: number; h: number; fit: number }) {
+type BeltColours = ReturnType<typeof conveyorColours>
+
+function StraightBelt({ w, h, fit, c }: { w: number; h: number; fit: number; c: BeltColours }) {
   const rail = h * RAIL
   const top = -h / 2 + rail
   const bottom = h / 2 - rail
   const rollers = Math.max(0, Math.floor(w / (ROLLER_PITCH * SCALE)) - 1)
   const chevrons = Math.max(1, Math.round(w / (CHEVRON_PITCH * SCALE)))
-  const c = (bottom - top) * 0.28 // chevron half-height
+  const ch = (bottom - top) * 0.26 // chevron half-height
   return (
     <Group listening={false}>
-      <Rect x={-w / 2} y={top} width={w} height={bottom - top} fill={COLORS.charcoal600} />
+      <Rect x={-w / 2 + rail * 0.5} y={top} width={w - rail} height={bottom - top} cornerRadius={Math.min(rail, 3)} fill={c.belt} />
       {Array.from({ length: rollers }, (_, i) => {
         const x = -w / 2 + ((i + 1) * w) / (rollers + 1)
         return (
           <Line
             key={`r${i}`}
-            points={[x, top, x, bottom]}
-            stroke={COLORS.white}
-            opacity={0.18}
+            points={[x, top + 1, x, bottom - 1]}
+            stroke={c.roller}
+            opacity={0.55}
             strokeWidth={1}
             strokeScaleEnabled={false}
+            lineCap="round"
           />
         )
       })}
@@ -90,9 +119,10 @@ function StraightBelt({ w, h, fit }: { w: number; h: number; fit: number }) {
         return (
           <Line
             key={`c${i}`}
-            points={[x - c * 0.6, -c, x + c * 0.6, 0, x - c * 0.6, c]}
-            stroke={COLORS.yellow}
-            strokeWidth={2 / fit}
+            points={[x - ch * 0.6, -ch, x + ch * 0.6, 0, x - ch * 0.6, ch]}
+            stroke={c.arrow}
+            opacity={0.85}
+            strokeWidth={2.5 / fit}
             lineCap="round"
             lineJoin="round"
           />
@@ -106,7 +136,7 @@ function StraightBelt({ w, h, fit }: { w: number; h: number; fit: number }) {
  * Quarter-turn belt in an s × s piece. Goods enter from the left edge and leave through the
  * bottom edge (right turn) or the top edge (left turn); the belt curves around that corner.
  */
-function CornerBelt({ s, turn, fit }: { s: number; turn: 'left' | 'right'; fit: number }) {
+function CornerBelt({ s, turn, fit, c }: { s: number; turn: 'left' | 'right'; fit: number; c: BeltColours }) {
   const half = s / 2
   const right = turn === 'right'
   // The curve pivots on the corner shared by the entry and exit edges.
@@ -133,7 +163,7 @@ function CornerBelt({ s, turn, fit }: { s: number; turn: 'left' | 'right'; fit: 
         outerRadius={outer}
         angle={90}
         rotation={right ? 270 : 0}
-        fill={COLORS.charcoal600}
+        fill={c.belt}
       />
       {[22.5, 45, 67.5].map((deg) => {
         const a = ((right ? 270 + deg : deg) * Math.PI) / 180
@@ -146,18 +176,20 @@ function CornerBelt({ s, turn, fit }: { s: number; turn: 'left' | 'right'; fit: 
               px + outer * Math.cos(a),
               py + outer * Math.sin(a),
             ]}
-            stroke={COLORS.white}
-            opacity={0.18}
+            stroke={c.roller}
+            opacity={0.55}
             strokeWidth={1}
             strokeScaleEnabled={false}
+            lineCap="round"
           />
         )
       })}
       <Arrow
         points={arrow}
-        stroke={COLORS.yellow}
-        fill={COLORS.yellow}
-        strokeWidth={2 / fit}
+        stroke={c.arrow}
+        fill={c.arrow}
+        opacity={0.85}
+        strokeWidth={2.5 / fit}
         pointerLength={(outer - inner) * 0.3}
         pointerWidth={(outer - inner) * 0.35}
         lineCap="round"
@@ -167,10 +199,13 @@ function CornerBelt({ s, turn, fit }: { s: number; turn: 'left' | 'right'; fit: 
   )
 }
 
+/** The default belt colour, for the free-end markers. */
+const END_COLOUR = CATEGORY_COLOURS['material-handling']
+
 /**
  * Markers on conveyor ends that aren't joined to anything, so you can see where a run can
  * continue: a ring for a free input, a filled dot for a free output. With `showFronts` (while
- * a conveyor piece is being placed or dragged), free machine fronts get a square marker too.
+ * a conveyor piece is being placed or dragged), free machine fronts get a diamond marker too.
  */
 export function ConveyorEnds({
   machines,
@@ -197,9 +232,10 @@ export function ConveyorEnds({
           offsetX={1.1 * r}
           offsetY={1.1 * r}
           rotation={45}
-          fill={COLORS.yellow}
-          stroke={COLORS.charcoal}
-          strokeWidth={1.5}
+          cornerRadius={1.5 / fit}
+          fill={COLORS.white}
+          stroke={END_COLOUR}
+          strokeWidth={2}
           strokeScaleEnabled={false}
         />
       ))}
@@ -210,8 +246,8 @@ export function ConveyorEnds({
           y={p.point.y * SCALE}
           radius={r}
           fill={COLORS.white}
-          stroke={COLORS.charcoal}
-          strokeWidth={1.5}
+          stroke={END_COLOUR}
+          strokeWidth={2}
           strokeScaleEnabled={false}
         />
       ))}
@@ -221,9 +257,9 @@ export function ConveyorEnds({
           x={p.point.x * SCALE}
           y={p.point.y * SCALE}
           radius={r}
-          fill={COLORS.yellow}
-          stroke={COLORS.charcoal}
-          strokeWidth={1.5}
+          fill={END_COLOUR}
+          stroke={COLORS.white}
+          strokeWidth={2}
           strokeScaleEnabled={false}
         />
       ))}

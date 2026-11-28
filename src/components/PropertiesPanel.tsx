@@ -8,8 +8,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { DEFAULT_FACTORY_HEIGHT_MM } from '@/data/defaults'
-import { machineHeight, machinePeople, machineTypeFor } from '@/data/catalog'
-import { MACHINE_COLOURS } from '@/data/machineColours'
+import { getMachineType, machineHeight, machinePeople, machineTypeFor } from '@/data/catalog'
+import { MACHINE_COLOURS, stationColour } from '@/data/machineColours'
 import { MIN_ZONE_SIZE, ZONE_KIND_LIST, ZONE_KINDS, machinesInZone, zoneArea } from '@/data/zones'
 import { isValidConveyorLength } from '@/data/conveyors'
 import { MIN_WALL_LENGTH } from '@/data/structures'
@@ -24,6 +24,7 @@ import { loadingBayIssue } from '@/lib/loadingBays'
 import { TruckLogisticsProperties } from '@/components/canvas/TruckLogisticsProperties'
 import { findLayoutIssues, powerAssignments, type LayoutIssue } from '@/lib/validation'
 import { findTruckLogisticsIssues } from '@/lib/truckLogistics'
+import { commentTargetName, formatCommentTime } from '@/lib/comments'
 import { machineAutoName, machineName } from '@/lib/machineLabels'
 import { usePlanner } from '@/store'
 import { CANVAS } from '@/theme'
@@ -108,14 +109,14 @@ export function PropertiesPanel({
 
   if (collapsed) {
     return (
-      <aside className="theme-dark properties-sidebar planner-properties is-collapsed flex flex-col items-center border-l py-2">
+      <aside className="theme-chrome properties-sidebar planner-properties is-collapsed flex flex-col items-center border-l py-2">
         <button
           type="button"
           onClick={onToggle}
           aria-label="Expand properties"
           title="Expand properties"
           aria-expanded={false}
-          className="flex size-9 items-center justify-center rounded-md border border-white/15 bg-white/5 text-foreground transition-colors hover:border-white/30 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex size-9 items-center justify-center rounded-md border bg-card text-foreground shadow-soft transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <ChevronLeft className="size-4" aria-hidden />
         </button>
@@ -124,7 +125,7 @@ export function PropertiesPanel({
   }
 
   return (
-    <aside className="theme-dark properties-sidebar planner-properties flex min-h-0 flex-col overflow-y-auto border-l p-4">
+    <aside className="theme-chrome properties-sidebar planner-properties flex min-h-0 flex-col overflow-y-auto border-l p-4">
       <section>
         <div className="mb-3 flex h-8 items-center gap-2">
           <button
@@ -133,7 +134,7 @@ export function PropertiesPanel({
             aria-label="Collapse properties"
             title="Collapse properties"
             aria-expanded={true}
-            className="flex size-8 shrink-0 items-center justify-center rounded-md border border-white/15 bg-white/5 text-foreground transition-colors hover:border-white/30 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-card text-foreground shadow-soft transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <ChevronRight className="size-4" aria-hidden />
           </button>
@@ -330,7 +331,7 @@ function CommentsSection() {
                 </span>
                 {comment.targetId && !selectedId && (
                   <span className="mt-1 block text-[10px] text-muted-foreground">
-                    {commentTargetName(comment.targetId, machines, utilities, pillars, walls)}
+                    {commentTargetName(comment.targetId, { machines, utilities, pillars, walls })}
                   </span>
                 )}
                 <span className="mt-1 block whitespace-pre-wrap text-xs">{comment.message}</span>
@@ -992,7 +993,7 @@ function StationDetails({
   autoName: string
   onChange: (patch: Partial<Pick<MachineInstance, 'name' | 'work' | 'people' | 'colour'>>) => void
 }) {
-  const current = machine.colour ?? MACHINE_COLOURS[0].hex
+  const autoColour = stationColour(undefined, getMachineType(machine.typeId)?.category)
   return (
     <details open className="rounded-md border bg-muted/20">
       <summary className="cursor-pointer list-none px-2.5 py-2 text-xs font-medium [&::-webkit-details-marker]:hidden">
@@ -1024,8 +1025,9 @@ function StationDetails({
             />
           </Field>
           <ColourSwatches
-            value={current}
-            onChange={(hex) => onChange({ colour: hex === MACHINE_COLOURS[0].hex ? undefined : hex })}
+            value={machine.colour}
+            auto={{ colour: autoColour, onPick: () => onChange({ colour: undefined }) }}
+            onChange={(colour) => onChange({ colour })}
           />
         </div>
       </div>
@@ -1033,12 +1035,40 @@ function StationDetails({
   )
 }
 
-/** A row of colour swatches to pick from (MACHINE_COLOURS). */
-function ColourSwatches({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
+/**
+ * A row of colour swatches to pick from (MACHINE_COLOURS). With `auto`, it is led by an
+ * "Auto" swatch: the category's colour, stored as no colour so the station follows its category.
+ */
+function ColourSwatches({
+  value,
+  auto,
+  onChange,
+}: {
+  value: string | undefined
+  auto?: { colour: string; onPick: () => void }
+  onChange: (hex: string) => void
+}) {
   return (
     <div className="space-y-1.5">
       <span className="text-xs text-muted-foreground">Colour</span>
       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Colour">
+        {auto && (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={value === undefined}
+            title="Auto (by category)"
+            aria-label="Auto (by category)"
+            onClick={auto.onPick}
+            className={cn(
+              'grid size-5 place-items-center rounded-full border border-black/15 text-[9px] font-bold text-white transition-transform hover:scale-110',
+              value === undefined && 'ring-2 ring-accent ring-offset-1 ring-offset-background',
+            )}
+            style={{ backgroundColor: auto.colour }}
+          >
+            A
+          </button>
+        )}
         {MACHINE_COLOURS.map((c) => (
           <button
             key={c.hex}
@@ -1049,7 +1079,7 @@ function ColourSwatches({ value, onChange }: { value: string; onChange: (hex: st
             aria-label={c.name}
             onClick={() => onChange(c.hex)}
             className={cn(
-              'size-5 rounded-full border border-white/30 transition-transform hover:scale-110',
+              'size-5 rounded-full border border-black/15 transition-transform hover:scale-110',
               value === c.hex && 'ring-2 ring-accent ring-offset-1 ring-offset-background',
             )}
             style={{ backgroundColor: c.hex }}
@@ -1489,23 +1519,3 @@ function formatMetres(mm: number) {
   return String(Number((mm / 1000).toFixed(2)))
 }
 
-function formatCommentTime(value: string) {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? 'Unknown time' : date.toLocaleString()
-}
-
-function commentTargetName(
-  id: string,
-  machines: MachineInstance[],
-  utilities: Utility[],
-  pillars: Pillar[],
-  walls: Wall[],
-) {
-  const machine = machines.find((item) => item.id === id)
-  if (machine) return machineName(machine, machines)
-  const utility = utilities.find((item) => item.id === id)
-  if (utility) return UTILITY_KINDS[utility.kind].name
-  if (pillars.some((item) => item.id === id)) return 'Pillar'
-  if (walls.some((item) => item.id === id)) return 'Wall'
-  return 'Floor location'
-}

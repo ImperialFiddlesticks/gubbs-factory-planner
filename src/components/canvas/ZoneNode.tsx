@@ -5,7 +5,7 @@ import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/co
 import { SCALE } from '@/constants'
 import { MIN_ZONE_SIZE, zoneArea } from '@/data/zones'
 import { usePlanner } from '@/store'
-import { CANVAS } from '@/theme'
+import { CANVAS, CANVAS_FONT } from '@/theme'
 import type { Zone } from '@/types'
 
 type ZoneRect = Pick<Zone, 'x' | 'y' | 'width' | 'depth'>
@@ -183,7 +183,7 @@ function ZoneTag({
         onMouseLeave={(e) => setCursor(e, '')}
       >
         <Tag fill={zone.colour} cornerRadius={3} stroke={selected ? CANVAS.selected : undefined} strokeWidth={selected ? 2 : 0} />
-        <Text text={parts.join(' · ')} fontSize={11} fontStyle="bold" padding={4} fill="white" />
+        <Text fontFamily={CANVAS_FONT} text={parts.join(' · ')} fontSize={11} fontStyle="bold" padding={4} fill="white" />
       </Label>
     </Group>
   )

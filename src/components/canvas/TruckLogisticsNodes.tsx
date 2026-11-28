@@ -1,9 +1,9 @@
 import { useRef } from 'react'
 import { Arrow, Circle, Group, Line, Rect, Text } from 'react-konva'
-import { clickItem, dragGroup, GHOST_ID, pressItem, type DragState } from '@/components/canvas/shared'
+import { clickItem, dragGroup, GHOST_ID, pressItem, uprightTextRoom, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { usePlanner } from '@/store'
-import { CANVAS } from '@/theme'
+import { CANVAS, CANVAS_FONT } from '@/theme'
 import { UtilityIcon } from '@/components/canvas/UtilityNode'
 import { barrierCollisionSegments } from '@/lib/truckLogistics'
 import type { ForkliftInstance, PedestrianCrossing, PedestrianRoute, Point, SafetyBarrier, TruckParkingSpot, TruckRoute, TruckServiceStation, TruckType } from '@/types'
@@ -68,8 +68,26 @@ export function ForkliftGlyph({ type, rotation, fit, selected = false, invalid =
     <Rect x={-width * 0.28} y={-length * 0.34} width={width * 0.56} height={length * 0.38} cornerRadius={Math.min(width, length) * 0.04} fill={invalid ? '#ef4444' : '#2563eb'} opacity={0.9} />
     <Line points={[-width * 0.3, -length * 0.45, -width * 0.3, -length * 0.17]} stroke={stroke} strokeWidth={Math.max(3 / fit, width * 0.09)} lineCap="round" />
     <Line points={[width * 0.3, -length * 0.45, width * 0.3, -length * 0.17]} stroke={stroke} strokeWidth={Math.max(3 / fit, width * 0.09)} lineCap="round" />
-    <Text text={type.name} x={-width / 2} y={length * 0.1} width={width} align="center" fontSize={Math.min(11 / fit, Math.max(7, width * 0.14))} fill="#1e3a8a" listening={false} />
+    {/* The name stays level (see below), so only the body turns here. */}
   </Group>
+}
+
+/** A forklift's body with its name kept level, whichever way it faces. */
+export function ForkliftGlyphWithLabel({ type, rotation, fit, selected = false, invalid = false }: { type: TruckType; rotation: number; fit: number; selected?: boolean; invalid?: boolean }) {
+  if (type.widthMm === null || type.widthMm <= 0 || type.lengthMm === null || type.lengthMm <= 0) return null
+  const width = type.widthMm * SCALE
+  const length = type.lengthMm * SCALE
+  const fontSize = Math.min(10 / fit, Math.max(6.5, width * 0.13))
+  const room = uprightTextRoom(width, length, rotation, fontSize * 1.3)
+  // At rotation 0 the name sits on the lower part of the body (below the mast); turned, it
+  // moves with that spot but stays level.
+  const a = (rotation * Math.PI) / 180
+  const cx = -Math.sin(a) * length * 0.2
+  const cy = Math.cos(a) * length * 0.2
+  return <>
+    <ForkliftGlyph type={type} rotation={rotation} fit={fit} selected={selected} invalid={invalid} />
+    <Text fontFamily={CANVAS_FONT} text={type.name} x={cx - room.width / 2} y={cy - fontSize / 2} width={room.width} align="center" wrap="none" ellipsis fontSize={fontSize} fill="#1e3a8a" listening={false} />
+  </>
 }
 
 function ForkliftInstanceNode({ instance, type, fit, selected, invalid, interactive, onDrag }: { instance: ForkliftInstance; type: TruckType; fit: number; selected: boolean; invalid: boolean; interactive: boolean; onDrag: (drag: DragState | null) => void }) {
@@ -81,7 +99,6 @@ function ForkliftInstanceNode({ instance, type, fit, selected, invalid, interact
     name="forklift-instance"
     x={instance.x * SCALE}
     y={instance.y * SCALE}
-    rotation={instance.rotation}
     draggable={interactive}
     onMouseDown={(event) => pressItem(instance.id, event)}
     onTouchStart={(event) => pressItem(instance.id, event)}
@@ -102,7 +119,7 @@ function ForkliftInstanceNode({ instance, type, fit, selected, invalid, interact
       event.target.position({ x: instance.x * SCALE, y: instance.y * SCALE })
     }}
   >
-    <ForkliftGlyph type={type} rotation={0} fit={fit} selected={selected} invalid={invalid} />
+    <ForkliftGlyphWithLabel type={type} rotation={instance.rotation} fit={fit} selected={selected} invalid={invalid} />
   </Group>
 }
 
@@ -168,7 +185,7 @@ function PathNode({ id, name, label, points, color, width, direction, openings, 
       {name === 'truck-route' && direction === 'one-way' && points.length >= 2 && (
         <Arrow points={[points[0].x * SCALE, points[0].y * SCALE, points[1].x * SCALE, points[1].y * SCALE]} stroke={color} fill={color} strokeWidth={2 / fit} pointerLength={8 / fit} pointerWidth={8 / fit} listening={false} />
       )}
-      {points[0] && <Text text={label} x={points[0].x * SCALE + 5 / fit} y={points[0].y * SCALE + 5 / fit} fontSize={11 / fit} fill={color} listening={false} />}
+      {points[0] && <Text fontFamily={CANVAS_FONT} text={label} x={points[0].x * SCALE + 5 / fit} y={points[0].y * SCALE + 5 / fit} fontSize={11 / fit} fill={color} listening={false} />}
     </Group>
   )
 }
@@ -201,8 +218,8 @@ function ParkingNode({ spot, fit, selected, interactive }: { spot: TruckParkingS
       <Line points={spot.outline.flatMap((point) => [point.x * SCALE, point.y * SCALE])} closed fill="#facc1522" stroke={stroke} strokeWidth={selected ? 3 / fit : 2 / fit} dash={[8 / fit, 4 / fit]} />
       {width >= depth && <Line points={[(x + width / 3) * SCALE, y * SCALE, (x + width / 3) * SCALE, (y + depth) * SCALE, (x + width * 2 / 3) * SCALE, y * SCALE, (x + width * 2 / 3) * SCALE, (y + depth) * SCALE]} stroke={stroke} strokeWidth={1 / fit} dash={[5 / fit, 5 / fit]} listening={false} />}
       {depth > width && <Line points={[x * SCALE, (y + depth / 3) * SCALE, (x + width) * SCALE, (y + depth / 3) * SCALE, x * SCALE, (y + depth * 2 / 3) * SCALE, (x + width) * SCALE, (y + depth * 2 / 3) * SCALE]} stroke={stroke} strokeWidth={1 / fit} dash={[5 / fit, 5 / fit]} listening={false} />}
-      {spot.outline[0] && <Text text={spot.name} x={spot.outline[0].x * SCALE + 5 / fit} y={spot.outline[0].y * SCALE + 5 / fit} fontSize={11 / fit} fill={selected ? CANVAS.selected : '#854d0e'} listening={false} />}
-      {spot.outline.length >= 3 && <Text
+      {spot.outline[0] && <Text fontFamily={CANVAS_FONT} text={spot.name} x={spot.outline[0].x * SCALE + 5 / fit} y={spot.outline[0].y * SCALE + 5 / fit} fontSize={11 / fit} fill={selected ? CANVAS.selected : '#854d0e'} listening={false} />}
+      {spot.outline.length >= 3 && <Text fontFamily={CANVAS_FONT}
         text={`${(width / 1000).toFixed(1)} × ${(depth / 1000).toFixed(1)} m`}
         x={x * SCALE}
         y={y * SCALE}
@@ -243,11 +260,11 @@ function StationNode({ station, connectedUtilities, selected, fit, interactive }
       }}
     >
       <Circle radius={11 / fit} fill={station.kind === 'charging' ? '#2563eb' : '#0f766e'} stroke={selected ? CANVAS.selected : 'white'} strokeWidth={2 / fit} />
-      <Text text={station.kind === 'charging' ? '⚡' : 'W'} x={-6 / fit} y={-7 / fit} fontSize={12 / fit} fill="white" listening={false} />
+      <Text fontFamily={CANVAS_FONT} text={station.kind === 'charging' ? '⚡' : 'W'} x={-6 / fit} y={-7 / fit} fontSize={12 / fit} fill="white" listening={false} />
       {utilityKinds.map((kind, index) => <Group key={kind} x={(16 + index * 19) / fit} listening={false}>
         <UtilityIcon kind={kind} radius={8} fit={fit} ring={connectedUtilities.has(`${station.id}:${kind}`) ? 'white' : CANVAS.invalid} ringWidth={2} />
       </Group>)}
-      <Text text={station.name} x={(utilityKinds.length ? 16 + utilityKinds.length * 19 : 14) / fit} y={-6 / fit} fontSize={11 / fit} fill="#1f2937" listening={false} />
+      <Text fontFamily={CANVAS_FONT} text={station.name} x={(utilityKinds.length ? 16 + utilityKinds.length * 19 : 14) / fit} y={-6 / fit} fontSize={11 / fit} fill="#1f2937" listening={false} />
     </Group>
   )
 }

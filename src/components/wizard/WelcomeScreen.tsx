@@ -14,8 +14,8 @@ export function WelcomeScreen() {
   const openExample = usePlanner((s) => s.openExample)
 
   return (
-    <div className="theme-dark flex h-screen flex-col">
-      <header className="flex h-14 items-center gap-3 border-b px-4">
+    <div className="theme-chrome flex h-screen flex-col">
+      <header className="relative z-10 flex h-14 items-center gap-3 border-b bg-card px-4 shadow-soft">
         <span className="h-6 w-1 bg-accent" aria-hidden />
         <span className="text-sm font-semibold tracking-widest uppercase">Factory Planner</span>
       </header>
@@ -23,7 +23,7 @@ export function WelcomeScreen() {
       <main className="flex flex-1 items-center overflow-y-auto">
         <div className="mx-auto grid max-w-6xl items-center gap-12 px-6 py-12 lg:grid-cols-2">
           <div>
-            <p className="text-xs font-semibold tracking-widest text-accent uppercase">
+            <p className="text-xs font-semibold tracking-widest text-(--amber-text) uppercase">
               Production layout planning
             </p>
             <h1 className="mt-3 text-4xl leading-tight font-semibold lg:text-5xl">
@@ -51,7 +51,7 @@ export function WelcomeScreen() {
             <ul className="mt-12 grid gap-6 sm:grid-cols-3">
               {HIGHLIGHTS.map(({ icon: Icon, title, text }) => (
                 <li key={title}>
-                  <Icon className="size-5 text-accent" aria-hidden />
+                  <Icon className="size-5 text-primary" aria-hidden />
                   <h2 className="mt-2 text-sm font-semibold">{title}</h2>
                   <p className="mt-1 text-sm text-muted-foreground">{text}</p>
                 </li>
@@ -70,7 +70,7 @@ export function WelcomeScreen() {
 function FloorIllustration() {
   return (
     <svg viewBox="0 0 400 280" className="hidden w-full lg:block" aria-hidden>
-      <rect x="10" y="10" width="380" height="260" rx="4" fill="var(--saab-white)" />
+      <rect x="10" y="10" width="380" height="260" rx="16" fill="var(--saab-white)" stroke="var(--warm-300)" strokeWidth="2" />
       <g stroke="var(--saab-grey-200)" strokeWidth="1">
         {Array.from({ length: 18 }, (_, i) => (
           <line key={`v${i}`} x1={30 + i * 20} y1="10" x2={30 + i * 20} y2="270" />

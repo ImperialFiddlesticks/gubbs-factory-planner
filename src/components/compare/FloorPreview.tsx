@@ -39,7 +39,7 @@ export function FloorPreview({
     <Stage width={width} height={height} listening={false}>
       <Layer x={x} y={y} scaleX={fit} scaleY={fit} listening={false}>
         <Line points={floorPoints} closed fill={CANVAS.floor} />
-        <Line points={floorPoints} closed stroke={CANVAS.floorStroke} strokeWidth={2} strokeScaleEnabled={false} />
+        <Line points={floorPoints} closed stroke={CANVAS.floorStroke} strokeWidth={4} strokeScaleEnabled={false} lineJoin="round" />
         {(project.zones ?? []).map((z) => (
           <ZoneShape key={z.id} zone={z} fit={fit} />
         ))}
