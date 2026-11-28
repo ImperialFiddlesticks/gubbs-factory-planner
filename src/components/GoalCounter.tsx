@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CircleCheck, TriangleAlert } from 'lucide-react'
 import { isStation } from '@/data/catalog'
 import { findLayoutIssues } from '@/lib/validation'
+import { playSound } from '@/lib/sound'
 import { cn } from '@/lib/utils'
 import { usePlanner } from '@/store'
 
 /** Confetti colours: Saab yellow, blue and white. */
-const CONFETTI = ['var(--saab-yellow)', 'var(--saab-blue)', 'var(--saab-white)', 'var(--saab-yellow-dark)']
+const CONFETTI = ['var(--saab-yellow)', 'var(--saab-blue)', 'var(--feedback-green)', 'var(--saab-yellow-dark)']
 const PIECES = 14
 
 /** Top-bar goal: placed stations against the wizard's target, plus the warning count. */
@@ -33,6 +34,11 @@ export function GoalCounter() {
     setWasReached(reached)
     if (reached) setBurst((b) => b + 1)
   }
+
+  // The goal fanfare plays with the confetti.
+  useEffect(() => {
+    if (burst > 0) playSound('goal')
+  }, [burst])
 
   return (
     <div
@@ -73,7 +79,7 @@ export function GoalCounter() {
       <span
         className={cn(
           'flex items-center gap-1 text-sm tabular-nums',
-          warnings > 0 ? 'text-accent' : 'text-muted-foreground',
+          warnings > 0 ? 'text-(--amber-text)' : 'text-muted-foreground',
         )}
       >
         <TriangleAlert className="size-4" aria-hidden />

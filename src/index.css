@@ -45,7 +45,10 @@
     --color-sidebar-ring: var(--sidebar-ring);
     --color-warning: var(--warning);
     --color-warning-foreground: var(--warning-foreground);
-    --font-sans: Arial, Helvetica, sans-serif;
+    --font-sans: 'Nunito', Arial, Helvetica, sans-serif;
+    /* Soft, warm shadows for the friendly look (shadow-soft, shadow-lift). */
+    --shadow-soft: 0 1px 2px rgb(52 50 46 / 0.06), 0 4px 12px rgb(52 50 46 / 0.06);
+    --shadow-lift: 0 2px 4px rgb(52 50 46 / 0.08), 0 10px 24px rgb(52 50 46 / 0.12);
 }
 
 /* Saab brand palette, taken from saab.com (main.min.css).
@@ -71,12 +74,24 @@
     --saab-charcoal-500: #5a5751; /* input borders on dark */
     /* Not part of Saab's web palette; feedback colour, mirrors COLORS.green in theme.ts. */
     --feedback-green: #2f9e57;
+    /* Friendly warm neutrals (design rework). Mirrored as COLORS.warm* in theme.ts. */
+    --warm-50: #fbf9f5;   /* panels */
+    --warm-100: #f5f1ea;  /* page backdrop */
+    --warm-200: #efeae1;  /* muted surfaces, hovers */
+    --warm-300: #e6e0d4;  /* borders */
+    --warm-400: #d6cebf;  /* input borders */
+    --warm-700: #6b665d;  /* muted text */
+    /* Dark amber for warning text; yellow itself is too light to read on warm white. */
+    --amber-text: #9a5800;
+    /* Comments: chat-app blue (open) and mint (resolved). Mirrored as COLORS.chat* in theme.ts. */
+    --chat-blue: #4f86e8;
+    --chat-green: #43a979;
 }
 
-/* shadcn theme tokens mapped onto the Saab palette (light only). */
+/* shadcn theme tokens mapped onto the Saab palette with warm neutrals (light only). */
 :root {
-    --radius: 0.375rem;
-    --background: var(--saab-grey-50);
+    --radius: 0.75rem;
+    --background: var(--warm-100);
     --foreground: var(--saab-charcoal);
     --card: var(--saab-white);
     --card-foreground: var(--saab-charcoal);
@@ -84,49 +99,37 @@
     --popover-foreground: var(--saab-charcoal);
     --primary: var(--saab-blue);
     --primary-foreground: var(--saab-white);
-    --secondary: var(--saab-grey-200);
+    --secondary: var(--warm-200);
     --secondary-foreground: var(--saab-charcoal);
-    --muted: var(--saab-grey-100);
-    --muted-foreground: var(--saab-grey-700);
+    --muted: var(--warm-200);
+    --muted-foreground: var(--warm-700);
     --accent: var(--saab-yellow);
     --accent-foreground: var(--saab-charcoal);
     --destructive: var(--saab-red);
     --warning: var(--saab-yellow-dark);
     --warning-foreground: var(--saab-charcoal);
-    --border: var(--saab-grey-300);
-    --input: var(--saab-grey-300);
+    --border: var(--warm-300);
+    --input: var(--warm-400);
     --ring: var(--saab-blue);
     --chart-1: var(--saab-blue);
     --chart-2: var(--saab-yellow);
     --chart-3: var(--saab-blue-dark);
     --chart-4: var(--saab-yellow-dark);
     --chart-5: var(--saab-grey-500);
-    --sidebar: var(--saab-white);
+    --sidebar: var(--warm-50);
     --sidebar-foreground: var(--saab-charcoal);
     --sidebar-primary: var(--saab-blue);
     --sidebar-primary-foreground: var(--saab-white);
-    --sidebar-accent: var(--saab-grey-100);
+    --sidebar-accent: var(--warm-200);
     --sidebar-accent-foreground: var(--saab-charcoal);
-    --sidebar-border: var(--saab-grey-300);
+    --sidebar-border: var(--warm-300);
     --sidebar-ring: var(--saab-blue);
 }
 
-/* Dark chrome (top bar, side panels). Re-points the shadcn tokens so any
-   component placed inside a .theme-dark element picks up the dark look. */
-.theme-dark {
-    --background: var(--saab-charcoal);
-    --foreground: var(--saab-white);
-    --card: var(--saab-charcoal-900);
-    --card-foreground: var(--saab-white);
-    --popover: var(--saab-charcoal-900);
-    --popover-foreground: var(--saab-white);
-    --secondary: var(--saab-charcoal-600);
-    --secondary-foreground: var(--saab-white);
-    --muted: var(--saab-charcoal-900);
-    --muted-foreground: var(--saab-grey-400);
-    --border: var(--saab-charcoal-600);
-    --input: var(--saab-charcoal-500);
-    --ring: var(--saab-yellow);
+/* App chrome (top bar, side panels, floating toolbars): warm off-white panels.
+   Re-points the background token so components inside pick up the panel colour. */
+.theme-chrome {
+    --background: var(--warm-50);
     background-color: var(--background);
     color: var(--foreground);
 }
@@ -177,11 +180,12 @@
 }
 
 .properties-sidebar {
-  background-color: #302f2d;
+  background-color: var(--warm-50);
 }
 
 .properties-highlight {
-  background-color: #393835;
+  background-color: var(--saab-white);
+  box-shadow: var(--shadow-soft);
 }
 
 @media (max-width: 1439px) {
@@ -225,6 +229,15 @@
   .planner-catalog.is-collapsed,
   .planner-properties.is-collapsed {
     width: 48px;
+  }
+
+  /* The library lies over the work area here: keep the legend clear of it. */
+  .planner-shell .canvas-legend {
+    left: calc(min(260px, 100vw - 48px) + 1rem);
+  }
+
+  .planner-shell.catalog-collapsed .canvas-legend {
+    left: calc(48px + 1rem);
   }
 }
 

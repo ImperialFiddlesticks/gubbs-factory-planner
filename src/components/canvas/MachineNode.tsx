@@ -3,19 +3,25 @@ import Konva from 'konva'
 import { Circle, Group, Label, Line, Rect, Tag, Text } from 'react-konva'
 import { ConveyorBody } from '@/components/canvas/ConveyorBody'
 import { UtilityIcon } from '@/components/canvas/UtilityNode'
-import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/components/canvas/shared'
+import { clickItem, dragGroup, pressItem, setCursor, uprightTextRoom, type DragState } from '@/components/canvas/shared'
 import { SCALE } from '@/constants'
 import { getMachineType, machinePeople, machineTypeFor } from '@/data/catalog'
+import { dustPuff, wasJustPlaced, wobble } from '@/lib/animations'
 import { snapMachineToConveyor, snapShift } from '@/lib/conveyors'
+import { playSound } from '@/lib/sound'
 import { keepOnFloor } from '@/lib/placement'
 import { clearanceRect, footprint } from '@/lib/geometry'
 import { machineName, machineShortName } from '@/lib/machineLabels'
 import type { Need } from '@/lib/validation'
 import { usePlanner } from '@/store'
-import { CANVAS, COLORS } from '@/theme'
+import { stationColour } from '@/data/machineColours'
+import { CANVAS, COLORS, CANVAS_FONT, mixColours } from '@/theme'
 import type { MachineInstance, Rotation } from '@/types'
 
 export type Outline = 'none' | 'selected' | 'valid' | 'invalid'
+
+/** How many machines are being dragged right now (clash shakes on others wait for the drop). */
+let activeDrags = 0
 
 /** A placed machine: draggable, with pop-in / wobble / settle animations. */
 export function Machine({
@@ -43,11 +49,33 @@ export function Machine({
     const groupRef = useRef<Konva.Group>(null)
     const [hovered, setHovered] = useState(false)
     const name = machineName(machine, machines)
+    /** The latest outline, read when a drag ends. */
+    const outlineRef = useRef(outline)
+    useEffect(() => {
+        outlineRef.current = outline
+    })
 
-    // Juice: pop in when placed.
+    /** Dust specks around the machine's footprint, where it stands now. */
+    const puff = () => {
+        const node = groupRef.current
+        const parent = node?.getParent()
+        const type = machineTypeFor(machine)
+        if (!node || !parent || !type) return
+        const size = footprint(type, machine.rotation)
+        dustPuff(parent, node.x(), node.y(), size.width * SCALE, size.depth * SCALE, fit)
+    }
+    /** Shake and buzz: this spot clashes. */
+    const clash = () => {
+        if (groupRef.current) wobble(groupRef.current)
+        playSound('clash')
+    }
+
+    // Juice: pop in when placed; a machine the user has just placed also kicks up dust,
+    // and shakes if it landed somewhere it clashes.
     useEffect(() => {
         const node = groupRef.current
         if (!node) return
+        const fresh = wasJustPlaced()
         node.scale({ x: 0.5, y: 0.5 })
         const tween = new Konva.Tween({
             node,
@@ -55,15 +83,21 @@ export function Machine({
             scaleY: 1,
             duration: 0.35,
             easing: Konva.Easings.BackEaseOut,
+            onFinish: () => {
+                if (fresh && outlineRef.current === 'invalid') clash()
+            },
         })
         tween.play()
+        if (fresh) puff()
         return () => {
             tween.destroy()
             node.scale({ x: 1, y: 1 })
         }
+        // Mount only: the landing effects belong to the moment it was placed.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-    // Juice: wobble when rotated (skips the first render).
+    // Juice: wobble and swish when rotated (skips the first render).
     const lastRotation = useRef(machine.rotation)
     useEffect(() => {
         const node = groupRef.current
@@ -71,7 +105,19 @@ export function Machine({
         lastRotation.current = machine.rotation
         node.rotation(-18)
         node.to({ rotation: 0, duration: 0.5, easing: Konva.Easings.ElasticEaseOut })
+        playSound('rotate')
     }, [machine.rotation])
+
+    // Juice: shake when this machine starts clashing while it stands still, e.g. something
+    // was dropped onto it or a height limit was drawn over it.
+    const lastOutline = useRef(outline)
+    useEffect(() => {
+        const was = lastOutline.current
+        lastOutline.current = outline
+        // Not while a machine is being dragged across it: the drop gives the feedback then.
+        // Nor while placing something new: the preview passing over it isn't a clash yet.
+        if (was !== 'invalid' && outline === 'invalid' && activeDrags === 0 && !usePlanner.getState().placing) clash()
+    }, [outline])
 
     /**
      * Set on drag start: where this machine started (the props follow the live position while
@@ -110,13 +156,15 @@ export function Machine({
         const shift = snapShift(moving, all)
         let pos = shift ? { x: Math.round(at.x + shift.x), y: Math.round(at.y + shift.y) } : at
         let rotation = startRotation
+        let didSnap = Boolean(shift)
 
         // A machine dragged on its own jumps onto a nearby free belt end, turned to face it.
         if (!isConveyor && drag.current.group.length === 0) {
-            const snapped = snapMachineToConveyor({ ...machine, ...at, rotation: startRotation }, all)
-            if (snapped) {
-                pos = { x: snapped.x, y: snapped.y }
-                rotation = snapped.rotation
+            const onBelt = snapMachineToConveyor({ ...machine, ...at, rotation: startRotation }, all)
+            if (onBelt) {
+                pos = { x: onBelt.x, y: onBelt.y }
+                rotation = onBelt.rotation
+                didSnap = true
             }
         }
 
@@ -131,9 +179,15 @@ export function Machine({
         drag.current.lastGood = pos
         drag.current.rotation = rotation
 
+        // Juice: a click the moment it snaps onto a conveyor end or belt end.
+        if (didSnap && !snapped.current) playSound('snap')
+        snapped.current = didSnap
+
         if (pos.x !== at.x || pos.y !== at.y) node.position({ x: pos.x * SCALE, y: pos.y * SCALE })
         return pos
     }
+    /** Whether the last drag position was snapped (the click plays only as it snaps on). */
+    const snapped = useRef(false)
     const group = () => (drag.current.group.length ? drag.current.group : undefined)
     /** The new rotation if the drag has turned the machine, else undefined. */
     const turned = () => (drag.current.rotation !== drag.current.startRotation ? drag.current.rotation : undefined)
@@ -166,6 +220,11 @@ export function Machine({
                     startRotation: from.rotation,
                     rotation: from.rotation,
                 }
+                activeDrags++
+                snapped.current = false
+                // Juice: picked up — it grows a little, as if lifted off the floor.
+                playSound('pick')
+                e.target.to({ scaleX: 1.05, scaleY: 1.05, duration: 0.12, easing: Konva.Easings.EaseOut })
                 onDrag({ id: machine.id, ...toMm(e.target), group: group(), rotation: turned() })
             }}
             onDragMove={(e) => onDrag({ id: machine.id, ...toMm(e.target), group: group(), rotation: turned() })}
@@ -178,9 +237,12 @@ export function Machine({
                 else moveItems([machine.id, ...ids], x - from.x, y - from.y)
                 drag.current = { from: { x: 0, y: 0 }, group: [], machines: [], lastGood: { x: 0, y: 0 }, startRotation: 0, rotation: 0 }
                 onDrag(null)
-                // Juice: small settle when dropped.
-                e.target.scale({ x: 1.06, y: 1.06 })
-                e.target.to({ scaleX: 1, scaleY: 1, duration: 0.2, easing: Konva.Easings.EaseOut })
+                activeDrags = Math.max(0, activeDrags - 1)
+                // Juice: settle back down with a little bounce and dust; shake if it clashes there.
+                e.target.to({ scaleX: 1, scaleY: 1, duration: 0.25, easing: Konva.Easings.BackEaseOut })
+                puff()
+                if (outlineRef.current === 'invalid') clash()
+                else playSound('drop')
             }}
             onMouseEnter={(e) => {
                 setHovered(true)
@@ -202,6 +264,7 @@ export function Machine({
                 outline={outline}
                 needs={needs}
                 fit={fit}
+                lifted={hovered || outline === 'selected'}
             />
             {hovered && (
                 <MachineHoverLabel
@@ -214,7 +277,7 @@ export function Machine({
     )
 }
 
-function MachineMark({ typeId, w, h }: { typeId: string; w: number; h: number }) {
+function MachineMark({ typeId, w, h, ink }: { typeId: string; w: number; h: number; ink: string }) {
     const r = Math.max(2, Math.min(w, h) * 0.1)
     const controlWidth = Math.max(4, Math.min(w * 0.16, 10))
     const controlHeight = Math.max(5, Math.min(h * 0.36, 16))
@@ -222,17 +285,17 @@ function MachineMark({ typeId, w, h }: { typeId: string; w: number; h: number })
     if (typeId === 'cnc-mill' || typeId === 'cnc-lathe') {
         return (
             <Group listening={false}>
-                <Circle x={w * 0.24} y={-h * 0.12} radius={r} stroke="white" strokeWidth={1} opacity={0.75} />
-                <Rect x={-w * 0.38} y={-h * 0.29} width={controlWidth} height={controlHeight} fill="white" opacity={0.7} />
+                <Circle x={w * 0.24} y={-h * 0.12} radius={r} stroke={ink} strokeWidth={1} opacity={0.45} />
+                <Rect x={-w * 0.38} y={-h * 0.29} width={controlWidth} height={controlHeight} fill={ink} opacity={0.4} />
             </Group>
         )
     }
 
     if (typeId === 'hydraulic-press') {
         return (
-            <Group listening={false} opacity={0.75}>
-                <Rect x={-w * 0.24} y={-h * 0.23} width={w * 0.48} height={h * 0.08} fill="white" />
-                <Rect x={-w * 0.12} y={-h * 0.15} width={w * 0.24} height={h * 0.2} stroke="white" strokeWidth={1} />
+            <Group listening={false} opacity={0.45}>
+                <Rect x={-w * 0.24} y={-h * 0.23} width={w * 0.48} height={h * 0.08} fill={ink} />
+                <Rect x={-w * 0.12} y={-h * 0.15} width={w * 0.24} height={h * 0.2} stroke={ink} strokeWidth={1} />
             </Group>
         )
     }
@@ -240,25 +303,25 @@ function MachineMark({ typeId, w, h }: { typeId: string; w: number; h: number })
     if (typeId === 'air-compressor') {
         return (
             <Group listening={false}>
-                <Circle x={-w * 0.18} y={-h * 0.12} radius={r} stroke="white" strokeWidth={1} opacity={0.75} />
-                <Circle x={w * 0.16} y={-h * 0.12} radius={r} stroke="white" strokeWidth={1} opacity={0.75} />
+                <Circle x={-w * 0.18} y={-h * 0.12} radius={r} stroke={ink} strokeWidth={1} opacity={0.45} />
+                <Circle x={w * 0.16} y={-h * 0.12} radius={r} stroke={ink} strokeWidth={1} opacity={0.45} />
             </Group>
         )
     }
 
     if (typeId === 'packing-table') {
-        return <Rect x={-w * 0.3} y={-h * 0.18} width={w * 0.6} height={h * 0.36} stroke="white" strokeWidth={1} opacity={0.7} listening={false} />
+        return <Rect x={-w * 0.3} y={-h * 0.18} width={w * 0.6} height={h * 0.36} stroke={ink} strokeWidth={1} opacity={0.4} listening={false} />
     }
 
-    return <EquipmentMark typeId={typeId} w={w} h={h} />
+    return <EquipmentMark typeId={typeId} w={w} h={h} ink={ink} />
 }
 
 /**
- * Faint white line marks for the assembly, welding and storage equipment, so types can be told
+ * Faint line marks in the card ink for the assembly, welding and storage equipment, so types can be told
  * apart at a glance. Drawn in the item's own frame (centred, front at the bottom), behind the label.
  */
-function EquipmentMark({ typeId, w, h }: { typeId: string; w: number; h: number }) {
-    const line = { stroke: 'white', strokeWidth: 1, strokeScaleEnabled: false, opacity: 0.55, listening: false } as const
+function EquipmentMark({ typeId, w, h, ink }: { typeId: string; w: number; h: number; ink: string }) {
+    const line = { stroke: ink, strokeWidth: 1, strokeScaleEnabled: false, opacity: 0.4, listening: false } as const
     switch (typeId) {
         // Jig: an inner frame with cross members, where the part is held.
         case 'assembly-jig-large':
@@ -273,7 +336,7 @@ function EquipmentMark({ typeId, w, h }: { typeId: string; w: number; h: number 
             )
         // Bench: a vice at the front-left corner.
         case 'work-bench':
-            return <Rect x={-w * 0.44} y={h * 0.05} width={w * 0.12} height={h * 0.3} fill="white" opacity={0.6} listening={false} />
+            return <Rect x={-w * 0.44} y={h * 0.05} width={w * 0.12} height={h * 0.3} fill={ink} opacity={0.35} listening={false} />
         // Table: a dashed inner edge (worked from all round).
         case 'assembly-table':
         case 'quality-table':
@@ -289,7 +352,7 @@ function EquipmentMark({ typeId, w, h }: { typeId: string; w: number; h: number 
             return (
                 <Group listening={false}>
                     {[-0.3, 0, 0.3].flatMap((x) =>
-                        [-0.2, 0.2].map((y) => <Circle key={`${x}${y}`} x={w * x} y={h * y} radius={Math.max(1.5, h * 0.06)} fill="white" opacity={0.55} />),
+                        [-0.2, 0.2].map((y) => <Circle key={`${x}${y}`} x={w * x} y={h * y} radius={Math.max(1.5, h * 0.06)} fill={ink} opacity={0.35} />),
                     )}
                 </Group>
             )
@@ -305,7 +368,7 @@ function EquipmentMark({ typeId, w, h }: { typeId: string; w: number; h: number 
         case 'press-brake':
             return (
                 <Group listening={false}>
-                    <Rect x={-w * 0.44} y={-h * 0.25} width={w * 0.88} height={h * 0.12} fill="white" opacity={0.5} />
+                    <Rect x={-w * 0.44} y={-h * 0.25} width={w * 0.88} height={h * 0.12} fill={ink} opacity={0.3} />
                     <Line points={[-w * 0.44, h * 0.15, w * 0.44, h * 0.15]} {...line} strokeWidth={2} />
                 </Group>
             )
@@ -367,8 +430,21 @@ function MachineHoverLabel({ machine, name, fit }: { machine: MachineInstance; n
     return (
         <Group y={-height / 2} scaleX={1 / fit} scaleY={1 / fit} listening={false}>
             <Label y={-8}>
-                <Tag fill={CANVAS.machineStroke} cornerRadius={3} pointerDirection="down" pointerWidth={8} pointerHeight={5} />
-                <Text text={lines.join('\n')} fontSize={12} lineHeight={1.35} padding={5} fill="white" width={lines.length > 1 ? 240 : undefined} wrap="word" />
+                {/* A white card like the panels and comment bubbles, with a soft shadow. */}
+                <Tag
+                    fill={COLORS.white}
+                    stroke={COLORS.warm300}
+                    strokeWidth={1}
+                    cornerRadius={10}
+                    pointerDirection="down"
+                    pointerWidth={10}
+                    pointerHeight={6}
+                    shadowColor={COLORS.charcoal900}
+                    shadowOpacity={0.14}
+                    shadowBlur={12}
+                    shadowOffsetY={4}
+                />
+                <Text fontFamily={CANVAS_FONT} text={lines.join('\n')} fontSize={12} fontStyle="600" lineHeight={1.4} padding={8} fill={COLORS.charcoal} width={lines.length > 1 ? 240 : undefined} wrap="word" />
             </Label>
         </Group>
     )
@@ -379,6 +455,29 @@ const OUTLINE_STYLE: Record<Outline, { stroke: string; width: number }> = {
     selected: { stroke: CANVAS.selected, width: 3 },
     valid: { stroke: CANVAS.valid, width: 3 },
     invalid: { stroke: CANVAS.invalid, width: 3 },
+}
+
+/** How strongly the card fill is lightened towards white (0 = full colour, 1 = white). */
+const CARD_TINT = 0.84
+
+/**
+ * The colours of a machine card: a light tint of the station colour, with its full colour for
+ * the border and a darker shade for text and marks. A clash turns the whole card red.
+ */
+function cardColours(base: string, outline: Outline) {
+    const colour = outline === 'invalid' ? CANVAS.invalid : base
+    return {
+        fill: mixColours(colour, COLORS.white, CARD_TINT),
+        border: outline === 'none' ? colour : OUTLINE_STYLE[outline].stroke,
+        borderWidth: outline === 'none' ? 1.5 : OUTLINE_STYLE[outline].width,
+        ink: mixColours(colour, COLORS.charcoal900, 0.35),
+        accent: colour,
+    }
+}
+
+/** A size in metres for the card ("2.4"), without trailing zeros. */
+function metres(mm: number) {
+    return String(Number((mm / 1000).toFixed(1)))
 }
 
 /** The machine's rectangle, front marker, label and needs badges, drawn centred on (0, 0). */
@@ -394,6 +493,7 @@ export function MachineBody({
     needs,
     fit,
     dashed = false,
+    lifted = outline === 'selected',
 }: {
     typeId: string
     label?: string
@@ -409,13 +509,17 @@ export function MachineBody({
     needs: Need[]
     fit: number
     dashed?: boolean
+    /** Raised off the floor (bigger shadow): selected or hovered. */
+    lifted?: boolean
 }) {
     const type = machineTypeFor({ typeId, length, width, depth })
     if (!type) return null
 
     const w = type.width * SCALE
     const h = type.depth * SCALE
-    const style = OUTLINE_STYLE[outline]
+
+    // Belts use the card colours too: tinted by the station colour, red-tinted on a clash.
+    const card = cardColours(stationColour(colour, type.category), outline)
 
     if (type.conveyor) {
         return (
@@ -425,15 +529,30 @@ export function MachineBody({
                     length={type.width}
                     width={type.depth}
                     rotation={rotation}
-                    stroke={outline === 'none' ? COLORS.grey700 : style.stroke}
-                    strokeWidth={style.width}
+                    colour={card.accent}
+                    stroke={card.border}
+                    strokeWidth={card.borderWidth}
                     dashed={dashed}
+                    lifted={lifted}
                     fit={fit}
                 />
                 <NeedsBadges needs={needs} top={-h / 2} fit={fit} />
             </>
         )
     }
+
+    // Rounded like a game tile, but never so round that a narrow bench turns into a pill.
+    const radius = Math.min(6, w * 0.18, h * 0.18)
+    // Shadows scale with the zoom in Konva, so they are given in screen px divided by it.
+    const name = label ?? machineShortName(typeId, 1)
+    const nameSize = 9
+    const dimsSize = 7
+    // The label stays level whichever way the machine faces, so it is sized to the room a
+    // level line has inside the turned card. The dimensions line only when two lines fit.
+    const twoLines = uprightTextRoom(w, h, rotation, nameSize + dimsSize + 6)
+    const showDims = twoLines.height >= 30 && twoLines.width >= 34
+    const room = showDims ? twoLines : uprightTextRoom(w, h, rotation, nameSize + 2)
+    const textW = Math.max(0, room.width - 4)
 
     return (
         <>
@@ -443,57 +562,79 @@ export function MachineBody({
                     y={-h / 2}
                     width={w}
                     height={h}
-                    fill={colour ?? CANVAS.machineFill}
-                    stroke={style.stroke}
-                    strokeWidth={style.width}
+                    cornerRadius={radius}
+                    fill={card.fill}
+                    stroke={card.border}
+                    strokeWidth={card.borderWidth}
                     strokeScaleEnabled={false}
                     hitStrokeWidth={12 / fit}
                     dash={dashed ? [6, 4] : undefined}
-                    shadowColor="black"
-                    shadowOpacity={outline === 'selected' ? 0.3 : 0}
-                    shadowBlur={6}
+                    shadowColor={COLORS.charcoal900}
+                    shadowOpacity={lifted ? 0.28 : 0.16}
+                    shadowBlur={(lifted ? 14 : 6) / fit}
+                    shadowOffsetY={(lifted ? 5 : 2) / fit}
                 />
-                <MachineMark typeId={typeId} w={w} h={h} />
-                <FrontMarker w={w} h={h} />
+                <MachineMark typeId={typeId} w={w} h={h} ink={card.ink} />
+                <FrontMarker w={w} h={h} radius={radius} colour={card.accent} />
+            </Group>
+            {/* Level label on top of the turned card, so it reads the right way up. */}
+            <Group listening={false}>
                 <Text
-                    x={-w / 2}
-                    y={-h / 2}
-                    width={w}
-                    height={h}
-                    padding={4}
-                    text={label ?? machineShortName(typeId, 1)}
-                    fontSize={10}
-                    fontFamily="Arial, Helvetica, sans-serif"
-                    fill={CANVAS.machineLabel}
+                    fontFamily={CANVAS_FONT}
+                    x={-textW / 2}
+                    y={showDims ? -nameSize * 0.85 : -Math.min(room.height, h + w) / 2}
+                    width={textW}
+                    height={showDims ? undefined : Math.min(room.height, h + w)}
+                    padding={0}
+                    text={name}
+                    fontSize={nameSize}
+                    fontStyle="bold"
+                    fill={card.ink}
                     align="center"
                     verticalAlign="middle"
-                    wrap="word"
+                    wrap={showDims ? 'none' : 'word'}
                     ellipsis
                     listening={false}
                 />
+                {showDims && (
+                    <Text
+                        fontFamily={CANVAS_FONT}
+                        x={-textW / 2}
+                        y={nameSize * 0.35}
+                        width={textW}
+                        text={`${metres(type.width)} × ${metres(type.depth)} m`}
+                        fontSize={dimsSize}
+                        fill={card.ink}
+                        opacity={0.75}
+                        align="center"
+                        wrap="none"
+                        ellipsis
+                        listening={false}
+                    />
+                )}
             </Group>
             <NeedsBadges needs={needs} top={-h / 2} fit={fit} />
         </>
     )
 }
 
-/** Thin bar along the machine's front edge (front faces down at rotation 0). */
-function FrontMarker({ w, h }: { w: number; h: number }) {
-    const t = 2.5 // thickness, px
-    const inset = 2
+/**
+ * The machine's front (it faces down at rotation 0): a coloured strip along the front edge
+ * with a small arrow pointing out of it, so the work/flow direction reads at a glance.
+ */
+function FrontMarker({ w, h, radius, colour }: { w: number; h: number; radius: number; colour: string }) {
+    const t = Math.min(3, h * 0.08) // strip thickness, px
+    const inset = Math.max(radius, 2)
+    const a = Math.min(5, w * 0.08, h * 0.12) // arrow half-width, px
+    const stripY = h / 2 - t - 1.5
 
     return (
-        <Rect
-            x={-w / 2 + inset}
-            y={h / 2 - t - inset}
-            width={w - 2 * inset}
-            height={t}
-            fill={CANVAS.frontMarker}
-            opacity={0.8}
-            listening={false}
-        />
+        <Group listening={false}>
+            <Rect x={-w / 2 + inset} y={stripY} width={w - 2 * inset} height={t} cornerRadius={t / 2} fill={colour} opacity={0.85} />
+            {/* A small tab poking out of the front edge, clear of the label inside. */}
+            <Line points={[-a, h / 2, a, h / 2, 0, h / 2 + a * 0.9]} closed fill={colour} lineJoin="round" />
+        </Group>
     )
-
 }
 
 /** Small icons floating above a machine for each utility it is missing. */

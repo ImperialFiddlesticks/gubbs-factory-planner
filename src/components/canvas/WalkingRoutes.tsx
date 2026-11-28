@@ -5,7 +5,7 @@ import { EXIT_MAX_DISTANCE, UTILITY_KINDS, utilityRadius } from '@/data/utilitie
 import { bodyBox } from '@/lib/geometry'
 import { extinguisherRoutes } from '@/lib/validation'
 import { walkingRoutes, type WalkingRoute } from '@/lib/walking'
-import { CANVAS, COLORS } from '@/theme'
+import { CANVAS, COLORS, CANVAS_FONT } from '@/theme'
 import type { Floorplan, MachineInstance, Utility, Wall } from '@/types'
 
 /** Colours for a route kind: within the limit, and too far. */
@@ -97,7 +97,7 @@ export function WalkingRoutes({
                   pointerWidth={8}
                   pointerHeight={5}
                 />
-                <Text
+                <Text fontFamily={CANVAS_FONT}
                   text={r.ok ? walked : `${walked} > ${r.limit / 1000} m`}
                   fontSize={11}
                   padding={3}

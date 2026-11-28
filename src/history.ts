@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { selection, usePlanner, type PlannerState } from '@/store'
+import { playSound } from '@/lib/sound'
 
 /**
  * Undo / redo for the layout. Every change to the layout (floor, machines, utilities, pillars,
@@ -95,6 +96,7 @@ export function undo() {
   if (!previous) return
   useHistory.setState({ past: past.slice(0, -1), future: [layoutOf(usePlanner.getState()), ...future] })
   restore(previous)
+  playSound('undo')
 }
 
 export function redo() {
@@ -103,4 +105,5 @@ export function redo() {
   if (!next) return
   useHistory.setState({ past: [...past, layoutOf(usePlanner.getState())], future: future.slice(1) })
   restore(next)
+  playSound('redo')
 }

@@ -59,3 +59,40 @@ export function dragGroup(id: string): string[] {
   ids.delete(id)
   return [...ids]
 }
+
+/**
+ * How much room an upright text block has inside a card turned by `rotation` degrees: the
+ * width of the widest level band of height `blockHeight`, centred on the card, that stays
+ * inside it, and the card's height straight through its centre. `w` and `h` are the card's
+ * own (unturned) size. Lets labels stay level and readable whichever way an item faces.
+ */
+export function uprightTextRoom(w: number, h: number, rotation: number, blockHeight: number) {
+  const a = (rotation * Math.PI) / 180
+  const cos = Math.cos(a)
+  const sin = Math.sin(a)
+  const corners = [
+    [-w / 2, -h / 2],
+    [w / 2, -h / 2],
+    [w / 2, h / 2],
+    [-w / 2, h / 2],
+  ].map(([x, y]) => [x * cos - y * sin, x * sin + y * cos])
+  /** Where the level line at height y crosses the turned card: [left, right], or null. */
+  const span = (y: number): [number, number] | null => {
+    const xs: number[] = []
+    for (let i = 0; i < 4; i++) {
+      const [x1, y1] = corners[i]
+      const [x2, y2] = corners[(i + 1) % 4]
+      if ((y1 - y) * (y2 - y) > 0 || y1 === y2) continue
+      xs.push(x1 + ((y - y1) / (y2 - y1)) * (x2 - x1))
+    }
+    return xs.length >= 2 ? [Math.min(...xs), Math.max(...xs)] : null
+  }
+  const half = Math.min(blockHeight / 2, h / 2, w / 2)
+  const top = span(-half)
+  const bottom = span(half)
+  // The card is symmetric about its centre, so the band's left and right edges mirror.
+  const width = top && bottom ? Math.max(0, Math.min(top[1], bottom[1]) - Math.max(top[0], bottom[0])) : 0
+  // Straight up through the centre: the same question for a level card turned the other way.
+  const height = Math.min(Math.abs(cos) > 1e-6 ? h / Math.abs(cos) : Infinity, Math.abs(sin) > 1e-6 ? w / Math.abs(sin) : Infinity)
+  return { width, height }
+}

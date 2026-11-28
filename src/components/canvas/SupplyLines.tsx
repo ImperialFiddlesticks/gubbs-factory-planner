@@ -2,7 +2,7 @@ import { Circle, Group, Label, Line, Tag, Text } from 'react-konva'
 import { SCALE } from '@/constants'
 import { UTILITY_KINDS } from '@/data/utilities'
 import { powerAssignments, supplyLines } from '@/lib/validation'
-import { CANVAS } from '@/theme'
+import { CANVAS, CANVAS_FONT } from '@/theme'
 import type { MachineInstance, TruckServiceStation, TruckType, Utility, Wall } from '@/types'
 
 /**
@@ -110,7 +110,7 @@ export function PowerLoadTags({
                 pointerWidth={8}
                 pointerHeight={5}
               />
-              <Text text={text} fontSize={11} fontStyle="bold" padding={3} fill="white" />
+              <Text fontFamily={CANVAS_FONT} text={text} fontSize={11} fontStyle="bold" padding={3} fill="white" />
             </Label>
           </Group>
         )

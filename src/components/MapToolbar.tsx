@@ -32,7 +32,7 @@ export function MapToolbar({
       <div
         role="toolbar"
         aria-label="Map controls"
-        className="theme-dark absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border bg-background/95 px-2 py-1 text-foreground shadow-lg backdrop-blur"
+        className="theme-chrome absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border bg-background/95 px-2 py-1 text-foreground shadow-lg backdrop-blur"
       >
         <UndoRedo />
         <Divider />

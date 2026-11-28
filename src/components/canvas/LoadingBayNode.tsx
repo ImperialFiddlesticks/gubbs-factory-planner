@@ -4,7 +4,7 @@ import { clickItem, dragGroup, pressItem, setCursor, type DragState } from '@/co
 import { SCALE } from '@/constants'
 import { loadingBayCentroid, loadingBayConnection, loadingBayIssue } from '@/lib/loadingBays'
 import { usePlanner } from '@/store'
-import { CANVAS, COLORS } from '@/theme'
+import { CANVAS, COLORS, CANVAS_FONT } from '@/theme'
 import type { Floorplan, LoadingBay, LoadingDock, Point } from '@/types'
 
 export function LoadingBayNode({
@@ -128,7 +128,7 @@ export function LoadingBayNode({
           onMouseLeave={(e) => setCursor(e, '')}
         />
       ))}
-      <Text
+      <Text fontFamily={CANVAS_FONT}
         x={(Math.min(...shownOutline.map((point) => point.x)) - center.x) * SCALE + 8}
         y={(Math.min(...shownOutline.map((point) => point.y)) - center.y) * SCALE + 8}
         text={bay.name}

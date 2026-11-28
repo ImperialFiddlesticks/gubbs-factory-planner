@@ -40,7 +40,7 @@ export function StepLayout({
 
   return (
     <form onSubmit={handleSubmit} className="flex h-screen flex-col">
-      <header className="theme-dark border-b">
+      <header className="relative z-10 border-b bg-card shadow-soft">
         <div className="flex h-14 items-center gap-3 px-4">
           <span className="h-6 w-1 bg-accent" aria-hidden />
           <span className="text-sm font-semibold tracking-widest uppercase">Factory Planner</span>

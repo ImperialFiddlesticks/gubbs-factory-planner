@@ -161,11 +161,25 @@ Decided: a zone is selected and moved by its name tag (dragging elsewhere inside
 ### Comments (working together)
 - [x] Comments on an item or pinned to a spot on the floor, with author, time and open/resolved status; markers on the canvas; a "Discussion" section listing them; saved with the project in the browser — on master (PR #19).
 - [ ] Sharing between people (needs the backend to sync plans); replies/threads if wanted.
+- [x] Chat bubbles on the canvas (asked for 2026-11-28). Today a comment is a small round dot next to its item, and clicking it selects the comment in the side panel. Instead:
+  - Each comment shows as a **chat-bubble icon** next to what it's on (the machine, utility, pillar, wall, or the spot on the floor). Open comments stand out; resolved ones are faded. Several comments on one thing show a count.
+  - **Clicking it opens a bigger chat bubble right there on the canvas** with the comment text, author and time, plus actions: **mark as resolved** (or reopen) and delete. Clicking outside, or the bubble's close button, folds it back to the icon.
+  - With several comments on one thing, the open bubble lists them all, each with its own actions.
+  - The bubble keeps the same size on screen when zooming, and stays next to its item while it's dragged.
 
 ### Open floor shapes
 - A floor side can be marked open (no wall) where the hall continues into an adjoining area, e.g. a corridor or another hall. Drawn as a dashed edge; machines may not cross it, but walking routes can leave through it (counts like a wide exit), and exits don't snap to it. Chosen per side in the wizard's floor step and editable in the planner.
 
 ### Design rework
+
+**Decided 2026-11-28:** fun and game-like, inspired by the IKEA kitchen planner and The Sims build mode. Fairly neutral colours, but friendlier. Light warm panels replace the dark chrome; Saab blue and yellow stay as accents. Font: Nunito (Google Fonts). Built one step at a time, ranked by how it shows in the demo video:
+
+- [x] 1. Theme foundation: a warm light palette (sand/off-white panels, charcoal text), Nunito, larger radius, soft shadow tokens. The top bar and side panels move off `.theme-dark`, hard-coded dark colours are cleaned up, and `theme.ts` is kept in sync.
+- [x] 2. Friendly floor: warm off-white floor with a subtle grid, a thick soft building outline, and a calm backdrop behind the floor.
+- [x] 3. Machine cards: light rounded cards with a soft border and shadow, a category tint, short numbered names ("CNC 01") with dimensions, and a front/flow arrow. Warning state: red-tinted card.
+- [x] 4. Build-mode catalog: big item tiles with icons, round category tabs (Sims-style), and a hover lift.
+- [x] 5. Juice and sound: dust puff on landing, lift on pick-up and hover, wobble + buzz on a clash, Planet Zoo-style info card on library tiles, synthesised sounds (place, drop, snap, clash, rotate, remove, undo/redo, goal fanfare) with a mute button in the top bar.
+- [x] 6. Legend: a foldable card in the bottom-left of the work area with the floor's colours and outlines, the grid size, and "N checks flagged" / "All checks pass".
 
 Inspiration (Factory Runs screenshot): light, schematic look instead of solid blue boxes. Candidates only: we pick which parts to use when we get to this section.
 

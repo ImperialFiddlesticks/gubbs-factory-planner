@@ -11,7 +11,7 @@ import { PillarBody, PillarNode } from '@/components/canvas/PillarNode'
 import { WallBody, WallNode } from '@/components/canvas/WallNode'
 import { LoadingDockGlyph, LoadingDockNode } from '@/components/canvas/LoadingDockNode'
 import { LoadingBayNode } from '@/components/canvas/LoadingBayNode'
-import { ForkliftGlyph, TruckLogisticsNodes } from '@/components/canvas/TruckLogisticsNodes'
+import { ForkliftGlyphWithLabel, TruckLogisticsNodes } from '@/components/canvas/TruckLogisticsNodes'
 import { ZoneNode, ZoneShape } from '@/components/canvas/ZoneNode'
 import { CoverageCircle, UtilityGlyph, UtilityNode } from '@/components/canvas/UtilityNode'
 import { PowerLoadTags, SupplyLines } from '@/components/canvas/SupplyLines'
@@ -41,8 +41,12 @@ import {
 } from '@/lib/geometry'
 import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validation'
 import { useElementSize } from '@/lib/useElementSize'
+import { markPlaced } from '@/lib/animations'
+import { CommentBubble } from '@/components/CommentBubble'
+import { MapLegend } from '@/components/MapLegend'
+import { playSound } from '@/lib/sound'
 import { usePlanner, type Placing } from '@/store'
-import { CANVAS } from '@/theme'
+import { CANVAS, CANVAS_FONT } from '@/theme'
 import type { Floorplan, ForkliftInstance, LoadingBay, LoadingDock, MachineInstance, Pillar, Point, TruckType, Utility, Wall, Zone, ZoneKind } from '@/types'
 
 interface FloorCanvasProps {
@@ -69,7 +73,7 @@ export function FloorCanvas({ floorplan, onboardingMessage, onSkipOnboarding }: 
         <div
           role="status"
           aria-live="polite"
-          className="theme-dark pointer-events-auto absolute top-4 left-1/2 z-50 flex w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 items-start justify-between gap-4 rounded-md border bg-background/95 p-3 shadow-lg backdrop-blur max-[579px]:top-20"
+          className="theme-chrome pointer-events-auto absolute top-4 left-1/2 z-50 flex w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 items-start justify-between gap-4 rounded-md border bg-background/95 p-3 shadow-lg backdrop-blur max-[579px]:top-20"
         >
           <p className="text-sm leading-relaxed">{onboardingMessage}</p>
           <button
@@ -334,10 +338,20 @@ function FloorStage({
   usePlacingKeys()
   useSelectionKeys()
 
-  const active = keepGhostOnFloor(
-    activeItem(placing, pointer, drag, machines, forkliftInstances, availableTruckTypes, utilities, pillars, walls, loadingDocks, loadingBays, floorplan),
-    floorplan,
-  )
+  const rawActive = activeItem(placing, pointer, drag, machines, forkliftInstances, availableTruckTypes, utilities, pillars, walls, loadingDocks, loadingBays, floorplan)
+  const active = keepGhostOnFloor(rawActive, floorplan)
+
+  // Juice: a click the moment the machine being placed snaps onto a conveyor or belt end
+  // (the snapped ghost sits away from the cursor, or is turned to face the belt).
+  const ghostSnapped =
+    placing?.kind === 'machine' &&
+    pointer !== null &&
+    rawActive?.kind === 'machine' &&
+    rawActive.item.id === GHOST_ID &&
+    (rawActive.item.x !== pointer.x || rawActive.item.y !== pointer.y || rawActive.item.rotation !== placing.rotation)
+  useEffect(() => {
+    if (ghostSnapped) playSound('snap')
+  }, [ghostSnapped])
 
   // Items moving along with the dragged one (multi-selection, conveyor run), at their live spot.
   const delta = groupDelta(drag, machines, forkliftInstances, utilities, pillars, walls, zones, loadingDocks, loadingBays, floorplan)
@@ -450,12 +464,14 @@ function FloorStage({
         const end = straightenWall(placing.start, at)
         if (wallLength({ start: placing.start, end }) < MIN_WALL_LENGTH) return
         addWall(placing.start, end)
+        playSound('place')
         cancelPlacing()
         return
       }
       if (at && placing.kind === 'forklift') {
         if (invalidForkliftIds.has(GHOST_ID)) return
         addForkliftInstance(placing.typeId, active?.kind === 'forklift' ? active.item : at, placing.rotation)
+        playSound('place')
         return
       }
       if (at && placing.kind === 'machine') {
@@ -465,8 +481,12 @@ function FloorStage({
         if (active?.kind === 'machine' && !keepOnFloor([active.item], { x: 0, y: 0 }, floorplan)) return
         // The ghost's rotation: a machine snapped onto a belt end is turned to face it.
         const rotation = active?.kind === 'machine' ? active.item.rotation : placing.rotation
+        // Juice: the new machine lands with a thunk and a dust puff (see Machine).
+        markPlaced()
+        playSound('place')
         addMachine(placing.typeId, { x: ghost.x, y: ghost.y, rotation, length: placing.length })
       } else if (at && placing.kind === 'utility') {
+        playSound('place')
         addUtility(placing.utilityKind, at.x, at.y)
       } else if (at && placing.kind === 'loadingDock') {
         const position = active?.kind === 'loadingDock' && active.item.id === GHOST_ID
@@ -517,6 +537,7 @@ function FloorStage({
         else if (placing.logisticsKind === 'crossing') onPlacementError('No crossing created. Check the route and pedestrian-route geometry, then try again.')
         return
       } else if (at && placing.kind === 'pillar') {
+        playSound('place')
         addPillar(at.x, at.y)
       }
       cancelPlacing()
@@ -551,6 +572,7 @@ function FloorStage({
     const r = at && boxRect(placing.start, at)
     if (at && r && r.width >= MIN_ZONE_SIZE && r.depth >= MIN_ZONE_SIZE) {
       addZone(placing.zoneKind, placing.start, at)
+      playSound('place')
       cancelPlacing()
     } else {
       setZoneStart(null)
@@ -670,7 +692,17 @@ function FloorStage({
     >
       <Layer ref={layerRef} x={originX} y={originY} scaleX={fit} scaleY={fit}>
         {/* Floor, grid and walls follow the floor's outline (its rectangle when it has none). */}
-        <Line points={floorPoints} closed fill={CANVAS.floor} listening={false} />
+        {/* Konva scales shadows with the layer, so blur and offset are divided by the zoom. */}
+        <Line
+          points={floorPoints}
+          closed
+          fill={CANVAS.floor}
+          shadowColor={CANVAS.floorShadow}
+          shadowBlur={28 / fit}
+          shadowOffsetY={8 / fit}
+          shadowOpacity={0.14}
+          listening={false}
+        />
         <Group clipFunc={clipToFloor} listening={false}>
           <Grid floorplan={floorplan} fit={fit} />
         </Group>
@@ -678,7 +710,7 @@ function FloorStage({
           points={floorPoints}
           closed
           stroke={CANVAS.floorStroke}
-          strokeWidth={2}
+          strokeWidth={6}
           strokeScaleEnabled={false}
           lineJoin="round"
           listening={false}
@@ -906,7 +938,7 @@ function FloorStage({
                 dashed
               />
             ) : active.kind === 'forklift' ? (
-              activeForkliftType ? <ForkliftGlyph
+              activeForkliftType ? <ForkliftGlyphWithLabel
                 type={activeForkliftType}
                 rotation={active.item.rotation}
                 fit={fit}
@@ -944,6 +976,18 @@ function FloorStage({
         {box && <SelectionBox rect={boxRect(box.start, box.end)} />}
       </Layer>
     </Stage>
+      <CommentBubble
+        comments={comments}
+        targets={{ machines: liveMachines, utilities: shownUtilities, pillars: shownPillars, walls: shownWalls }}
+        originX={originX}
+        originY={originY}
+        fit={fit}
+        areaWidth={size.width}
+      />
+      <MapLegend
+        gridSize={floorplan.gridSize}
+        flagged={issues.filter((issue) => !issue.ids.includes(GHOST_ID)).length}
+      />
       <MapToolbar
         zoom={zoom}
         onZoomIn={() => zoomAtCenter(zoom * 1.2)}
@@ -1005,7 +1049,7 @@ function ZoneGhost({ kind, a, b, fit }: { kind: ZoneKind; a: Point; b: Point; fi
       <Group x={(r.x + r.width) * SCALE} y={(r.y + r.depth) * SCALE} scaleX={1 / fit} scaleY={1 / fit}>
         <Label x={6} y={6}>
           <Tag fill={CANVAS.selected} cornerRadius={3} />
-          <Text
+          <Text fontFamily={CANVAS_FONT}
             text={`${(r.width / 1000).toFixed(1)} × ${(r.depth / 1000).toFixed(1)} m · ${zoneArea(r)} m²`}
             fontSize={11}
             padding={4}
@@ -1038,7 +1082,7 @@ function ParkingRectangleGhost({ start, end, fit }: { start: Point; end: Point; 
   const px = { x: rect.x * SCALE, y: rect.y * SCALE, width: rect.width * SCALE, height: rect.depth * SCALE }
   return <Group listening={false}>
     <Rect {...px} fill="#facc1533" stroke="#ca8a04" strokeWidth={2 / fit} dash={[8 / fit, 4 / fit]} />
-    <Text text={`${(rect.width / 1000).toFixed(1)} × ${(rect.depth / 1000).toFixed(1)} m`} x={px.x + 5 / fit} y={px.y + 5 / fit} fontSize={11 / fit} fill="#854d0e" />
+    <Text fontFamily={CANVAS_FONT} text={`${(rect.width / 1000).toFixed(1)} × ${(rect.depth / 1000).toFixed(1)} m`} x={px.x + 5 / fit} y={px.y + 5 / fit} fontSize={11 / fit} fill="#854d0e" />
   </Group>
 }
 
@@ -1288,19 +1332,33 @@ const TOOLBAR_SPACE = 40
 /** Grid lines closer than this on screen are thinned out, px. */
 const MIN_GRID_PX = 6
 
-/** All grid lines drawn as one shape, so large floors stay fast. */
+/** Stronger grid lines are drawn at this interval, mm. */
+const MAJOR_GRID_MM = 1000
+
+/** All grid lines drawn as one shape per level, so large floors stay fast. */
 function Grid({ floorplan, fit }: { floorplan: Floorplan; fit: number }) {
   const { width, depth, gridSize } = floorplan
   // Draw every nth line when the grid would be too dense to see.
   const every = Math.max(1, Math.ceil(MIN_GRID_PX / (gridSize * SCALE * fit)))
-  const step = gridSize * every * SCALE
+  const stepMm = gridSize * every
+  // Metre lines only when they fall on minor lines and are not the minor lines themselves.
+  const showMajor = stepMm < MAJOR_GRID_MM && MAJOR_GRID_MM % stepMm === 0
   const w = width * SCALE
   const h = depth * SCALE
 
   return (
+    <>
+      <GridLines step={stepMm * SCALE} w={w} h={h} stroke={CANVAS.grid} />
+      {showMajor && <GridLines step={MAJOR_GRID_MM * SCALE} w={w} h={h} stroke={CANVAS.gridMajor} />}
+    </>
+  )
+}
+
+function GridLines({ step, w, h, stroke }: { step: number; w: number; h: number; stroke: string }) {
+  return (
     <Shape
       listening={false}
-      stroke={CANVAS.grid}
+      stroke={stroke}
       strokeWidth={1}
       strokeScaleEnabled={false}
       sceneFunc={(ctx, shape) => {
