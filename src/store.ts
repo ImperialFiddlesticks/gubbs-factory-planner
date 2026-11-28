@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import { getMachineType } from '@/data/catalog'
 import type { EquipmentCategoryId } from '@/data/categories'
 import { DEFAULT_CONVEYOR_LENGTH } from '@/data/conveyors'
+import { DEFAULT_FACTORY_HEIGHT_MM } from '@/data/defaults'
 import { DEFAULT_HEIGHT_LIMIT, ZONE_KINDS } from '@/data/zones'
 import { exampleWorkshop } from '@/data/exampleWorkshop'
 import { DEFAULT_LAYERS, UTILITY_LAYER, utilityVisible, type LayerId } from '@/data/layers'
@@ -162,6 +163,7 @@ export interface PlannerState {
    * Machines are left where they are; exits are moved onto the new walls.
    */
   setFloorplan: (width: number, depth: number) => void
+  setFloorplanHeight: (height: number) => void
 
   /** Add a machine; without `at` it goes to the centre of the floor. */
   addMachine: (typeId: string, at?: { x: number; y: number; rotation?: Rotation; length?: number }) => void
@@ -414,7 +416,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   newFloorplan: (input, pillars = []) =>
     set((s) => ({
       projects: keepOpenProject(s),
-      floorplan: { id: crypto.randomUUID(), ...input },
+      floorplan: { id: crypto.randomUUID(), ...input, height: input.height ?? DEFAULT_FACTORY_HEIGHT_MM },
       machines: [],
       utilities: [],
       pillars: pillars.map((p) => ({ id: crypto.randomUUID(), ...p })),
@@ -551,6 +553,9 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         ),
       }
     }),
+
+  setFloorplanHeight: (height) =>
+    set((s) => s.floorplan ? { floorplan: { ...s.floorplan, height } } : s),
 
   addMachine: (typeId, at) => {
     const { floorplan } = get()

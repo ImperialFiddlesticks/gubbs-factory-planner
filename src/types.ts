@@ -25,6 +25,8 @@ export interface Floorplan {
   width: number
   /** Size along y, mm. For a shaped floor, the depth of its bounding box. */
   depth: number
+  /** Factory height, mm. Optional for layouts saved before height was introduced. */
+  height?: number
   /** Snap grid spacing, mm. */
   gridSize: number
   /**
@@ -310,6 +312,7 @@ export const FloorplanSchema = z.object({
   name: z.string(),
   width: z.number().positive(),
   depth: z.number().positive(),
+  height: z.number().positive().optional(),
   gridSize: z.number().positive(),
   outline: z.array(PointSchema).min(3).optional(),
 }) satisfies z.ZodType<Floorplan>

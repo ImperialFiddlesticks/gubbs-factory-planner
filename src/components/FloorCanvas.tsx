@@ -47,9 +47,11 @@ import type { Floorplan, ForkliftInstance, LoadingBay, LoadingDock, MachineInsta
 
 interface FloorCanvasProps {
   floorplan: Floorplan | null
+  onboardingMessage: string | null
+  onSkipOnboarding: () => void
 }
 
-export function FloorCanvas({ floorplan }: FloorCanvasProps) {
+export function FloorCanvas({ floorplan, onboardingMessage, onSkipOnboarding }: FloorCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const size = useElementSize(containerRef)
   const placing = usePlanner((s) => s.placing)
@@ -58,11 +60,27 @@ export function FloorCanvas({ floorplan }: FloorCanvasProps) {
   return (
     <main
       ref={containerRef}
-      className="relative overflow-hidden"
+      className="planner-canvas relative min-h-0 min-w-0 overflow-hidden"
       style={{ backgroundColor: CANVAS.background }}
     >
       {floorplan && size.width > 0 && <FloorStage key={floorplan.id} floorplan={floorplan} size={size} onPlacementError={(message) => { if (placing) setPlacementError({ placing, message }) }} />}
       <PlacingHint error={placementError?.placing === placing ? placementError.message : null} />
+      {onboardingMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="theme-dark pointer-events-auto absolute top-4 left-1/2 z-50 flex w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 items-start justify-between gap-4 rounded-md border bg-background/95 p-3 shadow-lg backdrop-blur max-[579px]:top-20"
+        >
+          <p className="text-sm leading-relaxed">{onboardingMessage}</p>
+          <button
+            type="button"
+            onClick={onSkipOnboarding}
+            className="shrink-0 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Skip
+          </button>
+        </div>
+      )}
     </main>
   )
 }
@@ -210,15 +228,16 @@ function FloorStage({
   const viewH = size.height - TOOLBAR_SPACE
   // Fit the hall and any exterior bays together without moving their shared world coordinates.
   const baseFit = Math.min(
-    1,
     (size.width - 2 * VIEW_PADDING) / worldW,
     (viewH - 2 * VIEW_PADDING) / worldH,
   )
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [panActive, setPanActive] = useState(false)
+  const [navigationTool, setNavigationTool] = useState<'select' | 'hand'>('select')
   const panStart = useRef<{ pointer: Point; pan: Point } | null>(null)
   const spacePan = useSpacePan()
+  const panningEnabled = navigationTool === 'hand' || spacePan
   const fit = baseFit * zoom
   // Keep the full world bounds centred at the current zoom, then apply any user panning.
   const originX = Math.round((size.width - worldW * fit) / 2 - worldBounds.minX * SCALE * fit + pan.x)
@@ -278,7 +297,8 @@ function FloorStage({
   const [box, setBox] = useState<{ start: Point; end: Point; add: boolean } | null>(null)
 
   function zoomAround(nextZoom: number, anchor: Point) {
-    const boundedZoom = Math.max(1, Math.min(4, nextZoom))
+    const boundedZoom = Math.max(0.25, Math.min(4, nextZoom))
+    if (boundedZoom === zoom) return
     const oldFit = baseFit * zoom
     const nextFit = baseFit * boundedZoom
     const oldOriginX = (size.width - worldW * oldFit) / 2 - worldBounds.minX * SCALE * oldFit + pan.x
@@ -301,6 +321,14 @@ function FloorStage({
   function fitToView() {
     setZoom(1)
     setPan({ x: 0, y: 0 })
+  }
+
+  function changeNavigationTool(tool: 'select' | 'hand') {
+    if (tool === 'hand') {
+      if (placing) cancelPlacing()
+      if (commentDraft) cancelCommentPlacement()
+    }
+    setNavigationTool(tool)
   }
 
   usePlacingKeys()
@@ -401,7 +429,7 @@ function FloorStage({
       if (at) addLocationComment(at.x, at.y)
       return
     }
-    if (spacePan && !placing && 'button' in e.evt && e.evt.button === 0) {
+    if (panningEnabled && !placing && (!('button' in e.evt) || e.evt.button === 0)) {
       const pointer = e.target.getStage()?.getPointerPosition()
       if (pointer) {
         panStart.current = { pointer, pan }
@@ -603,7 +631,7 @@ function FloorStage({
     <Stage
       width={size.width}
       height={size.height}
-      style={{ cursor: placing ? 'crosshair' : panActive ? 'grabbing' : spacePan ? 'grab' : undefined }}
+      style={{ cursor: placing ? 'crosshair' : panActive ? 'grabbing' : panningEnabled ? 'grab' : undefined }}
       onMouseDown={handlePointerDown}
       onTouchStart={handlePointerDown}
       onMouseMove={handlePointerMove}
@@ -616,6 +644,8 @@ function FloorStage({
         finishBox()
       }}
       onTouchEnd={() => {
+        panStart.current = null
+        setPanActive(false)
         finishZone()
         finishLogisticsRectangle()
         finishBox()
@@ -661,7 +691,7 @@ function FloorStage({
             floorplan={floorplan}
             selected={selected.has(bay.id)}
             invalid={bay.outline.length < 3 || (bay.id === GHOST_ID && placing?.kind === 'loadingBay' && placing.outline.length < 3) || Boolean(loadingBayIssue(bay, floorplan, liveLoadingDocks, liveLoadingBays))}
-            interactive={bay.id !== GHOST_ID && !placing && !lockStructures && !spacePan && !commentDraft}
+            interactive={bay.id !== GHOST_ID && !placing && !lockStructures && !panningEnabled && !commentDraft}
             fit={fit}
             onDrag={setDrag}
           />
@@ -674,7 +704,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(dock.id)}
             invalid={Boolean(loadingDockIssue(dock, floorplan, liveLoadingDocks))}
-            interactive={!placing && !lockStructures && !spacePan && !commentDraft}
+            interactive={!placing && !lockStructures && !panningEnabled && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -692,7 +722,7 @@ function FloorStage({
           barriers={safetyBarriers}
           selectedIds={selectedIds}
           fit={fit}
-          interactive={!placing && !spacePan && !commentDraft}
+          interactive={!placing && !panningEnabled && !commentDraft}
         />
         {placing?.kind === 'logistics-path' && placing.points.length > 0 && pointer && (
           <Line points={[...placing.points.flatMap((point) => [point.x * SCALE, point.y * SCALE]), pointer.x * SCALE, pointer.y * SCALE]} stroke={placing.logisticsKind === 'truck-route' ? '#e87924' : placing.logisticsKind === 'pedestrian-route' ? '#8b5cf6' : '#374151'} strokeWidth={(placing.logisticsKind === 'truck-route' ? DEFAULT_FORKLIFT_ROUTE_WIDTH_MM : placing.logisticsKind === 'pedestrian-route' ? DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM : DEFAULT_BARRIER_THICKNESS_MM) * SCALE} opacity={0.65} lineCap="round" lineJoin="round" dash={placing.logisticsKind === 'barrier' ? [10 / fit, 5 / fit] : undefined} listening={false} />
@@ -709,7 +739,7 @@ function FloorStage({
               fit={fit}
               selected={selected.has(z.id)}
               resizable={selectedId === z.id}
-              interactive={!placing && !spacePan && !commentDraft}
+              interactive={!placing && !panningEnabled && !commentDraft}
               onDrag={setDrag}
             />
           ))}
@@ -736,7 +766,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(w.id)}
             invalid={spaceBad.has(w.id)}
-            interactive={!placing && !lockStructures && !spacePan && !commentDraft}
+            interactive={!placing && !lockStructures && !panningEnabled && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -747,7 +777,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(p.id)}
             invalid={spaceBad.has(p.id)}
-            interactive={!placing && !lockStructures && !spacePan && !commentDraft}
+            interactive={!placing && !lockStructures && !panningEnabled && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -768,7 +798,7 @@ function FloorStage({
               outline={outlineFor(m.id)}
               needs={needs.get(m.id) ?? []}
               fit={fit}
-              interactive={!placing && !spacePan && !commentDraft}
+              interactive={!placing && !panningEnabled && !commentDraft}
               onDrag={setDrag}
             />
           ))}
@@ -834,7 +864,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(u.id)}
             invalid={utilityBad.has(u.id)}
-            interactive={!placing && !spacePan && !commentDraft}
+            interactive={!placing && !panningEnabled && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -919,6 +949,8 @@ function FloorStage({
         onZoomIn={() => zoomAtCenter(zoom * 1.2)}
         onZoomOut={() => zoomAtCenter(zoom / 1.2)}
         onFit={fitToView}
+        navigationTool={navigationTool}
+        onNavigationToolChange={changeNavigationTool}
       />
     </>
   )
