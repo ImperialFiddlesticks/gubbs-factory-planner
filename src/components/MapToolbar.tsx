@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Layers as LayersIcon, Lock, LockOpen, Maximize, Redo2, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Layers as LayersIcon, Lock, LockOpen, Maximize, Redo2, Ruler, Undo2, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
@@ -18,11 +18,15 @@ export function MapToolbar({
   onZoomIn,
   onZoomOut,
   onFit,
+  measuring,
+  onToggleMeasure,
 }: {
   zoom: number
   onZoomIn: () => void
   onZoomOut: () => void
   onFit: () => void
+  measuring: boolean
+  onToggleMeasure: () => void
 }) {
   return (
     <TooltipProvider>
@@ -42,6 +46,14 @@ export function MapToolbar({
         </ToolButton>
         <ToolButton label="Fit to view" onClick={onFit}>
           <Maximize />
+        </ToolButton>
+        <ToolButton
+          label={measuring ? 'Exit measuring mode' : 'Measure distance'}
+          aria-pressed={measuring}
+          onClick={onToggleMeasure}
+          className={cn(measuring && 'bg-accent text-accent-foreground hover:bg-accent/90 hover:text-accent-foreground')}
+        >
+          <Ruler />
         </ToolButton>
         <Divider />
         <LockToggle />
