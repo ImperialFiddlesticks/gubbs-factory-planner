@@ -27,9 +27,11 @@ const activeClass = 'border-accent ring-2 ring-accent/40'
 
 export function CatalogPanel({
   collapsed,
+  highlighted = false,
   onToggle,
 }: {
   collapsed: boolean
+  highlighted?: boolean
   onToggle: () => void
 }) {
   const [query, setQuery] = useState('')
@@ -67,13 +69,17 @@ export function CatalogPanel({
 
   if (collapsed) {
     return (
-      <aside className="theme-dark flex flex-col items-center border-r py-2">
+      <aside className={cn(
+        'theme-dark planner-catalog is-collapsed flex flex-col items-center border-r py-2',
+        highlighted && 'ring-2 ring-accent ring-offset-2 ring-offset-background',
+      )}>
         <button
           type="button"
           onClick={onToggle}
           aria-label="Expand equipment library"
           title="Expand equipment library"
-          className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-expanded={false}
+          className="flex size-9 items-center justify-center rounded-md border border-white/15 bg-white/5 text-foreground transition-colors hover:border-white/30 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <ChevronRight className="size-4" aria-hidden />
         </button>
@@ -82,7 +88,10 @@ export function CatalogPanel({
   }
 
   return (
-    <aside className="theme-dark overflow-y-auto border-r p-4">
+    <aside className={cn(
+      'theme-dark planner-catalog flex min-h-0 flex-col overflow-y-auto border-r p-4',
+      highlighted && 'ring-2 ring-accent ring-offset-2 ring-offset-background',
+    )}>
       <div className="flex items-center justify-between gap-2">
         <PanelHeading>Equipment library</PanelHeading>
         <button
@@ -90,7 +99,8 @@ export function CatalogPanel({
           onClick={onToggle}
           aria-label="Collapse equipment library"
           title="Collapse equipment library"
-          className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-expanded={true}
+          className="flex size-8 shrink-0 items-center justify-center rounded-md border border-white/15 bg-white/5 text-foreground transition-colors hover:border-white/30 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <ChevronRight className="size-4 rotate-180" aria-hidden />
         </button>

@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { CommitInput } from '@/components/CommitInput'
 import { CommitText } from '@/components/CommitText'
-import { PanelHeading } from '@/components/PanelHeading'
 import { UTILITY_ICONS } from '@/components/utilityIcons'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { DEFAULT_FACTORY_HEIGHT_MM } from '@/data/defaults'
 import { machineHeight, machinePeople, machineTypeFor } from '@/data/catalog'
 import { MACHINE_COLOURS } from '@/data/machineColours'
 import { MIN_ZONE_SIZE, ZONE_KIND_LIST, ZONE_KINDS, machinesInZone, zoneArea } from '@/data/zones'
@@ -28,7 +29,15 @@ import { usePlanner } from '@/store'
 import { CANVAS } from '@/theme'
 import type { LoadingBay, LoadingDock, MachineInstance, Pillar, Utility, Wall, Zone, ZoneKind } from '@/types'
 
-export function PropertiesPanel() {
+export function PropertiesPanel({
+  showFactoryProperties,
+  collapsed,
+  onToggle,
+}: {
+  showFactoryProperties: boolean
+  collapsed: boolean
+  onToggle: () => void
+}) {
   const machines = usePlanner((s) => s.machines)
   const utilities = usePlanner((s) => s.utilities)
   const pillars = usePlanner((s) => s.pillars)
@@ -45,19 +54,17 @@ export function PropertiesPanel() {
   const pedestrianCrossings = usePlanner((s) => s.pedestrianCrossings)
   const safetyBarriers = usePlanner((s) => s.safetyBarriers)
   const loadingBays = usePlanner((s) => s.loadingBays)
+  const selectedCount = usePlanner((s) => s.selectedIds.length)
+  const selectedMachine = usePlanner((s) =>
+    s.selectedIds.length === 1 ? s.machines.find((machine) => machine.id === s.selectedId) : undefined,
+  )
   const logisticsIssues = useMemo(() => findTruckLogisticsIssues({ truckTypes, utilities, parkingSpots, serviceStations, truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines, pillars, walls, loadingBays, floorplan }), [truckTypes, utilities, parkingSpots, serviceStations, truckRoutes, pedestrianRoutes, pedestrianCrossings, safetyBarriers, machines, pillars, walls, loadingBays, floorplan])
   const issues = useMemo(
     () => (floorplan ? findLayoutIssues(machines, utilities, floorplan, { pillars, walls, zones }, serviceStations, truckTypes) : []),
     [machines, utilities, floorplan, pillars, walls, zones, serviceStations, truckTypes],
   )
-
-  return (
-    <aside className="theme-dark flex flex-col overflow-y-auto border-l p-4">
-      <section>
-        <PanelHeading>Properties</PanelHeading>
-        <Selection issues={issues} />
-      </section>
-
+  const discussionAndLayout = (
+    <>
       <Separator className="my-6" />
 
       <section>
@@ -77,20 +84,136 @@ export function PropertiesPanel() {
       <Separator className="my-6" />
 
       <section>
-        <div className="flex items-center justify-between gap-2">
-          <PanelHeading>Layout checks</PanelHeading>
-          <span className="text-xs text-muted-foreground">{issues.length}</span>
-        </div>
-        <WarningsList issues={issues} />
-        <div className="mt-3 space-y-1">
-          <div className="text-xs font-medium">Forklift and pedestrian checks · {logisticsIssues.length}</div>
-          {logisticsIssues.map((issue) => <button key={issue.key} type="button" onClick={() => usePlanner.getState().selectMany(issue.ids)} className="block w-full rounded-sm px-1.5 py-1 text-left text-xs text-amber-700 hover:bg-amber-50">{issue.message}</button>)}
-        </div>
-        <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-          Checks cover configured layout geometry and utilities; they are not certified safety validation.
-        </p>
+        <details className="space-y-3">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+            <span>Layout checks</span>
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {issues.length + logisticsIssues.length}
+            </span>
+          </summary>
+          <div>
+            <WarningsList issues={issues} />
+            <div className="mt-3 space-y-1">
+              <div className="text-xs font-medium">Forklift and pedestrian checks · {logisticsIssues.length}</div>
+              {logisticsIssues.map((issue) => <button key={issue.key} type="button" onClick={() => usePlanner.getState().selectMany(issue.ids)} className="block w-full rounded-sm px-1.5 py-1 text-left text-xs text-amber-700 hover:bg-amber-50">{issue.message}</button>)}
+            </div>
+            <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+              Checks cover configured layout geometry and utilities; they are not certified safety validation.
+            </p>
+          </div>
+        </details>
       </section>
+    </>
+  )
+
+  if (collapsed) {
+    return (
+      <aside className="theme-dark properties-sidebar planner-properties is-collapsed flex flex-col items-center border-l py-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label="Expand properties"
+          title="Expand properties"
+          aria-expanded={false}
+          className="flex size-9 items-center justify-center rounded-md border border-white/15 bg-white/5 text-foreground transition-colors hover:border-white/30 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronLeft className="size-4" aria-hidden />
+        </button>
+      </aside>
+    )
+  }
+
+  return (
+    <aside className="theme-dark properties-sidebar planner-properties flex min-h-0 flex-col overflow-y-auto border-l p-4">
+      <section>
+        <div className="mb-3 flex h-8 items-center gap-2">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label="Collapse properties"
+            title="Collapse properties"
+            aria-expanded={true}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md border border-white/15 bg-white/5 text-foreground transition-colors hover:border-white/30 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronRight className="size-4" aria-hidden />
+          </button>
+          <h2 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">Properties</h2>
+        </div>
+        {selectedMachine ? (
+          <MachineProperties
+            key={selectedMachine.id}
+            machine={selectedMachine}
+            sectionsAfterPosition={discussionAndLayout}
+          />
+        ) : selectedCount === 0 ? (
+          showFactoryProperties ? (
+            <FactoryProperties />
+          ) : (
+            <details open className="space-y-2">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                Factory Information
+              </summary>
+              <Selection />
+            </details>
+          )
+        ) : (
+          <Selection />
+        )}
+      </section>
+
+      {!selectedMachine && discussionAndLayout}
     </aside>
+  )
+}
+
+function FactoryProperties() {
+  const floorplan = usePlanner((s) => s.floorplan)
+  const setFloorplan = usePlanner((s) => s.setFloorplan)
+  const setFloorplanHeight = usePlanner((s) => s.setFloorplanHeight)
+  if (!floorplan) return null
+
+  return (
+    <div className="mt-3 space-y-3 rounded-md border p-3">
+      <div className="text-sm font-medium">Factory Properties</div>
+      <Field id="factory-width" label="Width">
+        <DimensionInput
+          id="factory-width"
+          mm={floorplan.width}
+          onCommit={(mm) => setFloorplan(mm, floorplan.depth)}
+        />
+      </Field>
+      <Field id="factory-depth" label="Depth">
+        <DimensionInput
+          id="factory-depth"
+          mm={floorplan.depth}
+          onCommit={(mm) => setFloorplan(floorplan.width, mm)}
+        />
+      </Field>
+      <Field id="factory-height" label="Height">
+        <DimensionInput
+          id="factory-height"
+          mm={floorplan.height ?? DEFAULT_FACTORY_HEIGHT_MM}
+          onCommit={setFloorplanHeight}
+        />
+      </Field>
+    </div>
+  )
+}
+
+function DimensionInput({ id, mm, onCommit }: { id: string; mm: number; onCommit: (mm: number) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <CommitInput
+        id={id}
+        min={0}
+        step={0.5}
+        value={mm / 1000}
+        isValid={(metres) => metres > 0}
+        onCommit={(metres) => onCommit(Math.round(metres * 1000))}
+        className="h-8 w-24"
+      />
+      <span className="text-sm text-muted-foreground">m</span>
+    </div>
   )
 }
 
@@ -245,8 +368,7 @@ function CommentsSection() {
   )
 }
 
-function Selection({ issues }: { issues: LayoutIssue[] }) {
-  const machine = usePlanner((s) => s.machines.find((m) => m.id === s.selectedId))
+function Selection() {
   const utility = usePlanner((s) => s.utilities.find((u) => u.id === s.selectedId))
   const pillar = usePlanner((s) => s.pillars.find((p) => p.id === s.selectedId))
   const wall = usePlanner((s) => s.walls.find((w) => w.id === s.selectedId))
@@ -268,7 +390,6 @@ function Selection({ issues }: { issues: LayoutIssue[] }) {
   const loadingDockCount = usePlanner((s) => s.loadingDocks.length)
   const loadingBayCount = loadingBays.length
   if (count > 1) return <MultiProperties />
-  if (machine) return <MachineProperties machine={machine} issues={issues.filter((issue) => issue.ids.includes(machine.id))} />
   if (utility) return <UtilityProperties utility={utility} />
   if (pillar) return <PillarProperties pillar={pillar} />
   if (wall) return <WallProperties wall={wall} />
@@ -279,10 +400,10 @@ function Selection({ issues }: { issues: LayoutIssue[] }) {
   return (
     <div className="space-y-3">
       {floorplan && (
-        <div className="rounded-md border bg-muted/30 p-3">
+        <div className="properties-highlight rounded-md border p-3">
           <div className="text-sm font-medium">{floorplan.name}</div>
           <div className="mt-1 text-xs text-muted-foreground">
-            {formatMetres(floorplan.width)} × {formatMetres(floorplan.depth)} m
+            {formatMetres(floorplan.width)} × {formatMetres(floorplan.depth)} × {formatMetres(floorplan.height ?? DEFAULT_FACTORY_HEIGHT_MM)} m
           </div>
           <div className="mt-2 text-xs">
             {machines.length} / {stationTarget} machines · {utilities.length} utilities · {pillars.length + walls.length} structures · {loadingDockCount} loading docks · {loadingBayCount} loading bays
@@ -586,7 +707,13 @@ function LoadingBayProperties({ bay }: { bay: LoadingBay }) {
   )
 }
 
-function MachineProperties({ machine, issues }: { machine: MachineInstance; issues: LayoutIssue[] }) {
+function MachineProperties({
+  machine,
+  sectionsAfterPosition,
+}: {
+  machine: MachineInstance
+  sectionsAfterPosition: ReactNode
+}) {
   const moveMachine = usePlanner((s) => s.moveMachine)
   const rotateMachine = usePlanner((s) => s.rotateMachine)
   const removeMachine = usePlanner((s) => s.removeMachine)
@@ -676,18 +803,18 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
         {type.needsFireSuppression && <div className="text-xs text-muted-foreground">Sprinkler: Required</div>}
       </div>
 
-      {!type.conveyor && (
-        <StationDetails
-          key={machine.id}
-          machine={machine}
-          autoName={shortName}
-          onChange={(patch) => updateDetails(machine.id, patch)}
-        />
-      )}
+      <StationDetails
+        key={machine.id}
+        machine={machine}
+        autoName={shortName}
+        onChange={(patch) => updateDetails(machine.id, patch)}
+      />
 
-      <div className="rounded-md border bg-muted/20 p-2.5">
-        <div className="mb-2 text-xs font-medium">Working clearance</div>
-        <div className="grid grid-cols-2 gap-2">
+      <details open className="properties-highlight rounded-md border">
+        <summary className="cursor-pointer list-none px-2.5 py-2 text-xs font-medium [&::-webkit-details-marker]:hidden">
+          Working clearance
+        </summary>
+        <div className="grid grid-cols-2 gap-2 px-2.5 pb-2.5">
           {(['front', 'back', 'left', 'right'] as const).map((side) => (
             <Field key={side} id={`clearance-${side}`} label={`${side[0].toUpperCase()}${side.slice(1)} (m)`}>
               <CommitInput
@@ -702,62 +829,7 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
             </Field>
           ))}
         </div>
-      </div>
-
-      <div className="space-y-1.5">
-        <Button variant="outline" className="w-full" onClick={checkWithBackend} disabled={!floorplan || visibleServerCheck?.state === 'checking'}>
-          {visibleServerCheck?.state === 'checking' ? 'Checking with backend…' : 'Check placement with backend'}
-        </Button>
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Checks the selected machine against the hall and other machines using the backend placement endpoint.
-        </p>
-        {visibleServerCheck && visibleServerCheck.state !== 'checking' && (
-          <p
-            role="status"
-            className={cn(
-              'rounded-md border p-2 text-xs',
-              visibleServerCheck.state === 'passed' && 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300',
-              visibleServerCheck.state === 'blocked' && 'border-warning/40 bg-warning/5 text-foreground',
-              visibleServerCheck.state === 'error' && 'border-destructive/40 bg-destructive/10 text-destructive',
-            )}
-          >
-            {visibleServerCheck.message}
-          </p>
-        )}
-      </div>
-
-      {issues.length > 0 && (
-        <div className="rounded-md border border-warning/40 bg-warning/5 p-2.5">
-          <div className="mb-1 text-xs font-medium">This machine needs attention</div>
-          <ul className="space-y-1.5">
-            {issues.map((issue) => (
-              <li key={issue.key}>
-                <p className="text-xs">{issue.message}</p>
-                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{warningGuidance(issue)}</p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {run && (
-        <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs">
-          <div className="font-medium">
-            {run.pieceIds.length > 1 ? 'Conveyor run' : 'Conveyor (not joined)'}
-          </div>
-          <div className="mt-0.5 text-muted-foreground">
-            {run.pieceIds.length} {run.pieceIds.length === 1 ? 'piece' : 'pieces'} ·{' '}
-            {Math.round(run.length / 100) / 10} m · {run.powerKw} kW, one drive
-          </div>
-          {run.pieceIds.length > 1 && (
-            <div className="mt-1.5 text-muted-foreground">
-              {singlePieceId === machine.id
-                ? 'Moving this piece on its own. Click elsewhere to move the whole run again.'
-                : 'Dragging moves the whole run. Double-click a piece to move it on its own.'}
-            </div>
-          )}
-        </div>
-      )}
+      </details>
 
       <details className="rounded-md border">
         <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium">Position and dimensions</summary>
@@ -821,6 +893,54 @@ function MachineProperties({ machine, issues }: { machine: MachineInstance; issu
         </div>
       </details>
 
+      {sectionsAfterPosition}
+
+      <details className="rounded-md border">
+        <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium">Advanced settings</summary>
+        <div className="space-y-3 px-2.5 pb-2.5">
+          {run && (
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs">
+              <div className="font-medium">
+                {run.pieceIds.length > 1 ? 'Conveyor run' : 'Conveyor (not joined)'}
+              </div>
+              <div className="mt-0.5 text-muted-foreground">
+                {run.pieceIds.length} {run.pieceIds.length === 1 ? 'piece' : 'pieces'} ·{' '}
+                {Math.round(run.length / 100) / 10} m · {run.powerKw} kW, one drive
+              </div>
+              {run.pieceIds.length > 1 && (
+                <div className="mt-1.5 text-muted-foreground">
+                  {singlePieceId === machine.id
+                    ? 'Moving this piece on its own. Click elsewhere to move the whole run again.'
+                    : 'Dragging moves the whole run. Double-click a piece to move it on its own.'}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Button variant="outline" className="w-full" onClick={checkWithBackend} disabled={!floorplan || visibleServerCheck?.state === 'checking'}>
+              {visibleServerCheck?.state === 'checking' ? 'Checking with backend…' : 'Check placement with backend'}
+            </Button>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Checks the selected machine against the hall and other machines using the backend placement endpoint.
+            </p>
+            {visibleServerCheck && visibleServerCheck.state !== 'checking' && (
+              <p
+                role="status"
+                className={cn(
+                  'rounded-md border p-2 text-xs',
+                  visibleServerCheck.state === 'passed' && 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300',
+                  visibleServerCheck.state === 'blocked' && 'border-warning/40 bg-warning/5 text-foreground',
+                  visibleServerCheck.state === 'error' && 'border-destructive/40 bg-destructive/10 text-destructive',
+                )}
+              >
+                {visibleServerCheck.message}
+              </p>
+            )}
+          </div>
+        </div>
+      </details>
+
       <div className="flex gap-2">
         <Button variant="secondary" className="flex-1" onClick={() => rotateMachine(machine.id)}>
           Rotate 15°
@@ -850,38 +970,42 @@ function StationDetails({
 }) {
   const current = machine.colour ?? MACHINE_COLOURS[0].hex
   return (
-    <div className="space-y-2.5 rounded-md border bg-muted/20 p-2.5">
-      <div className="text-xs font-medium">Station</div>
-      <Field id="station-name" label="Name">
-        <CommitText id="station-name" className="h-8" value={machine.name ?? ''} placeholder={autoName} onCommit={(name) => onChange({ name })} />
-      </Field>
-      <Field id="station-work" label="Work done here">
-        <CommitText
-          id="station-work"
-          multiline
-          value={machine.work ?? ''}
-          placeholder="e.g. Drill and rivet the wing spar"
-          onCommit={(work) => onChange({ work })}
-        />
-      </Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field id="station-people" label="People">
-          <CommitInput
-            id="station-people"
-            className="h-8"
-            min={0}
-            step={1}
-            value={machinePeople(machine) ?? 0}
-            isValid={(n) => Number.isInteger(n) && n >= 0 && n <= 99}
-            onCommit={(n) => onChange({ people: n })}
+    <details open className="rounded-md border bg-muted/20">
+      <summary className="cursor-pointer list-none px-2.5 py-2 text-xs font-medium [&::-webkit-details-marker]:hidden">
+        Station
+      </summary>
+      <div className="space-y-2.5 px-2.5 pb-2.5">
+        <Field id="station-name" label="Name">
+          <CommitText id="station-name" className="h-8" value={machine.name ?? ''} placeholder={autoName} onCommit={(name) => onChange({ name })} />
+        </Field>
+        <Field id="station-work" label="Work done here">
+          <CommitText
+            id="station-work"
+            multiline
+            value={machine.work ?? ''}
+            placeholder="e.g. Drill and rivet the wing spar"
+            onCommit={(work) => onChange({ work })}
           />
         </Field>
-        <ColourSwatches
-          value={current}
-          onChange={(hex) => onChange({ colour: hex === MACHINE_COLOURS[0].hex ? undefined : hex })}
-        />
+        <div className="grid grid-cols-2 gap-2">
+          <Field id="station-people" label="People">
+            <CommitInput
+              id="station-people"
+              className="h-8"
+              min={0}
+              step={1}
+              value={machinePeople(machine) ?? 0}
+              isValid={(n) => Number.isInteger(n) && n >= 0 && n <= 99}
+              onCommit={(n) => onChange({ people: n })}
+            />
+          </Field>
+          <ColourSwatches
+            value={current}
+            onChange={(hex) => onChange({ colour: hex === MACHINE_COLOURS[0].hex ? undefined : hex })}
+          />
+        </div>
       </div>
-    </div>
+    </details>
   )
 }
 
