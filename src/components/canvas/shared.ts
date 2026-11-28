@@ -27,8 +27,22 @@ export function setCursor(e: KonvaEventObject<MouseEvent>, cursor: string) {
  */
 export function pressItem(id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) {
   const s = usePlanner.getState()
-  if ('shiftKey' in e.evt && e.evt.shiftKey) return s.toggleSelected(id)
+  if ('shiftKey' in e.evt && e.evt.shiftKey) {
+    const machine = s.machines.find((item) => item.id === id)
+    if (!machine?.groupId) return s.toggleSelected(id)
+    const members = s.machines.filter((item) => item.groupId === machine.groupId).map((item) => item.id)
+    const memberIds = new Set(members)
+    const next = members.every((memberId) => s.selectedIds.includes(memberId))
+      ? s.selectedIds.filter((selectedId) => !memberIds.has(selectedId))
+      : [...new Set([...s.selectedIds, ...members])]
+    return s.selectMany(next)
+  }
   if (s.selectedIds.length > 1 && s.selectedIds.includes(id)) return
+  const machine = s.machines.find((item) => item.id === id)
+  if (machine?.groupId) {
+    s.selectMany(s.machines.filter((item) => item.groupId === machine.groupId).map((item) => item.id))
+    return
+  }
   s.select(id)
 }
 
@@ -36,7 +50,10 @@ export function pressItem(id: string, e: KonvaEventObject<MouseEvent | TouchEven
 export function clickItem(id: string, e: KonvaEventObject<MouseEvent | TouchEvent>) {
   if ('shiftKey' in e.evt && e.evt.shiftKey) return
   const s = usePlanner.getState()
-  if (s.selectedIds.length > 1 && s.selectedIds.includes(id)) s.select(id)
+  const machine = s.machines.find((item) => item.id === id)
+  if (machine?.groupId) {
+    s.selectMany(s.machines.filter((item) => item.groupId === machine.groupId).map((item) => item.id))
+  } else if (s.selectedIds.length > 1 && s.selectedIds.includes(id)) s.select(id)
 }
 
 /**
@@ -48,7 +65,13 @@ export function dragGroup(id: string): string[] {
   const s = usePlanner.getState()
   const { runOf } = conveyorRuns(s.machines)
   const ids = new Set<string>()
-  if (s.selectedIds.length > 1 && s.selectedIds.includes(id)) {
+  const machine = s.machines.find((item) => item.id === id)
+  if (machine?.groupId) {
+    s.machines.filter((item) => item.groupId === machine.groupId).forEach((item) => {
+      ids.add(item.id)
+      runOf.get(item.id)?.pieceIds.forEach((p) => ids.add(p))
+    })
+  } else if (s.selectedIds.length > 1 && s.selectedIds.includes(id)) {
     for (const x of s.selectedIds) {
       ids.add(x)
       runOf.get(x)?.pieceIds.forEach((p) => ids.add(p))

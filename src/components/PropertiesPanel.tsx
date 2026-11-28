@@ -428,9 +428,13 @@ function MultiProperties() {
   const loadingDocks = usePlanner((s) => s.loadingDocks)
   const loadingBays = usePlanner((s) => s.loadingBays)
   const removeItems = usePlanner((s) => s.removeItems)
+  const groupMachines = usePlanner((s) => s.groupMachines)
+  const ungroupMachines = usePlanner((s) => s.ungroupMachines)
   const select = usePlanner((s) => s.select)
 
   const ids = new Set(selectedIds)
+  const selectedMachines = machines.filter((machine) => ids.has(machine.id))
+  const hasSavedMachineGroup = selectedMachines.some((machine) => machine.groupId)
   const count = (list: { id: string }[]) => list.filter((x) => ids.has(x.id)).length
   const parts = [
     [count(machines), 'machine', 'machines'],
@@ -455,6 +459,20 @@ function MultiProperties() {
       <p className="text-xs text-muted-foreground">
         Drag any of them to move them all. Shift-click adds or removes an item. Esc clears the selection.
       </p>
+      {(selectedMachines.length > 1 || hasSavedMachineGroup) && (
+        <div className="flex gap-2">
+          {selectedMachines.length > 1 && !hasSavedMachineGroup && (
+            <Button variant="secondary" className="flex-1" onClick={() => groupMachines(selectedMachines.map((machine) => machine.id))}>
+              Group objects
+            </Button>
+          )}
+          {hasSavedMachineGroup && (
+            <Button variant="secondary" className="flex-1" onClick={() => ungroupMachines(selectedMachines.map((machine) => machine.id))}>
+              Ungroup
+            </Button>
+          )}
+        </div>
+      )}
       <div className="flex gap-2">
         <Button variant="secondary" className="flex-1" onClick={() => select(null)}>
           Clear
