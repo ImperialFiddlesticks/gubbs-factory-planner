@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import { GoalCounter } from '@/components/GoalCounter'
 import { ProjectSwitcher } from '@/components/ProjectSwitcher'
 import { DEFAULT_FACTORY_HEIGHT_MM } from '@/data/defaults'
@@ -7,11 +8,17 @@ import { usePlanner } from '@/store'
 interface TopBarProps {
   /** Opens the wizard for a new project (from the project menu). */
   onNewFloor: () => void
+  onOpenSimulation: () => void
   onOpenFactoryProperties: () => void
   onOpenHelp: () => void
 }
 
-export function TopBar({ onNewFloor, onOpenFactoryProperties, onOpenHelp }: TopBarProps) {
+export function TopBar({
+  onNewFloor,
+  onOpenSimulation,
+  onOpenFactoryProperties,
+  onOpenHelp
+}: TopBarProps) {
   const floorplan = usePlanner((s) => s.floorplan)
 
   return (
@@ -22,6 +29,7 @@ export function TopBar({ onNewFloor, onOpenFactoryProperties, onOpenHelp }: TopB
       </div>
 
       {floorplan && <ProjectSwitcher onNewProject={onNewFloor} />}
+
       {floorplan && (
         <button
           type="button"
@@ -33,7 +41,19 @@ export function TopBar({ onNewFloor, onOpenFactoryProperties, onOpenHelp }: TopB
           {formatMetres(floorplan.width)} × {formatMetres(floorplan.depth)} × {formatMetres(floorplan.height ?? DEFAULT_FACTORY_HEIGHT_MM)} m
         </button>
       )}
+
       {floorplan && <GoalCounter />}
+
+      {floorplan && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onOpenSimulation}
+        >
+          3D &amp; simulation
+        </Button>
+      )}
 
       <button
         type="button"

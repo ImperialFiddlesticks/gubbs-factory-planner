@@ -3,6 +3,7 @@ import { CatalogPanel } from '@/components/CatalogPanel'
 import { ComparePage } from '@/components/compare/ComparePage'
 import { FloorCanvas } from '@/components/FloorCanvas'
 import { PropertiesPanel } from '@/components/PropertiesPanel'
+import { SimulationView } from '@/components/SimulationView'
 import { TopBar } from '@/components/TopBar'
 import { WelcomeScreen } from '@/components/wizard/WelcomeScreen'
 import { Wizard } from '@/components/wizard/Wizard'
@@ -27,16 +28,21 @@ function Planner() {
   const machines = usePlanner((s) => s.machines)
   const selectedIds = usePlanner((s) => s.selectedIds)
   const startSetup = usePlanner((s) => s.startSetup)
+
+  const [simulationOpen, setSimulationOpen] = useState(false)
   const [catalogCollapsed, setCatalogCollapsed] = useState(false)
   const [propertiesCollapsed, setPropertiesCollapsed] = useState(false)
   const [factoryPropertiesOpen, setFactoryPropertiesOpen] = useState(false)
+
   const [onboardingStage, setOnboardingStage] = useState<OnboardingStage>(() =>
     localStorage.getItem(ONBOARDING_SEEN_KEY) === 'true' || !floorplan || machines.length > 0
       ? null
       : 'equipment',
   )
+
   const activeOnboardingStage =
     onboardingStage === 'equipment' && machines.length > 0 ? 'machine-tip' : onboardingStage
+
   const onboardingBaseline = useRef<{ machine: MachineInstance; selectedIds: string[] } | null>(null)
 
   useEffect(() => {
@@ -55,6 +61,7 @@ function Planner() {
     const baseline = onboardingBaseline.current
     const machine = machines.find((item) => item.id === baseline.machine.id)
     const selectedMachine = selectedIds.some((id) => machines.some((item) => item.id === id))
+
     if (!machine || machine !== baseline.machine || (selectedIds !== baseline.selectedIds && selectedMachine)) {
       onboardingBaseline.current = null
       setOnboardingStage(null)
@@ -63,6 +70,7 @@ function Planner() {
 
   function openHelp() {
     setCatalogCollapsed(false)
+
     if (machines.length === 0) {
       onboardingBaseline.current = null
       setOnboardingStage('equipment')
@@ -88,26 +96,39 @@ function Planner() {
 
   return (
     <div className={`planner-shell${catalogCollapsed ? ' catalog-collapsed' : ''}${propertiesCollapsed ? ' properties-collapsed' : ''}`}>
+
       <TopBar
         onNewFloor={startSetup}
         onOpenFactoryProperties={() => setFactoryPropertiesOpen(true)}
         onOpenHelp={openHelp}
+        onOpenSimulation={() => setSimulationOpen(true)}
       />
+
       <CatalogPanel
         collapsed={catalogCollapsed}
         highlighted={activeOnboardingStage === 'equipment'}
         onToggle={() => setCatalogCollapsed((collapsed) => !collapsed)}
       />
+
       <FloorCanvas
         floorplan={floorplan}
         onboardingMessage={onboardingMessage}
         onSkipOnboarding={skipOnboarding}
       />
+
+      {simulationOpen && floorplan && (
+        <SimulationView
+          floor={floorplan}
+          onClose={() => setSimulationOpen(false)}
+        />
+      )}
+
       <PropertiesPanel
         showFactoryProperties={factoryPropertiesOpen}
         collapsed={propertiesCollapsed}
         onToggle={() => setPropertiesCollapsed((collapsed) => !collapsed)}
       />
+
     </div>
   )
 }
