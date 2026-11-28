@@ -90,6 +90,8 @@ export interface MachineInstance {
   people?: number
   /** Fill colour on the plan (hex, e.g. "#1a9fd9"), e.g. to mark a product line; the default blue when unset. */
   colour?: string
+  /** Shared ID for machines that the user has grouped together. */
+  groupId?: string
 }
 
 export type UtilityKind = 'power' | 'water' | 'sprinkler' | 'extinguisher' | 'exit'
@@ -359,6 +361,7 @@ export const MachineInstanceSchema = z.object({
   work: z.string().optional(),
   people: z.number().int().min(0).optional(),
   colour: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  groupId: z.string().min(1).optional(),
 }) satisfies z.ZodType<MachineInstance>
 
 export const UtilityKindSchema = z.enum([

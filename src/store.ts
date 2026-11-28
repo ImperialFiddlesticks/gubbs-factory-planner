@@ -265,6 +265,10 @@ export interface PlannerState {
   selectMany: (ids: string[], add?: boolean) => void
   /** Shift-click: add the item to the selection, or take it out. */
   toggleSelected: (id: string) => void
+  /** Save a shared group for selected machines (and merge any groups they already belong to). */
+  groupMachines: (ids: string[]) => void
+  /** Remove the saved group membership for groups represented by these machines. */
+  ungroupMachines: (ids: string[]) => void
   /** Move a machine and turn it in one step (e.g. dropped onto a conveyor end). */
   moveMachineTo: (id: string, x: number, y: number, rotation: Rotation) => void
   /** Move items of any kind by (dx, dy) mm in one step; exits stay on the wall. */
@@ -1072,6 +1076,32 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       ...selection(s.selectedIds.includes(id) ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id]),
       singlePieceId: null,
     })),
+
+  groupMachines: (ids) =>
+    set((s) => {
+      const machineIds = new Set(s.machines.filter((machine) => ids.includes(machine.id)).map((machine) => machine.id))
+      const existingGroups = new Set(s.machines.filter((machine) => machineIds.has(machine.id) && machine.groupId).map((machine) => machine.groupId))
+      for (const machine of s.machines) {
+        if (machine.groupId && existingGroups.has(machine.groupId)) machineIds.add(machine.id)
+      }
+      if (machineIds.size < 2) return s
+      const groupId = crypto.randomUUID()
+      return { machines: s.machines.map((machine) => machineIds.has(machine.id) ? { ...machine, groupId } : machine) }
+    }),
+
+  ungroupMachines: (ids) =>
+    set((s) => {
+      const groupIds = new Set(s.machines.filter((machine) => ids.includes(machine.id) && machine.groupId).map((machine) => machine.groupId))
+      if (!groupIds.size) return s
+      return {
+        machines: s.machines.map((machine) => {
+          if (!machine.groupId || !groupIds.has(machine.groupId)) return machine
+          const ungrouped = { ...machine }
+          delete ungrouped.groupId
+          return ungrouped
+        }),
+      }
+    }),
 
   moveMachineTo: (id, x, y, rotation) =>
     set((s) => ({

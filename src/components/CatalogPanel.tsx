@@ -140,7 +140,7 @@ export function CatalogPanel({
 
   if (collapsed) {
     return (
-      <aside className={cn(
+      <aside data-guide-target="equipment-library" className={cn(
         'theme-chrome planner-catalog is-collapsed flex flex-col items-center border-r py-2',
         highlighted && 'ring-2 ring-accent ring-offset-2 ring-offset-background',
       )}>
@@ -159,7 +159,7 @@ export function CatalogPanel({
   }
 
   return (
-    <aside className={cn(
+    <aside data-guide-target="equipment-library" className={cn(
       'theme-chrome planner-catalog flex min-h-0 flex-col border-r',
       highlighted && 'ring-2 ring-accent ring-offset-2 ring-offset-background',
     )}>
