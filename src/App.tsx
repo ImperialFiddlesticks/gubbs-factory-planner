@@ -3,6 +3,7 @@ import { CatalogPanel } from '@/components/CatalogPanel'
 import { ComparePage } from '@/components/compare/ComparePage'
 import { FloorCanvas } from '@/components/FloorCanvas'
 import { PropertiesPanel } from '@/components/PropertiesPanel'
+import { SimulationView } from '@/components/SimulationView'
 import { TopBar } from '@/components/TopBar'
 import { WelcomeScreen } from '@/components/wizard/WelcomeScreen'
 import { Wizard } from '@/components/wizard/Wizard'
@@ -20,6 +21,7 @@ function App() {
 function Planner() {
   const floorplan = usePlanner((s) => s.floorplan)
   const startSetup = usePlanner((s) => s.startSetup)
+  const [simulationOpen, setSimulationOpen] = useState(false)
   const [catalogCollapsed, setCatalogCollapsed] = useState(false)
 
   return (
@@ -27,9 +29,10 @@ function Planner() {
       className="grid h-screen grid-rows-[56px_1fr]"
       style={{ gridTemplateColumns: `${catalogCollapsed ? 48 : 256}px minmax(0, 1fr) 288px` }}
     >
-      <TopBar onNewFloor={startSetup} />
+      <TopBar onNewFloor={startSetup} onOpenSimulation={() => setSimulationOpen(true)} />
       <CatalogPanel collapsed={catalogCollapsed} onToggle={() => setCatalogCollapsed((collapsed) => !collapsed)} />
       <FloorCanvas floorplan={floorplan} />
+      {simulationOpen && floorplan && <SimulationView floor={floorplan} onClose={() => setSimulationOpen(false)} />}
       <PropertiesPanel />
     </div>
   )

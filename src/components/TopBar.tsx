@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import { CommitInput } from '@/components/CommitInput'
 import { GoalCounter } from '@/components/GoalCounter'
 import { ProjectSwitcher } from '@/components/ProjectSwitcher'
@@ -7,9 +8,10 @@ import { usePlanner } from '@/store'
 interface TopBarProps {
   /** Opens the wizard for a new project (from the project menu). */
   onNewFloor: () => void
+  onOpenSimulation: () => void
 }
 
-export function TopBar({ onNewFloor }: TopBarProps) {
+export function TopBar({ onNewFloor, onOpenSimulation }: TopBarProps) {
   const floorplan = usePlanner((s) => s.floorplan)
   const setFloorplan = usePlanner((s) => s.setFloorplan)
 
@@ -22,6 +24,11 @@ export function TopBar({ onNewFloor }: TopBarProps) {
 
       {floorplan && <ProjectSwitcher onNewProject={onNewFloor} />}
       {floorplan && <GoalCounter />}
+      {floorplan && (
+        <Button type="button" variant="outline" size="sm" onClick={onOpenSimulation}>
+          3D &amp; simulation
+        </Button>
+      )}
 
       <div className="ml-auto flex items-center gap-6">
         {floorplan && (

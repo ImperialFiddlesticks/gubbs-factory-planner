@@ -121,7 +121,7 @@ function segmentBoxDistance(segment: Segment, box: Box) {
   return Math.min(...edges.map((edge) => segmentDistance(segment, edge)))
 }
 
-function crossingPoints(truckRoute: TruckRoute, pedestrianRoute: PedestrianRoute) {
+export function crossingPoints(truckRoute: TruckRoute, pedestrianRoute: PedestrianRoute) {
   const intersections: Point[] = []
   for (const truckSegment of segments(truckRoute.points)) {
     for (const pedestrianSegment of segments(pedestrianRoute.points)) {
