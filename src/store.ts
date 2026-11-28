@@ -115,6 +115,11 @@ export interface PlannerState {
   /** Current discussion item and a pending floor-pin comment; UI-only. */
   selectedCommentId: string | null
   commentDraft: CommentDraft | null
+  /**
+   * Items the canvas should bring into view (e.g. from the warnings list); `key` changes with
+   * every request, so asking for the same items twice still pans. UI-only, not saved.
+   */
+  focusRequest: { ids: string[]; key: number } | null
 
   /** Open the wizard with fresh answers. The current project stays open until the wizard finishes. */
   startSetup: () => void
@@ -261,6 +266,8 @@ export interface PlannerState {
   removeZone: (id: string) => void
 
   select: (id: string | null) => void
+  /** Select these items and ask the canvas to bring them into view. */
+  focusItems: (ids: string[]) => void
   /** Select several items (box select); with `add`, they're added to the current selection. */
   selectMany: (ids: string[], add?: boolean) => void
   /** Shift-click: add the item to the selection, or take it out. */
@@ -416,6 +423,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   comments: [],
   selectedCommentId: null,
   commentDraft: null,
+  focusRequest: null,
   selectedId: null,
   selectedIds: [],
   singlePieceId: null,
@@ -1067,6 +1075,14 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
 
   select: (id) =>
     set((s) => ({ ...selection(id ? [id] : []), ...(id !== s.singlePieceId && { singlePieceId: null }) })),
+
+  focusItems: (ids) =>
+    set((s) => ({
+      ...selection(ids),
+      singlePieceId: null,
+      placing: null,
+      focusRequest: { ids, key: (s.focusRequest?.key ?? 0) + 1 },
+    })),
 
   selectMany: (ids, add = false) =>
     set((s) => ({ ...selection(add ? [...new Set([...s.selectedIds, ...ids])] : ids), singlePieceId: null })),

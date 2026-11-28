@@ -41,11 +41,11 @@ import {
 } from '@/lib/geometry'
 import { findLayoutIssues, idsWithIssues, needsByMachine } from '@/lib/validation'
 import { useElementSize } from '@/lib/useElementSize'
-import { markPlaced } from '@/lib/animations'
+import { markPlaced, wobble } from '@/lib/animations'
 import { CommentBubble } from '@/components/CommentBubble'
 import { MapLegend } from '@/components/MapLegend'
 import { playSound } from '@/lib/sound'
-import { usePlanner, type Placing } from '@/store'
+import { usePlanner, type Placing, type PlannerState } from '@/store'
 import { CANVAS, CANVAS_FONT } from '@/theme'
 import type { Floorplan, ForkliftInstance, LoadingBay, LoadingDock, MachineInstance, Pillar, Point, TruckType, Utility, Wall, Zone, ZoneKind } from '@/types'
 
@@ -327,6 +327,35 @@ function FloorStage({
     setZoom(1)
     setPan({ x: 0, y: 0 })
   }
+
+  // Bring items into view when asked (e.g. a warning clicked in the top bar): pan so their
+  // middle sits in the centre of the work area, at the current zoom, then give them a shake.
+  // Requests made before this floor was shown are ignored.
+  const focusRequest = usePlanner((s) => s.focusRequest)
+  const [handledFocus, setHandledFocus] = useState(focusRequest?.key)
+  if (focusRequest && focusRequest.key !== handledFocus) {
+    setHandledFocus(focusRequest.key)
+    const centre = itemsCentre(focusRequest.ids, usePlanner.getState(), floorplan)
+    if (centre) {
+      const dx = size.width / 2 - (originX + centre.x * SCALE * fit)
+      const dy = viewH / 2 - (originY + centre.y * SCALE * fit)
+      setPan((p) => ({ x: p.x + dx, y: p.y + dy }))
+    }
+  }
+  // After the pan has been drawn, shake what the warning is about (not on first showing).
+  const shownFocus = useRef(handledFocus)
+  useEffect(() => {
+    if (handledFocus === shownFocus.current) return
+    shownFocus.current = handledFocus
+    const ids = usePlanner.getState().focusRequest?.ids ?? []
+    const timer = window.setTimeout(() => {
+      for (const id of ids) {
+        const node = layerRef.current?.findOne(`#${id}`)
+        if (node) wobble(node)
+      }
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [handledFocus])
 
   function changeNavigationTool(tool: 'select' | 'hand') {
     if (tool === 'hand') {
@@ -1542,4 +1571,43 @@ function GridLines({ step, w, h, stroke }: { step: number; w: number; h: number;
       }}
     />
   )
+}
+
+/**
+ * The middle of the given items' positions, mm (for bringing them into view), or null when
+ * none of them is on this floor (e.g. a warning about the whole floor).
+ */
+function itemsCentre(ids: string[], s: PlannerState, floorplan: Floorplan): Point | null {
+  const points: Point[] = []
+  for (const id of ids) {
+    const item =
+      s.machines.find((m) => m.id === id) ??
+      s.utilities.find((u) => u.id === id) ??
+      s.pillars.find((p) => p.id === id) ??
+      s.zones.find((z) => z.id === id) ??
+      s.forkliftInstances.find((f) => f.id === id) ??
+      s.truckServiceStations.find((t) => t.id === id)
+    if (item) {
+      points.push({ x: item.x, y: item.y })
+      continue
+    }
+    const wall = s.walls.find((w) => w.id === id)
+    if (wall) {
+      points.push({ x: (wall.start.x + wall.end.x) / 2, y: (wall.start.y + wall.end.y) / 2 })
+      continue
+    }
+    const dock = s.loadingDocks.find((d) => d.id === id)
+    const dockPoint = dock && loadingDockPointAt(floorplan, dock.boundaryOffsetMm)
+    if (dockPoint) {
+      points.push(dockPoint)
+      continue
+    }
+    const bay = s.loadingBays.find((b) => b.id === id)
+    if (bay && bay.outline.length > 0) points.push(loadingBayCentroid(bay))
+  }
+  if (points.length === 0) return null
+  return {
+    x: points.reduce((sum, p) => sum + p.x, 0) / points.length,
+    y: points.reduce((sum, p) => sum + p.y, 0) / points.length,
+  }
 }
