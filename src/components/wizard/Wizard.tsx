@@ -56,7 +56,7 @@ const STEPS: StepDef[] = [
 ]
 
 /** The setup wizard: one full-page question per step, then into the planner. */
-export function Wizard() {
+export function Wizard({ onCreated }: { onCreated?: () => void }) {
   const setup = usePlanner((s) => s.wizard)
   const hasFloor = usePlanner((s) => s.floorplan !== null)
   const cancelSetup = usePlanner((s) => s.cancelSetup)
@@ -85,6 +85,7 @@ export function Wizard() {
       },
       pillars,
     )
+    onCreated?.()
   }
 
   return (

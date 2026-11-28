@@ -1,32 +1,65 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { CatalogPanel } from '@/components/CatalogPanel'
 import { ComparePage } from '@/components/compare/ComparePage'
 import { FloorCanvas } from '@/components/FloorCanvas'
+import { GuidedTour } from '@/components/GuidedTour'
+import { QuickGuide } from '@/components/QuickGuide'
 import { PropertiesPanel } from '@/components/PropertiesPanel'
 import { SimulationView } from '@/components/SimulationView'
 import { TopBar } from '@/components/TopBar'
 import { WelcomeScreen } from '@/components/wizard/WelcomeScreen'
 import { Wizard } from '@/components/wizard/Wizard'
 import { usePlanner } from '@/store'
-import type { MachineInstance } from '@/types'
-
-type OnboardingStage = 'equipment' | 'machine-tip' | null
-
-const ONBOARDING_SEEN_KEY = 'gubbs-factory-planner:onboarding-seen'
+const QUICK_GUIDE_SEEN_KEY = 'gubbs-factory-planner:quick-guide-seen-v2'
 
 function App() {
   const screen = usePlanner((s) => s.screen)
+  const [guideSeen, setGuideSeen] = useState(() => localStorage.getItem(QUICK_GUIDE_SEEN_KEY) === 'true')
+  const [guideRequested, setGuideRequested] = useState(false)
+  const [tourActive, setTourActive] = useState(false)
+  const [tourStep, setTourStep] = useState(0)
 
-  if (screen === 'welcome') return <WelcomeScreen />
-  if (screen === 'wizard') return <Wizard />
-  if (screen === 'compare') return <ComparePage />
-  return <Planner />
+  // Show the first-visit guide as soon as a new floor reaches the planner.
+  const guideOpen = screen === 'planner' && (guideRequested || !guideSeen)
+
+  function handleGuideOpenChange(open: boolean) {
+    setGuideRequested(open)
+    if (!open) {
+      localStorage.setItem(QUICK_GUIDE_SEEN_KEY, 'true')
+      setGuideSeen(true)
+    }
+  }
+
+  function startGuidedTour() {
+    localStorage.setItem(QUICK_GUIDE_SEEN_KEY, 'true')
+    setGuideSeen(true)
+    setGuideRequested(false)
+    setTourStep(0)
+    setTourActive(true)
+  }
+
+  function closeGuidedTour() {
+    setTourActive(false)
+    localStorage.setItem(QUICK_GUIDE_SEEN_KEY, 'true')
+    setGuideSeen(true)
+  }
+
+  return (
+    <>
+      {screen === 'welcome' ? <WelcomeScreen />
+        : screen === 'wizard' ? <Wizard onCreated={() => setGuideRequested(true)} />
+          : screen === 'compare' ? <ComparePage />
+            : <Planner onOpenHelp={() => setGuideRequested(true)} />}
+      <QuickGuide open={guideOpen} onOpenChange={handleGuideOpenChange} onStartTour={startGuidedTour} />
+      {tourActive && screen === 'planner' && (
+        <GuidedTour stepIndex={tourStep} onStepChange={setTourStep} onClose={closeGuidedTour} />
+      )}
+    </>
+  )
 }
 
-function Planner() {
+function Planner({ onOpenHelp }: { onOpenHelp: () => void }) {
   const floorplan = usePlanner((s) => s.floorplan)
-  const machines = usePlanner((s) => s.machines)
-  const selectedIds = usePlanner((s) => s.selectedIds)
   const startSetup = usePlanner((s) => s.startSetup)
 
   const [simulationOpen, setSimulationOpen] = useState(false)
@@ -34,86 +67,27 @@ function Planner() {
   const [propertiesCollapsed, setPropertiesCollapsed] = useState(false)
   const [factoryPropertiesOpen, setFactoryPropertiesOpen] = useState(false)
 
-  const [onboardingStage, setOnboardingStage] = useState<OnboardingStage>(() =>
-    localStorage.getItem(ONBOARDING_SEEN_KEY) === 'true' || !floorplan || machines.length > 0
-      ? null
-      : 'equipment',
-  )
-
-  const activeOnboardingStage =
-    onboardingStage === 'equipment' && machines.length > 0 ? 'machine-tip' : onboardingStage
-
-  const onboardingBaseline = useRef<{ machine: MachineInstance; selectedIds: string[] } | null>(null)
-
-  useEffect(() => {
-    if (onboardingStage === 'equipment' && localStorage.getItem(ONBOARDING_SEEN_KEY) !== 'true') {
-      localStorage.setItem(ONBOARDING_SEEN_KEY, 'true')
-    }
-  }, [onboardingStage])
-
-  useEffect(() => {
-    if (onboardingStage !== 'equipment' || machines.length === 0 || onboardingBaseline.current) return
-    onboardingBaseline.current = { machine: machines[0], selectedIds }
-  }, [onboardingStage, machines, selectedIds])
-
-  useEffect(() => {
-    if (activeOnboardingStage !== 'machine-tip' || !onboardingBaseline.current) return
-    const baseline = onboardingBaseline.current
-    const machine = machines.find((item) => item.id === baseline.machine.id)
-    const selectedMachine = selectedIds.some((id) => machines.some((item) => item.id === id))
-
-    if (!machine || machine !== baseline.machine || (selectedIds !== baseline.selectedIds && selectedMachine)) {
-      onboardingBaseline.current = null
-      setOnboardingStage(null)
-    }
-  }, [activeOnboardingStage, machines, selectedIds])
-
-  function openHelp() {
-    setCatalogCollapsed(false)
-
-    if (machines.length === 0) {
-      onboardingBaseline.current = null
-      setOnboardingStage('equipment')
-      return
-    }
-
-    const machine = machines.find((item) => selectedIds.includes(item.id)) ?? machines[0]
-    onboardingBaseline.current = { machine, selectedIds }
-    setOnboardingStage('machine-tip')
-  }
-
-  function skipOnboarding() {
-    onboardingBaseline.current = null
-    setOnboardingStage(null)
-  }
-
-  const onboardingMessage =
-    activeOnboardingStage === 'equipment'
-      ? 'Time to create your factory. Start by adding equipment from the left sidebar.'
-      : activeOnboardingStage === 'machine-tip'
-        ? 'Try dragging equipment onto the floor. Select a machine to edit its properties.'
-        : null
-
   return (
     <div className={`planner-shell${catalogCollapsed ? ' catalog-collapsed' : ''}${propertiesCollapsed ? ' properties-collapsed' : ''}`}>
 
       <TopBar
         onNewFloor={startSetup}
         onOpenFactoryProperties={() => setFactoryPropertiesOpen(true)}
-        onOpenHelp={openHelp}
+        onOpenHelp={() => {
+          setCatalogCollapsed(false)
+          setPropertiesCollapsed(false)
+          onOpenHelp()
+        }}
         onOpenSimulation={() => setSimulationOpen(true)}
       />
 
       <CatalogPanel
         collapsed={catalogCollapsed}
-        highlighted={activeOnboardingStage === 'equipment'}
         onToggle={() => setCatalogCollapsed((collapsed) => !collapsed)}
       />
 
       <FloorCanvas
         floorplan={floorplan}
-        onboardingMessage={onboardingMessage}
-        onSkipOnboarding={skipOnboarding}
       />
 
       {simulationOpen && floorplan && (

@@ -85,7 +85,7 @@ export function PropertiesPanel({
       <Separator className="my-6" />
 
       <section>
-        <details className="space-y-3">
+        <details data-guide-target="layout-checks" className="space-y-3">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
             <span>Layout checks</span>
             <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
@@ -109,7 +109,7 @@ export function PropertiesPanel({
 
   if (collapsed) {
     return (
-      <aside className="theme-chrome properties-sidebar planner-properties is-collapsed flex flex-col items-center border-l py-2">
+      <aside data-guide-target="properties" className="theme-chrome properties-sidebar planner-properties is-collapsed flex flex-col items-center border-l py-2">
         <button
           type="button"
           onClick={onToggle}
@@ -125,7 +125,7 @@ export function PropertiesPanel({
   }
 
   return (
-    <aside className="theme-chrome properties-sidebar planner-properties flex min-h-0 flex-col overflow-y-auto border-l p-4">
+    <aside data-guide-target="properties" className="theme-chrome properties-sidebar planner-properties flex min-h-0 flex-col overflow-y-auto border-l p-4">
       <section>
         <div className="mb-3 flex h-8 items-center gap-2">
           <button
