@@ -128,7 +128,11 @@ export const autosave: PersistOptions<PlannerState, Saved> = {
       pillars: saved.pillars,
       walls: saved.walls,
       zones: saved.zones ?? [],
-      loadingDocks: saved.loadingDocks ?? [],
+      loadingDocks: (saved.loadingDocks ?? []).map((dock) => ({
+        ...dock,
+        heightMm: dock.heightMm ?? 3000,
+        depthMm: dock.depthMm ?? 1000,
+      })),
       loadingBays: saved.loadingBays ?? [],
       truckTypes: saved.truckTypes ?? [],
       forkliftInstances: saved.forkliftInstances ?? [],

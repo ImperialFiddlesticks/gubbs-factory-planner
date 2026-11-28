@@ -88,7 +88,7 @@ export function LoadingDockGlyph({
   selected = false,
   invalid = false,
 }: {
-  dock: Pick<LoadingDock, 'widthMm' | 'boundaryOffsetMm' | 'flowDirection'>
+  dock: Pick<LoadingDock, 'widthMm' | 'heightMm' | 'depthMm' | 'boundaryOffsetMm' | 'flowDirection'>
   floorplan: Floorplan
   fit: number
   center?: Point
@@ -133,8 +133,24 @@ export function LoadingDockGlyph({
           />
         )
 
+        const outerStart = { x: span.start.x - nx * dock.depthMm, y: span.start.y - ny * dock.depthMm }
+        const outerEnd = { x: span.end.x - nx * dock.depthMm, y: span.end.y - ny * dock.depthMm }
+        const innerStart = { x: span.start.x + nx * dock.depthMm, y: span.start.y + ny * dock.depthMm }
+        const innerEnd = { x: span.end.x + nx * dock.depthMm, y: span.end.y + ny * dock.depthMm }
+        const depthPoints = [outerStart, outerEnd, innerEnd, innerStart].map((point) => [(point.x - anchor.x) * SCALE, (point.y - anchor.y) * SCALE]).flat()
+
         return (
           <Group key={index}>
+            <Line
+              points={depthPoints}
+              closed
+              stroke={colour}
+              strokeWidth={selected ? 2 : 1.5}
+              strokeScaleEnabled={false}
+              dash={[4 / fit, 3 / fit]}
+              opacity={0.8}
+              listening={false}
+            />
             <Line
               points={points}
               stroke={CANVAS.floor}

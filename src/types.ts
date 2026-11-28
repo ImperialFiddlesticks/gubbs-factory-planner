@@ -162,20 +162,22 @@ export interface Wall {
 
 export type LoadingDockFlowDirection = 'inbound' | 'outbound' | 'two-way'
 
-/** An opening measured along the outer floor boundary from its first vertex, in millimetres. */
+/** A loading-door opening and its footprint dimensions, measured in millimetres. */
 export interface LoadingDock {
   id: string
   name: string
   widthMm: number
+  heightMm: number
+  depthMm: number
   boundaryOffsetMm: number
   flowDirection: LoadingDockFlowDirection
 }
 
-/** Outdoor staging area connected to a loading dock; outline coordinates share the floorplan world space. */
+/** Outdoor staging area that may optionally be associated with a loading dock. */
 export interface LoadingBay {
   id: string
   name: string
-  loadingDockId: string
+  loadingDockId?: string | null
   outline: Point[]
 }
 
@@ -411,6 +413,8 @@ export const LoadingDockSchema = z.object({
   id: z.string(),
   name: z.string().trim().min(1),
   widthMm: z.number().finite().positive(),
+  heightMm: z.number().finite().positive().default(3000),
+  depthMm: z.number().finite().positive().default(1000),
   boundaryOffsetMm: z.number().finite().nonnegative(),
   flowDirection: z.enum(['inbound', 'outbound', 'two-way']),
 }) satisfies z.ZodType<LoadingDock>
@@ -418,7 +422,7 @@ export const LoadingDockSchema = z.object({
 export const LoadingBaySchema = z.object({
   id: z.string(),
   name: z.string().trim().min(1),
-  loadingDockId: z.string(),
+  loadingDockId: z.string().nullable().optional(),
   outline: z.array(PointSchema).min(3),
 }) satisfies z.ZodType<LoadingBay>
 

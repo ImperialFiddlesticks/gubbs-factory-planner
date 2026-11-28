@@ -16,7 +16,7 @@ import { resizedBeltCentre } from '@/lib/conveyors'
 import { snapToWall, straightenWall } from '@/lib/geometry'
 import type { Floorplan, ForkliftInstance, LayoutComment, LoadingBay, LoadingDock, MachineInstance, PedestrianCrossing, PedestrianRoute, Pillar, Point, Rotation, SafetyBarrier, TruckParkingSpot, TruckRoute, TruckServiceKind, TruckServiceStation, TruckType, Utility, UtilityKind, Wall, Zone, ZoneKind } from '@/types'
 import { DEFAULT_BARRIER_THICKNESS_MM, DEFAULT_FORKLIFT_ROUTE_WIDTH_MM, DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM, GENERATED_BARRIER_CLEARANCE_MM, crossingPlacementAt, distanceAlongPath, parallelRoutePoints } from '@/lib/truckLogistics'
-import { DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockIssue, loadingDockPerimeter, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
+import { DEFAULT_LOADING_DOCK_DEPTH_MM, DEFAULT_LOADING_DOCK_HEIGHT_MM, DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockIssue, loadingDockPerimeter, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
 import { loadingBayIssue } from '@/lib/loadingBays'
 
 export type NewFloorplanInput = Omit<Floorplan, 'id'>
@@ -32,7 +32,7 @@ export type Placing =
   /** Drawing a wall: `start` is null until the first click. */
   | { kind: 'wall'; start: Point | null }
   | { kind: 'loadingDock' }
-  | { kind: 'loadingBay'; loadingDockId: string; outline: Point[] }
+  | { kind: 'loadingBay'; loadingDockId?: string; drawMode: 'rectangle' | 'polygon'; start: Point | null; outline: Point[] }
   | { kind: 'logistics-rectangle'; logisticsKind: 'parking'; start: Point | null }
   | { kind: 'logistics-path'; logisticsKind: 'truck-route' | 'pedestrian-route' | 'barrier'; points: Point[] }
   | { kind: 'logistics-point'; logisticsKind: 'charging' | 'battery-watering' | 'crossing' }
@@ -200,10 +200,11 @@ export interface PlannerState {
   addLoadingDock: (boundaryOffsetMm: number) => boolean
   startPlacingLoadingDock: () => void
   moveLoadingDock: (id: string, x: number, y: number) => void
-  updateLoadingDock: (id: string, patch: Partial<Pick<LoadingDock, 'name' | 'widthMm' | 'boundaryOffsetMm' | 'flowDirection'>>) => void
+  updateLoadingDock: (id: string, patch: Partial<Pick<LoadingDock, 'name' | 'widthMm' | 'heightMm' | 'depthMm' | 'boundaryOffsetMm' | 'flowDirection'>>) => void
   removeLoadingDock: (id: string) => void
-  addLoadingBay: (loadingDockId: string, outline: Point[]) => boolean
-  startPlacingLoadingBay: (loadingDockId: string) => void
+  addLoadingBay: (loadingDockId: string | undefined, outline: Point[]) => boolean
+  startPlacingLoadingBay: (loadingDockId?: string, drawMode?: 'rectangle' | 'polygon') => void
+  setLoadingBayStart: (start: Point | null) => void
   setLoadingBayPoints: (outline: Point[]) => void
   updateLoadingBay: (id: string, patch: Partial<Pick<LoadingBay, 'name' | 'loadingDockId' | 'outline'>>) => void
   addTruckType: (preset?: Omit<TruckType, 'id'>) => void
@@ -733,6 +734,8 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
       id: crypto.randomUUID(),
       name: `Loading dock ${s.loadingDocks.length + 1}`,
       widthMm: DEFAULT_LOADING_DOCK_WIDTH_MM,
+      heightMm: DEFAULT_LOADING_DOCK_HEIGHT_MM,
+      depthMm: DEFAULT_LOADING_DOCK_DEPTH_MM,
       boundaryOffsetMm,
       flowDirection: 'two-way',
     }
@@ -763,14 +766,11 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
     }),
 
   removeLoadingDock: (id) =>
-    set((s) => {
-      const removedBays = new Set(s.loadingBays.filter((bay) => bay.loadingDockId === id).map((bay) => bay.id))
-      return {
-        loadingDocks: s.loadingDocks.filter((dock) => dock.id !== id),
-        loadingBays: s.loadingBays.filter((bay) => bay.loadingDockId !== id),
-        ...selection(s.selectedIds.filter((selected) => selected !== id && !removedBays.has(selected))),
-      }
-    }),
+    set((s) => ({
+      loadingDocks: s.loadingDocks.filter((dock) => dock.id !== id),
+      loadingBays: s.loadingBays.map((bay) => bay.loadingDockId === id ? { ...bay, loadingDockId: undefined } : bay),
+      ...selection(s.selectedIds.filter((selected) => selected !== id)),
+    })),
 
   addLoadingBay: (loadingDockId, outline) => {
     const s = get()
@@ -778,7 +778,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
     const bay: LoadingBay = {
       id: crypto.randomUUID(),
       name: `Loading bay ${s.loadingBays.length + 1}`,
-      loadingDockId,
+      ...(loadingDockId && { loadingDockId }),
       outline: outline.map(roundPoint),
     }
     if (loadingBayIssue(bay, s.floorplan, s.loadingDocks, s.loadingBays)) return false
@@ -1138,7 +1138,6 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
   removeItems: (ids) =>
     set((s) => {
       const gone = new Set(ids)
-      const removedBays = new Set(s.loadingBays.filter((bay) => gone.has(bay.id) || gone.has(bay.loadingDockId)).map((bay) => bay.id))
       const removedPedestrianRoutes = new Set(s.pedestrianRoutes.filter((route) => gone.has(route.id) || gone.has(route.parallel?.truckRouteId ?? '')).map((route) => route.id))
       const removedCrossings = new Set(s.pedestrianCrossings.filter((crossing) => gone.has(crossing.id) || gone.has(crossing.truckRouteId) || (crossing.pedestrianRouteIds ?? [crossing.pedestrianRouteId]).every((id) => removedPedestrianRoutes.has(id))).map((crossing) => crossing.id))
       return {
@@ -1148,7 +1147,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         walls: s.walls.filter((w) => !gone.has(w.id)),
         zones: s.zones.filter((z) => !gone.has(z.id)),
         loadingDocks: s.loadingDocks.filter((dock) => !gone.has(dock.id)),
-        loadingBays: s.loadingBays.filter((bay) => !removedBays.has(bay.id)),
+        loadingBays: s.loadingBays.filter((bay) => !gone.has(bay.id)).map((bay) => gone.has(bay.loadingDockId ?? '') ? { ...bay, loadingDockId: undefined } : bay),
         truckTypes: s.truckTypes.filter((item) => !gone.has(item.id)),
         forkliftInstances: s.forkliftInstances.filter((item) => !gone.has(item.id) && !gone.has(item.typeId)),
         truckParkingSpots: s.truckParkingSpots.filter((item) => !gone.has(item.id)).map((item) => ({ ...item, compatibleTruckTypeIds: item.compatibleTruckTypeIds.filter((typeId) => !gone.has(typeId)) })),
@@ -1169,7 +1168,7 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
           openings: item.openings?.filter((opening) => !removedCrossings.has(opening.crossingId)),
           ...(gone.has(item.protectedTargetId ?? '') ? { protectedTargetId: undefined, keepClearOutline: undefined } : {}),
         })),
-        ...selection(s.selectedIds.filter((x) => !gone.has(x) && !removedBays.has(x))),
+        ...selection(s.selectedIds.filter((x) => !gone.has(x))),
       }
     }),
 
@@ -1291,12 +1290,15 @@ const plannerState: StateCreator<PlannerState> = (set, get) => ({
         : { placing: { kind: 'loadingDock' }, ...selection([]) },
     ),
 
-  startPlacingLoadingBay: (loadingDockId) =>
+  startPlacingLoadingBay: (loadingDockId, drawMode = 'rectangle') =>
     set((s) =>
-      s.placing?.kind === 'loadingBay' && s.placing.loadingDockId === loadingDockId
+      s.placing?.kind === 'loadingBay' && s.placing.loadingDockId === loadingDockId && s.placing.drawMode === drawMode
         ? { placing: null }
-        : { placing: { kind: 'loadingBay', loadingDockId, outline: [] }, ...selection([]) },
+        : { placing: { kind: 'loadingBay', loadingDockId, drawMode, start: null, outline: [] }, ...selection([]) },
     ),
+
+  setLoadingBayStart: (start) =>
+    set((s) => s.placing?.kind === 'loadingBay' ? { placing: { ...s.placing, start: start ? roundPoint(start) : null } } : s),
 
   setLoadingBayPoints: (outline) =>
     set((s) => s.placing?.kind === 'loadingBay' ? { placing: { ...s.placing, outline: outline.map(roundPoint) } } : s),

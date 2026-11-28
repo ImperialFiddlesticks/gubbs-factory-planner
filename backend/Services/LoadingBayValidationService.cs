@@ -3,6 +3,7 @@ public sealed record LoadingBayValidationIssue(Guid? LoadingBayId, string Field,
 public sealed class LoadingBayValidationService
 {
     private const double ToleranceMm = 1e-6;
+    private const double MinimumBaySizeMm = 500;
     private const double MaximumDockGapMm = 2000;
 
     public IReadOnlyList<LoadingBayValidationIssue> Validate(
@@ -52,22 +53,38 @@ public sealed class LoadingBayValidationService
                 issues.Add(new LoadingBayValidationIssue(bay.Id, "Outline", "The outline must have positive area and at least three distinct points."));
                 valid = false;
             }
+            var widthMm = bay.Outline.Max(point => point.Xmm) - bay.Outline.Min(point => point.Xmm);
+            var depthMm = bay.Outline.Max(point => point.Ymm) - bay.Outline.Min(point => point.Ymm);
+            if (widthMm < MinimumBaySizeMm || depthMm < MinimumBaySizeMm)
+            {
+                issues.Add(new LoadingBayValidationIssue(bay.Id, "Outline", $"Loading bays must be at least {MinimumBaySizeMm / 1000} m wide and deep."));
+                valid = false;
+            }
             if (SelfIntersects(bay.Outline))
             {
                 issues.Add(new LoadingBayValidationIssue(bay.Id, "Outline", "The outline must not cross itself."));
                 valid = false;
             }
-
-            var dock = loadingDocks.FirstOrDefault(item => item.Id == bay.LoadingDockId);
-            if (dock is null)
+            var floorPolygon = boundary.Select(point => new LoadingBayOutlinePoint(point.Xmm, point.Ymm)).ToArray();
+            if (Overlaps(bay.Outline, floorPolygon))
             {
-                issues.Add(new LoadingBayValidationIssue(bay.Id, "LoadingDockId", "The referenced loading dock does not exist."));
+                issues.Add(new LoadingBayValidationIssue(bay.Id, "Outline", "Loading bays must be placed outside the hall."));
                 valid = false;
             }
-            else if (!ConnectsToDock(bay, dock, boundary))
+
+            if (bay.LoadingDockId is Guid loadingDockId)
             {
-                issues.Add(new LoadingBayValidationIssue(bay.Id, "Outline", $"The outline must connect to its loading dock within {MaximumDockGapMm / 1000} m."));
-                valid = false;
+                var dock = loadingDocks.FirstOrDefault(item => item.Id == loadingDockId);
+                if (dock is null)
+                {
+                    issues.Add(new LoadingBayValidationIssue(bay.Id, "LoadingDockId", "The referenced loading dock does not exist."));
+                    valid = false;
+                }
+                else if (!ConnectsToDock(bay, dock, boundary))
+                {
+                    issues.Add(new LoadingBayValidationIssue(bay.Id, "Outline", $"The outline must connect to its loading dock within {MaximumDockGapMm / 1000} m."));
+                    valid = false;
+                }
             }
 
             if (valid) validBays.Add(bay);

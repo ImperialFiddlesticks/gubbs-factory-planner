@@ -64,6 +64,16 @@ public sealed class LoadingDockValidationService
                 issues.Add(new LoadingDockValidationIssue(dock.Id, "WidthMm", "Opening width cannot exceed the floor perimeter."));
                 validDock = false;
             }
+            if (!double.IsFinite(dock.HeightMm) || dock.HeightMm <= 0)
+            {
+                issues.Add(new LoadingDockValidationIssue(dock.Id, "HeightMm", "Door height must be finite and greater than zero."));
+                validDock = false;
+            }
+            if (!double.IsFinite(dock.DepthMm) || dock.DepthMm <= 0)
+            {
+                issues.Add(new LoadingDockValidationIssue(dock.Id, "DepthMm", "Door depth must be finite and greater than zero."));
+                validDock = false;
+            }
             if (!double.IsFinite(dock.BoundaryOffsetMm) || dock.BoundaryOffsetMm < 0 || dock.BoundaryOffsetMm >= perimeter)
             {
                 issues.Add(new LoadingDockValidationIssue(dock.Id, "BoundaryOffsetMm", "The dock position must lie on the outer boundary."));
