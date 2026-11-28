@@ -17,6 +17,8 @@ export function MapToolbar({
   onZoomIn,
   onZoomOut,
   onFit,
+  measuring,
+  onToggleMeasure,
   navigationTool,
   onNavigationToolChange,
 }: {
@@ -69,6 +71,14 @@ export function MapToolbar({
           className={cn(navigationTool === 'hand' && 'bg-accent text-accent-foreground hover:bg-accent/90 hover:text-accent-foreground')}
         >
           <Hand />
+        </ToolButton>
+        <ToolButton
+          label={measuring ? 'Exit measuring mode' : 'Measure distance'}
+          aria-pressed={measuring}
+          onClick={onToggleMeasure}
+          className={cn(measuring && 'bg-accent text-accent-foreground hover:bg-accent/90 hover:text-accent-foreground')}
+        >
+          <Ruler />
         </ToolButton>
         <Divider />
         <LockToggle />

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type Konva from 'konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
-import { Group, Label, Layer, Line, Rect, Shape, Stage, Tag, Text } from 'react-konva'
+import { Circle, Group, Label, Layer, Line, Rect, Shape, Stage, Tag, Text } from 'react-konva'
 import { MapToolbar } from '@/components/MapToolbar'
 import { ConveyorEnds } from '@/components/canvas/ConveyorBody'
 import { CommentMarkers } from '@/components/canvas/CommentMarkers'
@@ -303,6 +303,16 @@ function FloorStage({
   const [drag, setDrag] = useState<DragState | null>(null)
   /** Selection box being dragged out on empty floor, in mm; `add` when Shift was held. */
   const [box, setBox] = useState<{ start: Point; end: Point; add: boolean } | null>(null)
+  /** A temporary two-point tape measurement, in floor millimetres. */
+  const [measuring, setMeasuring] = useState(false)
+  const [measureStart, setMeasureStart] = useState<Point | null>(null)
+  const [measureEnd, setMeasureEnd] = useState<Point | null>(null)
+  const [measureDrag, setMeasureDrag] = useState<{
+    kind: 'start' | 'end' | 'line'
+    pointer: Point
+    start: Point
+    end: Point
+  } | null>(null)
 
   function zoomAround(nextZoom: number, anchor: Point) {
     const boundedZoom = Math.max(0.25, Math.min(4, nextZoom))
@@ -448,6 +458,34 @@ function FloorStage({
       }
       return
     }
+    // In measuring mode, a placed tape can still be edited without enabling equipment dragging.
+    if (measuring && measureStart && measureEnd && (!('button' in e.evt) || e.evt.button === 0)) {
+      const at = pointerMm()
+      const target = e.target
+      const endpoint = target.findAncestor('.measure-start-handle', true)
+        ? 'start'
+        : target.findAncestor('.measure-end-handle', true)
+          ? 'end'
+          : target.findAncestor('.measure-line', true)
+            ? 'line'
+            : null
+      if (at && endpoint) {
+        setMeasureDrag({ kind: endpoint, pointer: at, start: measureStart, end: measureEnd })
+        return
+      }
+    }
+    if (measuring) {
+      if ('button' in e.evt && e.evt.button !== 0) return
+      const at = pointerMm()
+      if (!at) return
+      if (!measureStart || measureEnd) {
+        setMeasureStart(at)
+        setMeasureEnd(null)
+      } else {
+        setMeasureEnd(at)
+      }
+      return
+    }
     if (placing) {
       // Left click (or touch) drops the ghost where it is; right click is handled below.
       if ('button' in e.evt && e.evt.button !== 0) return
@@ -555,6 +593,17 @@ function FloorStage({
     }
     const at = pointerMm()
     setPointer(at)
+    if (measureDrag && at) {
+      const dx = at.x - measureDrag.pointer.x
+      const dy = at.y - measureDrag.pointer.y
+      if (measureDrag.kind === 'start') setMeasureStart(at)
+      else if (measureDrag.kind === 'end') setMeasureEnd(at)
+      else {
+        setMeasureStart({ x: measureDrag.start.x + dx, y: measureDrag.start.y + dy })
+        setMeasureEnd({ x: measureDrag.end.x + dx, y: measureDrag.end.y + dy })
+      }
+      return
+    }
     if (box && at) setBox({ ...box, end: at })
   }
 
@@ -657,12 +706,27 @@ function FloorStage({
     return invalid ? 'invalid' : 'none'
   }
 
+  const measureTo = measureEnd ?? (measuring && measureStart ? pointer : null)
+  const measureDistanceMm = measureStart && measureTo
+    ? Math.hypot(measureTo.x - measureStart.x, measureTo.y - measureStart.y)
+    : null
+  const measureLabel = measureDistanceMm === null
+    ? ''
+    : `${Math.round(measureDistanceMm)} mm · ${(measureDistanceMm / 1000).toFixed(2)} m`
+
   return (
     <>
+    {measuring && (
+      <div className="pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
+        {measureEnd
+          ? 'Drag an endpoint to adjust · Drag the line to move · Click the floor to measure again · Ruler to exit'
+          : 'Click a start point, then an end point · Drag the endpoints to adjust · Ruler to exit'}
+      </div>
+    )}
     <Stage
       width={size.width}
       height={size.height}
-      style={{ cursor: placing ? 'crosshair' : panActive ? 'grabbing' : panningEnabled ? 'grab' : undefined }}
+      style={{ cursor: placing || measuring ? 'crosshair' : panActive ? 'grabbing' : spacePan ? 'grab' : undefined }}
       onMouseDown={handlePointerDown}
       onTouchStart={handlePointerDown}
       onMouseMove={handlePointerMove}
@@ -671,6 +735,7 @@ function FloorStage({
         panStart.current = null
         setPanActive(false)
         finishLoadingBay()
+        setMeasureDrag(null)
         finishZone()
         finishLogisticsRectangle()
         finishBox()
@@ -679,6 +744,7 @@ function FloorStage({
         panStart.current = null
         setPanActive(false)
         finishLoadingBay()
+        setMeasureDrag(null)
         finishZone()
         finishLogisticsRectangle()
         finishBox()
@@ -723,8 +789,8 @@ function FloorStage({
             dock={liveLoadingDocks.find((dock) => dock.id === bay.loadingDockId)}
             floorplan={floorplan}
             selected={selected.has(bay.id)}
-            invalid={Boolean(loadingBayIssue(bay, floorplan, liveLoadingDocks, liveLoadingBays))}
-            interactive={bay.id !== GHOST_ID && !placing && !lockStructures && !panningEnabled && !commentDraft}
+            invalid={bay.outline.length < 3 || (bay.id === GHOST_ID && placing?.kind === 'loadingBay' && placing.outline.length < 3) || Boolean(loadingBayIssue(bay, floorplan, liveLoadingDocks, liveLoadingBays))}
+            interactive={bay.id !== GHOST_ID && !placing && !measuring && !lockStructures && !panningEnabled && !commentDraft}
             fit={fit}
             onDrag={setDrag}
           />
@@ -737,7 +803,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(dock.id)}
             invalid={Boolean(loadingDockIssue(dock, floorplan, liveLoadingDocks))}
-            interactive={!placing && !lockStructures && !panningEnabled && !commentDraft}
+            interactive={!placing && !measuring && !lockStructures && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -772,7 +838,7 @@ function FloorStage({
               fit={fit}
               selected={selected.has(z.id)}
               resizable={selectedId === z.id}
-              interactive={!placing && !panningEnabled && !commentDraft}
+              interactive={!placing && !measuring && !spacePan && !commentDraft}
               onDrag={setDrag}
             />
           ))}
@@ -799,7 +865,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(w.id)}
             invalid={spaceBad.has(w.id)}
-            interactive={!placing && !lockStructures && !panningEnabled && !commentDraft}
+            interactive={!placing && !measuring && !lockStructures && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -810,7 +876,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(p.id)}
             invalid={spaceBad.has(p.id)}
-            interactive={!placing && !lockStructures && !panningEnabled && !commentDraft}
+            interactive={!placing && !measuring && !lockStructures && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -831,7 +897,7 @@ function FloorStage({
               outline={outlineFor(m.id)}
               needs={needs.get(m.id) ?? []}
               fit={fit}
-              interactive={!placing && !panningEnabled && !commentDraft}
+              interactive={!placing && !measuring && !spacePan && !commentDraft}
               onDrag={setDrag}
             />
           ))}
@@ -897,7 +963,7 @@ function FloorStage({
             fit={fit}
             selected={selected.has(u.id)}
             invalid={utilityBad.has(u.id)}
-            interactive={!placing && !panningEnabled && !commentDraft}
+            interactive={!placing && !measuring && !spacePan && !commentDraft}
             onDrag={setDrag}
           />
         ))}
@@ -920,6 +986,44 @@ function FloorStage({
           walls={shownWalls}
           fit={fit}
         />
+
+        {/* Temporary measuring tape: straight-line distance between two floor points. */}
+        {measureStart && measureTo && measureDistanceMm !== null && (
+          <Group>
+            <Line
+              name="measure-line"
+              points={[measureStart.x * SCALE, measureStart.y * SCALE, measureTo.x * SCALE, measureTo.y * SCALE]}
+              stroke={CANVAS.selected}
+              strokeWidth={2 / fit}
+              dash={[7 / fit, 5 / fit]}
+              hitStrokeWidth={14 / fit}
+              lineCap="round"
+            />
+            {[measureStart, measureTo].map((point, index) => (
+              <Circle
+                key={index === 0 ? 'start' : 'end'}
+                name={index === 0 ? 'measure-start-handle' : 'measure-end-handle'}
+                x={point.x * SCALE}
+                y={point.y * SCALE}
+                radius={7 / fit}
+                fill={CANVAS.selected}
+                stroke={CANVAS.floorStroke}
+                strokeWidth={2 / fit}
+              />
+            ))}
+            <Group
+              x={((measureStart.x + measureTo.x) / 2) * SCALE}
+              y={((measureStart.y + measureTo.y) / 2) * SCALE}
+              scaleX={1 / fit}
+              scaleY={1 / fit}
+            >
+              <Label x={-60} y={-24} listening={false}>
+                <Tag fill={CANVAS.selected} cornerRadius={3} />
+                <Text text={measureLabel} fontSize={12} padding={5} fill="black" />
+              </Label>
+            </Group>
+          </Group>
+        )}
 
         {active && active.kind !== 'wall' && active.kind !== 'loadingBay' && active.item.id === GHOST_ID && (
           <Group
@@ -982,8 +1086,13 @@ function FloorStage({
         onZoomIn={() => zoomAtCenter(zoom * 1.2)}
         onZoomOut={() => zoomAtCenter(zoom / 1.2)}
         onFit={fitToView}
-        navigationTool={navigationTool}
-        onNavigationToolChange={changeNavigationTool}
+        measuring={measuring}
+        onToggleMeasure={() => {
+          setMeasureStart(null)
+          setMeasureEnd(null)
+          setMeasureDrag(null)
+          setMeasuring((active) => !active)
+        }}
       />
     </>
   )
