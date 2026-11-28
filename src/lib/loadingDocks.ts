@@ -4,6 +4,8 @@ import type { Floorplan, LoadingDock, Point } from '@/types'
 const EPSILON = 1e-6
 
 export const DEFAULT_LOADING_DOCK_WIDTH_MM = 3000
+export const DEFAULT_LOADING_DOCK_HEIGHT_MM = 3000
+export const DEFAULT_LOADING_DOCK_DEPTH_MM = 1000
 
 type BoundarySegment = {
   start: Point
@@ -114,6 +116,8 @@ export function loadingDockIssue(
   const perimeter = loadingDockPerimeter(floorplan)
   if (!dock.name.trim()) return 'Name must not be empty or whitespace.'
   if (!Number.isFinite(dock.widthMm) || dock.widthMm <= 0) return 'Opening width must be greater than zero.'
+  if (!Number.isFinite(dock.heightMm) || dock.heightMm <= 0) return 'Door height must be greater than zero.'
+  if (!Number.isFinite(dock.depthMm) || dock.depthMm <= 0) return 'Door depth must be greater than zero.'
   if (!Number.isFinite(dock.boundaryOffsetMm) || perimeter <= EPSILON || dock.boundaryOffsetMm < 0 || dock.boundaryOffsetMm >= perimeter) {
     return 'The loading dock must be positioned on the floor boundary.'
   }

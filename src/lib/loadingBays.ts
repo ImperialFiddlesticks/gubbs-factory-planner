@@ -1,8 +1,11 @@
 import type { Floorplan, LoadingBay, LoadingDock, Point } from '@/types'
+import { floorCorners } from '@/lib/floorShapes'
 import { loadingDockSpans } from '@/lib/loadingDocks'
 
 const EPSILON = 1e-6
 
+export const MIN_LOADING_BAY_SIZE_MM = 500
+export const LOADING_BAY_DRAW_MARGIN_MM = 5000
 export const MAX_LOADING_BAY_DOCK_GAP_MM = 2000
 
 export interface LoadingBayConnection {
@@ -100,6 +103,11 @@ export function loadingBayIssue(
   if (new Set(bay.outline.map((point) => `${point.x},${point.y}`)).size < 3 || !Number.isFinite(area) || area <= EPSILON) {
     return 'The bay outline must have positive area and at least three distinct points.'
   }
+  const xs = bay.outline.map((point) => point.x)
+  const ys = bay.outline.map((point) => point.y)
+  if (Math.max(...xs) - Math.min(...xs) < MIN_LOADING_BAY_SIZE_MM || Math.max(...ys) - Math.min(...ys) < MIN_LOADING_BAY_SIZE_MM) {
+    return `Loading bays must be at least ${MIN_LOADING_BAY_SIZE_MM / 1000} m wide and deep.`
+  }
 
   for (let i = 0; i < bay.outline.length; i++) {
     const a = bay.outline[i]
@@ -122,11 +130,17 @@ export function loadingBayIssue(
     }
   }
 
-  const dock = docks.find((item) => item.id === bay.loadingDockId)
-  if (!dock) return 'Select an existing loading dock for this bay.'
-  const connection = loadingBayConnection(bay, dock, floorplan)
-  if (!connection || connection.distanceMm > MAX_LOADING_BAY_DOCK_GAP_MM) {
-    return `The bay must connect to its loading dock within ${MAX_LOADING_BAY_DOCK_GAP_MM / 1000} m.`
+  if (polygonsOverlap(bay.outline, floorCorners(floorplan))) {
+    return 'Loading bays must be placed outside the hall.'
+  }
+
+  if (bay.loadingDockId) {
+    const dock = docks.find((item) => item.id === bay.loadingDockId)
+    if (!dock) return 'The selected loading dock no longer exists.'
+    const connection = loadingBayConnection(bay, dock, floorplan)
+    if (!connection || connection.distanceMm > MAX_LOADING_BAY_DOCK_GAP_MM) {
+      return `The bay must connect to its loading dock within ${MAX_LOADING_BAY_DOCK_GAP_MM / 1000} m.`
+    }
   }
 
   for (const other of otherBays) {

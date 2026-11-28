@@ -4,7 +4,7 @@ public sealed class LoadingBay
 
     public string Name { get; set; } = string.Empty;
 
-    public Guid LoadingDockId { get; set; }
+    public Guid? LoadingDockId { get; set; }
 
     public List<LoadingBayOutlinePoint> Outline { get; set; } = [];
 }

@@ -598,6 +598,29 @@ function LoadingDockProperties({ dock }: { dock: LoadingDock }) {
         />
         <p className="mt-1 text-[11px] text-muted-foreground">The full opening must fit on the boundary without overlapping another dock.</p>
       </Field>
+      <Field id="loading-dock-height" label="Door height (m)">
+        <CommitInput
+          id="loading-dock-height"
+          className="h-8"
+          min={0.001}
+          step={0.1}
+          value={dock.heightMm / 1000}
+          isValid={(metres) => candidateIsValid({ heightMm: Math.round(metres * 1000) })}
+          onCommit={(metres) => update(dock.id, { heightMm: Math.round(metres * 1000) })}
+        />
+      </Field>
+      <Field id="loading-dock-depth" label="Door depth, each side (m)">
+        <CommitInput
+          id="loading-dock-depth"
+          className="h-8"
+          min={0.001}
+          step={0.1}
+          value={dock.depthMm / 1000}
+          isValid={(metres) => candidateIsValid({ depthMm: Math.round(metres * 1000) })}
+          onCommit={(metres) => update(dock.id, { depthMm: Math.round(metres * 1000) })}
+        />
+        <p className="mt-1 text-[11px] text-muted-foreground">Extends this distance both into and out of the hall.</p>
+      </Field>
       <Field id="loading-dock-offset" label="Boundary offset (m)">
         <CommitInput
           id="loading-dock-offset"
@@ -659,13 +682,14 @@ function LoadingBayProperties({ bay }: { bay: LoadingBay }) {
       <Field id="loading-bay-name" label="Name">
         <CommitText id="loading-bay-name" className="h-8" value={bay.name} onCommit={(name) => update(bay.id, { name: name.trim() || bay.name })} />
       </Field>
-      <Field id="loading-bay-dock" label="Connected loading dock">
+      <Field id="loading-bay-dock" label="Connected loading dock (optional)">
         <select
           id="loading-bay-dock"
-          value={bay.loadingDockId}
-          onChange={(event) => update(bay.id, { loadingDockId: event.target.value })}
+          value={bay.loadingDockId ?? ''}
+          onChange={(event) => update(bay.id, { loadingDockId: event.target.value || undefined })}
           className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
         >
+          <option value="">No connected dock</option>
           {docks.map((dock) => <option key={dock.id} value={dock.id}>{dock.name}</option>)}
         </select>
       </Field>
@@ -698,7 +722,7 @@ function LoadingBayProperties({ bay }: { bay: LoadingBay }) {
           </div>
         ))}
       </div>
-      <p className="text-[11px] text-muted-foreground">Bay outlines may extend outside the hall. Drag to move; edit vertices to resize.</p>
+      <p className="text-[11px] text-muted-foreground">Bay outlines may extend outside the hall. Drag to move; choose Custom shape when drawing, drag vertices to reshape, or click an edge handle to add a corner.</p>
       {issue && <p className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{issue}</p>}
       <Button variant="ghost" className="w-full text-muted-foreground hover:text-destructive" onClick={() => remove([bay.id])}>
         Delete loading bay

@@ -26,8 +26,8 @@ import { MIN_ZONE_SIZE, ZONE_KINDS, zoneArea } from '@/data/zones'
 import { conveyorRuns, snapConveyor, snapMachineToConveyor } from '@/lib/conveyors'
 import { keepOnFloor } from '@/lib/placement'
 import { floorCorners } from '@/lib/floorShapes'
-import { DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockBounds, loadingDockIssue, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
-import { loadingBayBounds, loadingBayCentroid, loadingBayIssue, loadingBayWorldBounds } from '@/lib/loadingBays'
+import { DEFAULT_LOADING_DOCK_DEPTH_MM, DEFAULT_LOADING_DOCK_HEIGHT_MM, DEFAULT_LOADING_DOCK_WIDTH_MM, loadingDockBounds, loadingDockIssue, loadingDockPointAt, nearestLoadingDockPosition } from '@/lib/loadingDocks'
+import { LOADING_BAY_DRAW_MARGIN_MM, MIN_LOADING_BAY_SIZE_MM, loadingBayBounds, loadingBayCentroid, loadingBayIssue, loadingBayWorldBounds } from '@/lib/loadingBays'
 import { DEFAULT_BARRIER_THICKNESS_MM, DEFAULT_FORKLIFT_ROUTE_WIDTH_MM, DEFAULT_PEDESTRIAN_ROUTE_WIDTH_MM, crossingPlacementAt, findTruckLogisticsIssues, forkliftFootprint, isValidLogisticsPolygon } from '@/lib/truckLogistics'
 import {
   bodyBox,
@@ -138,8 +138,11 @@ function PlacingHint({ error }: { error: string | null }) {
   }
   if (placing.kind === 'loadingBay') {
     return (
-      <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md bg-foreground/90 px-3 py-1.5 text-xs text-background shadow">
-        Drawing a <span className="font-semibold">Loading bay</span> · Click outline corners, then click the first point to finish · Red means invalid · Esc to cancel
+      <div className={`pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 rounded-md px-3 py-1.5 text-xs shadow ${error ? 'bg-destructive text-destructive-foreground' : 'bg-foreground/90 text-background'}`}>
+        {placing.drawMode === 'rectangle'
+          ? <>Draw a <span className="font-semibold">Loading bay</span> · Press and drag from one corner to the opposite · Esc to cancel</>
+          : <>Draw a <span className="font-semibold">Loading bay</span> · Click outline corners, then press Enter to finish · Esc to cancel</>}
+        {error && <span className="ml-2">{error}</span>}
       </div>
     )
   }
@@ -197,13 +200,12 @@ function FloorStage({
   const pedestrianCrossings = usePlanner((s) => s.pedestrianCrossings)
   const safetyBarriers = usePlanner((s) => s.safetyBarriers)
   const placing = usePlanner((s) => s.placing)
+  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
+  const [loadingBayDragActive, setLoadingBayDragActive] = useState(false)
   const availableTruckTypes = placing?.kind === 'forklift' && placing.preset && !truckTypes.some((item) => item.id === placing.typeId)
     ? [...truckTypes, { ...placing.preset, id: placing.typeId }]
     : truckTypes
-  const draftBays = placing?.kind === 'loadingBay' && placing.outline.length > 0
-    ? [{ id: GHOST_ID, name: 'Loading bay', loadingDockId: placing.loadingDockId, outline: placing.outline }]
-    : []
-  const bayBounds = loadingBayWorldBounds(floorplan, [...loadingBays, ...draftBays])
+  const bayBounds = loadingBayWorldBounds(floorplan, loadingBays)
   const logisticsPoints = [
     ...forkliftInstances.flatMap((instance) => {
       const type = availableTruckTypes.find((item) => item.id === instance.typeId)
@@ -216,12 +218,19 @@ function FloorStage({
     ...truckServiceStations.map(({ x, y }) => ({ x, y })),
     ...pedestrianCrossings.map(({ x, y }) => ({ x, y })),
   ].filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
-  const worldBounds = logisticsPoints.length ? {
+  const contentBounds = logisticsPoints.length ? {
     minX: Math.min(bayBounds.minX, ...logisticsPoints.map((point) => point.x)),
     minY: Math.min(bayBounds.minY, ...logisticsPoints.map((point) => point.y)),
     maxX: Math.max(bayBounds.maxX, ...logisticsPoints.map((point) => point.x)),
     maxY: Math.max(bayBounds.maxY, ...logisticsPoints.map((point) => point.y)),
   } : bayBounds
+  const exteriorMargin = placing?.kind === 'loadingBay' ? LOADING_BAY_DRAW_MARGIN_MM : 0
+  const worldBounds = {
+    minX: contentBounds.minX - exteriorMargin,
+    minY: contentBounds.minY - exteriorMargin,
+    maxX: contentBounds.maxX + exteriorMargin,
+    maxY: contentBounds.maxY + exteriorMargin,
+  }
   const worldW = (worldBounds.maxX - worldBounds.minX) * SCALE
   const worldH = (worldBounds.maxY - worldBounds.minY) * SCALE
   // The map toolbar sits at the bottom, so the floor uses the space above it.
@@ -278,6 +287,7 @@ function FloorStage({
   const addZone = usePlanner((s) => s.addZone)
   const addLoadingDock = usePlanner((s) => s.addLoadingDock)
   const addLoadingBay = usePlanner((s) => s.addLoadingBay)
+  const setLoadingBayStart = usePlanner((s) => s.setLoadingBayStart)
   const setLoadingBayPoints = usePlanner((s) => s.setLoadingBayPoints)
   const setLogisticsPoints = usePlanner((s) => s.setLogisticsPoints)
   const addLogisticsPoint = usePlanner((s) => s.addLogisticsPoint)
@@ -290,8 +300,6 @@ function FloorStage({
   const cancelCommentPlacement = usePlanner((s) => s.cancelCommentPlacement)
 
   const layerRef = useRef<Konva.Layer>(null)
-  /** Cursor position on the floor in mm, while it is over the canvas. */
-  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
   /** Selection box being dragged out on empty floor, in mm; `add` when Shift was held. */
   const [box, setBox] = useState<{ start: Point; end: Point; add: boolean } | null>(null)
@@ -342,10 +350,13 @@ function FloorStage({
   }
 
   usePlacingKeys()
-  useSelectionKeys()
+  useSelectionKeys(onPlacementError)
 
+  const activePointer = placing?.kind === 'loadingBay' && (
+    placing.drawMode === 'rectangle' ? !loadingBayDragActive : placing.outline.length === 0
+  ) ? null : pointer
   const active = keepGhostOnFloor(
-    activeItem(placing, pointer, drag, machines, forkliftInstances, availableTruckTypes, utilities, pillars, walls, loadingDocks, loadingBays, floorplan),
+    activeItem(placing, activePointer, drag, machines, forkliftInstances, availableTruckTypes, utilities, pillars, walls, loadingDocks, loadingBays, floorplan),
     floorplan,
   )
 
@@ -481,6 +492,16 @@ function FloorStage({
       const at = pointerMm()
       // Zones: press here, drag, release to finish (see finishZone).
       if (at && placing.kind === 'zone') return setZoneStart(at)
+      if (at && placing.kind === 'loadingBay') {
+        if (placing.drawMode === 'polygon') {
+          const points = placing.outline
+          if (points.length && Math.hypot(at.x - points[points.length - 1].x, at.y - points[points.length - 1].y) <= 50) return
+          setLoadingBayPoints([...points, at])
+          return
+        }
+        setLoadingBayDragActive(true)
+        return setLoadingBayStart(at)
+      }
       if (at && placing.kind === 'logistics-rectangle') return setLogisticsRectangleStart(at)
       if (at && placing.kind === 'wall') {
         // Two clicks: the first sets the start, the second (far enough away) finishes the wall.
@@ -515,20 +536,13 @@ function FloorStage({
           id: GHOST_ID,
           name: 'Loading dock',
           widthMm: DEFAULT_LOADING_DOCK_WIDTH_MM,
+          heightMm: DEFAULT_LOADING_DOCK_HEIGHT_MM,
+          depthMm: DEFAULT_LOADING_DOCK_DEPTH_MM,
           boundaryOffsetMm: position.offsetMm,
           flowDirection: 'two-way',
         }
         if (loadingDockIssue(candidate, floorplan, loadingDocks) || !addLoadingDock(position.offsetMm)) return
         cancelPlacing()
-        return
-      } else if (at && placing.kind === 'loadingBay') {
-        const points = placing.outline
-        if (points.length && Math.hypot(at.x - points[points.length - 1].x, at.y - points[points.length - 1].y) <= 50) return
-        if (points.length >= 3 && Math.hypot(at.x - points[0].x, at.y - points[0].y) <= 500) {
-          if (addLoadingBay(placing.loadingDockId, points)) cancelPlacing()
-          return
-        }
-        setLoadingBayPoints([...points, at])
         return
       } else if (at && placing.kind === 'barrier-clearance') {
         const points = placing.outline
@@ -591,6 +605,23 @@ function FloorStage({
       return
     }
     if (box && at) setBox({ ...box, end: at })
+  }
+
+  function finishLoadingBay() {
+    if (placing?.kind !== 'loadingBay' || placing.drawMode !== 'rectangle' || !placing.start) return
+    setLoadingBayDragActive(false)
+    const at = pointerMm() ?? pointer
+    const outline = at ? rectangleOutline(placing.start, at) : []
+    const bounds = loadingBayBounds({ outline })
+    if (!at || !bounds || bounds.width < MIN_LOADING_BAY_SIZE_MM || bounds.depth < MIN_LOADING_BAY_SIZE_MM) {
+      onPlacementError(`Loading bays must be at least ${MIN_LOADING_BAY_SIZE_MM / 1000} m wide and deep.`)
+      return
+    }
+    if (addLoadingBay(placing.loadingDockId, outline)) cancelPlacing()
+    else {
+      const candidate: LoadingBay = { id: GHOST_ID, name: 'Loading bay', ...(placing.loadingDockId && { loadingDockId: placing.loadingDockId }), outline }
+      onPlacementError(loadingBayIssue(candidate, floorplan, loadingDocks, loadingBays) ?? 'The loading bay could not be created. Check its dimensions and overlap.')
+    }
   }
 
   /** Release while drawing a zone: create it if it's big enough, or wait for another try. */
@@ -703,12 +734,16 @@ function FloorStage({
       onMouseUp={() => {
         panStart.current = null
         setPanActive(false)
+        finishLoadingBay()
         setMeasureDrag(null)
         finishZone()
         finishLogisticsRectangle()
         finishBox()
       }}
       onTouchEnd={() => {
+        panStart.current = null
+        setPanActive(false)
+        finishLoadingBay()
         setMeasureDrag(null)
         finishZone()
         finishLogisticsRectangle()
@@ -755,7 +790,7 @@ function FloorStage({
             floorplan={floorplan}
             selected={selected.has(bay.id)}
             invalid={bay.outline.length < 3 || (bay.id === GHOST_ID && placing?.kind === 'loadingBay' && placing.outline.length < 3) || Boolean(loadingBayIssue(bay, floorplan, liveLoadingDocks, liveLoadingBays))}
-            interactive={bay.id !== GHOST_ID && !placing && !measuring && !lockStructures && !spacePan && !commentDraft}
+            interactive={bay.id !== GHOST_ID && !placing && !measuring && !lockStructures && !panningEnabled && !commentDraft}
             fit={fit}
             onDrag={setDrag}
           />
@@ -1140,6 +1175,16 @@ function boxRect(a: Point, b: Point): Box {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), depth: Math.abs(b.y - a.y) }
 }
 
+function rectangleOutline(a: Point, b: Point): Point[] {
+  const rect = boxRect(a, b)
+  return [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y + rect.depth },
+    { x: rect.x, y: rect.y + rect.depth },
+  ]
+}
+
 function ParkingRectangleGhost({ start, end, fit }: { start: Point; end: Point; fit: number }) {
   const rect = boxRect(start, end)
   const px = { x: rect.x * SCALE, y: rect.y * SCALE, width: rect.width * SCALE, height: rect.depth * SCALE }
@@ -1170,7 +1215,7 @@ function pointsBounds(points: Point[]): Box | null {
  * Delete / Backspace removes the selection (one undo step); Esc clears it. Ignored while
  * placing (Esc cancels that instead) or typing in a field.
  */
-function useSelectionKeys() {
+function useSelectionKeys(onPlacementError: (message: string) => void) {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const t = e.target as HTMLElement
@@ -1178,6 +1223,26 @@ function useSelectionKeys() {
       const s = usePlanner.getState()
       if (s.commentDraft) {
         s.cancelCommentPlacement()
+        return
+      }
+      if (s.placing?.kind === 'loadingBay' && s.placing.drawMode === 'polygon' && e.key === 'Enter') {
+        e.preventDefault()
+        const candidate: LoadingBay = {
+          id: GHOST_ID,
+          name: 'Loading bay',
+          ...(s.placing.loadingDockId && { loadingDockId: s.placing.loadingDockId }),
+          outline: s.placing.outline,
+        }
+        const issue = s.floorplan
+          ? loadingBayIssue(candidate, s.floorplan, s.loadingDocks, s.loadingBays)
+          : 'Create a floorplan before drawing a loading bay.'
+        if (issue) {
+          onPlacementError(issue)
+        } else if (s.addLoadingBay(s.placing.loadingDockId, s.placing.outline)) {
+          s.cancelPlacing()
+        } else {
+          onPlacementError('The loading bay could not be created. Check its shape and overlap.')
+        }
         return
       }
       if (s.placing?.kind === 'logistics-path' && e.key === 'Enter') {
@@ -1203,7 +1268,7 @@ function useSelectionKeys() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [onPlacementError])
 }
 
 /** Hold Space and drag to pan without changing the existing empty-floor box-select gesture. */
@@ -1296,9 +1361,11 @@ function activeItem(
     // A zone being drawn is shown by the canvas itself (see ZoneShape below).
     if (placing.kind === 'zone') return null
     if (placing.kind === 'loadingBay') {
-      const closing = placing.outline.length >= 3 && Math.hypot(pointer.x - placing.outline[0].x, pointer.y - placing.outline[0].y) <= 500
-      const outline = closing ? placing.outline : [...placing.outline, pointer]
-      return { kind: 'loadingBay', item: { id: GHOST_ID, name: 'Loading bay', loadingDockId: placing.loadingDockId, outline, ...loadingBayCentroid({ outline }) } }
+      const outline = placing.drawMode === 'rectangle'
+        ? placing.start ? rectangleOutline(placing.start, pointer) : []
+        : placing.outline.length ? [...placing.outline, pointer] : []
+      if (!outline.length) return null
+      return { kind: 'loadingBay', item: { id: GHOST_ID, name: 'Loading bay', ...(placing.loadingDockId && { loadingDockId: placing.loadingDockId }), outline, ...loadingBayCentroid({ outline }) } }
     }
     if (placing.kind === 'loadingDock') {
       const position = nearestLoadingDockPosition(pointer.x, pointer.y, floorplan)
@@ -1309,6 +1376,8 @@ function activeItem(
           id: GHOST_ID,
           name: 'Loading dock',
           widthMm: DEFAULT_LOADING_DOCK_WIDTH_MM,
+          heightMm: DEFAULT_LOADING_DOCK_HEIGHT_MM,
+          depthMm: DEFAULT_LOADING_DOCK_DEPTH_MM,
           boundaryOffsetMm: position.offsetMm,
           flowDirection: 'two-way',
           ...position.point,
